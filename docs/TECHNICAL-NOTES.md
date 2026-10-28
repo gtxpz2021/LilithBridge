@@ -2,9 +2,9 @@
 
 这篇附录供核对实现细节和验证结果时使用。如果只是想了解项目，先读[首页](../README.md)与[架构入门](../ARCHITECTURE.md)即可，不必从这些术语和版本号开始。
 
-## 当前包与支持范围
+## 当前安装候选与支持范围
 
-本页记录 `6a028692` 安装候选的状态。安装包包含实际插件 DLL；本源码仓库不包含二进制，安装包另行提供。它与开发者自己的日用版本分别管理，不把其他版本的运行成绩算作本包成绩。
+当前说明对应 `6a028692` 安装候选。可执行文件由 Release 附件另行提供，源码仓库不包含 DLL。候选与开发者自己的日用版本分别管理，不把其他版本的运行成绩算作该候选成绩。
 
 | 项目 | 当前状态 |
 |---|---|
@@ -18,9 +18,9 @@
 | 召回游戏接入 | 用户自行选择生产 worker、Python 和模型路径；安装器不自动部署或启用，完整游戏接入仍待验证 |
 | 独立观察器 | 未随包附带；已有独立合成 demo 不等于真实全链路 hooks 已部署 |
 | 一起看 | 未启用 |
-| 许可 | 自有代码与可许可文档采用 MIT；第三方权利与分发通知分别处理，二进制仍是安装候选 |
+| 许可 | 自有代码与可许可文档采用 MIT；第三方权利与分发通知分别处理，本包仍是私有候选 |
 
-当前的精确信息见 `metadata/COMPATIBILITY.json`、`metadata/INSTALL-ACCEPTANCE.json` 和 `metadata/OPTIONAL-RUNTIME.json`。本轮合包只检查文件、路径、链接和摘要，没有启动安装器、游戏或 worker。
+安装目标的精确指纹保留在 `tools/setup/install-manifest.json`。本仓库导入没有重新运行安装器、游戏或 worker，也不附带私有验收记录。
 
 ## 材料在不同阶段代表什么
 
@@ -61,7 +61,7 @@
 
 ## 实现入口
 
-下列文件名沿用原有架构说明，方便需要查实现的人定位职责。本仓库的角色系统源码位于 [`src/LilithBridge`](../src/LilithBridge)，`installer-source/` 是安装与配置器源码。下表中的文件名均相对于 `src/LilithBridge/`。
+下列文件名帮助定位核心源码职责。核心源码在 `src/LilithBridge/`，安装与配置器源码单独放在 `tools/installer-source/`。
 
 | 实现入口 | 主要职责 |
 |---|---|
@@ -78,20 +78,22 @@
 
 几类检查入口也需要分开看：安装器的路径/provider 测试夹具检查配置变更；产品显示、来源和反思测试夹具会加载产品 DLL 及 loader/interop；独立观察器则用合成示例展示机制。它们目的和依赖不同，合在一起也不是一个已经交付的无游戏 SDK。`SubmitEnterGate.cs` 等小状态机曾被列为独立示例候选，但本预览没有提取或编译它们。
 
-## 安装包与可选组件身份
+## 安装候选与可选组件身份
+
+下面的插件和安装器路径指 Release 安装包内的位置，不是源码仓库里的二进制文件。
 
 - 插件：`setup/payload/LilithBridge.dll`，SHA-256 `6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369`。
 - 安装器：`setup/LilithBridge-Installer.exe`，SHA-256 `74fcebbc45e0cc01af672a9de773f022ff1b3fc8f690bbbfd65a1b284745b679`；与手工界面验证使用的安装器同字节。
 - 生产 worker：`optional/semantic-worker/semantic_worker.py`，SHA-256 `6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036`。
 - 生产 worker 相邻模型清单：`optional/semantic-worker/model-manifest.json`，SHA-256 `c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17`。
 
-`setup/install-manifest.json` 保存允许安装的精确前置指纹与已知升级前身。不要手工修改指纹来让其他版本通过检查。安装器刚打开、尚未选择目标目录时可能仍显示通用模板说明；选择匹配目录并检查后，以具体检查结果和文件改动预览为准。
+安装包的 `setup/install-manifest.json`（仓库中为 `tools/setup/install-manifest.json`）保存允许安装的精确前置指纹与已知升级前身。不要手工修改指纹来让其他版本通过检查。安装器刚打开、尚未选择目标目录时可能仍显示通用模板说明；选择匹配目录并检查后，以具体检查结果和文件改动预览为准。
 
 **生产 worker 与自检 fixture 是两套不同文件。** `optional-recall/probe-fixture/semantic_worker.py` 只供合成协议检查，不能选作游戏 worker。游戏配置应选 `optional/semantic-worker/semantic_worker.py`，并保留它旁边的模型清单。安装器不会自动复制 worker 到游戏中，也不会替用户开启召回。
 
 worker 独立离线验证不等于完整游戏接入验证。使用说明见[可选生产 worker](../optional/semantic-worker/README.md)与[模型取得说明](../optional/semantic-worker/MODEL-ACQUISITION.md)。模型只按固定 revision 和文件清单取得，不随本包分发。
 
-取得完整安装包后，可手动使用包根目录 `Verify-Package.ps1` 检查文件摘要一致性，无需为此修改脚本执行策略。它只确认文件与清单相符，不认证发布者身份、许可或游戏兼容性。详细身份与通知见[许可状态](../LICENSE-STATUS.md)及包内 `metadata/`。
+在 Release 安装包中，可手动使用其根目录 `Verify-Package.ps1` 检查文件摘要一致性，无需为此修改脚本执行策略。它只确认文件与清单相符，不认证发布者身份、许可或游戏兼容性。第三方通知与权利范围见[许可状态](../LICENSE-STATUS.md)。
 
 ## 小词典
 

@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
+    <DebugType>portable</DebugType>
+    <!-- Do not set DebugSymbols=true: retain the project's Release default.
+         Portable PDB remains available without Roslyn DebugPlus codegen. -->
+  </PropertyGroup>
+</Project>

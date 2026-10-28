@@ -1,0 +1,21 @@
+{
+  "provider": {
+    "api_key": "",
+    "base_url": "https://example.invalid/v1",
+    "model": "YOUR_MODEL_NAME"
+  },
+  "semantic_recall": {
+    "enabled": false,
+    "python_path": "semantic-runtime/.venv/Scripts/python.exe",
+    "worker_script": "semantic-runtime/semantic_worker.py",
+    "model_path": "models/bge-small-zh-v1.5",
+    "index_directory": "semantic-recall-index"
+  },
+  "vision": {
+    "enabled": false,
+    "save_frames": false
+  },
+  "shared_activity": {
+    "enabled": false
+  }
+}

@@ -1,16 +1,14 @@
 # 依赖与本地召回说明
 
-安装器相关路径指独立安装候选包；源码仓库包含构建源文件与可选召回工具，不含安装器 EXE 或插件 DLL。
-
 先使用远程聊天 API，只需要匹配的游戏环境和自己的 API 服务；不需要 Python 或本地模型。只有决定启用本地语义召回时，才需要后半部分的可选环境。
 
 ## 游戏与安装器
 
-当前候选用于 Windows x64、游戏 1.0.4 及已验证的配套文件组合。安装器依赖 .NET Framework 4.8/4.8.1 运行条件，并逐项核对 `setup/install-manifest.json` 中的 32 个文件。仅仅显示同一个版本号还不够，实际文件摘要也必须匹配。
+当前候选用于 Windows x64、游戏 1.0.4 及已验证的配套文件组合。安装器依赖 .NET Framework 4.8/4.8.1 运行条件，并逐项核对 安装包 `setup/install-manifest.json` 中的 32 个文件（仓库对应 `tools/setup/install-manifest.json`）。仅仅显示同一个版本号还不够，实际文件摘要也必须匹配。
 
 本包不含游戏、加载器或 interop。BepInEx 的取得入口是[官方构建页](https://builds.bepinex.dev/projects/bepinex_be)，对应档案名为 `BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip`；安装方法见[官方 Unity IL2CPP 指南](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)。不要任意改用较新构建来代替当前组合。官方流程涉及的首次游戏启动由用户自行决定，本安装包不会执行。
 
-所需组合包括 BepInEx 6.0.0-be.769、Il2CppInterop 1.5.1-ci.829 和 HarmonyX 2.10.2，仍以完整文件检查结果为准。官方入口不等于任何下载文件都已与本包指纹对应；缺少或不匹配时应先停下来核对。精确信息在 `metadata/DEPENDENCIES.json`。
+所需组合包括 BepInEx 6.0.0-be.769、Il2CppInterop 1.5.1-ci.829 和 HarmonyX 2.10.2，仍以完整文件检查结果为准。官方入口不等于任何下载文件都已与本包指纹对应；缺少或不匹配时应先停下来核对。安装目标指纹在仓库 `tools/setup/install-manifest.json` 中；许可范围另见[许可说明](../LICENSE-STATUS.md)。
 
 ## 远程聊天 API
 

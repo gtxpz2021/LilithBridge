@@ -18,26 +18,22 @@ LilithBridge 是以《不/存在的你，和我》中的莉莉丝为基础的二
 
 ## 从哪里开始
 
-**想在游戏里和莉莉丝聊天：** 从[安装与使用说明](docs/PLAYER-GUIDE.md)开始。安装说明对应独立的安装候选包；可用安装包会放在 [GitHub Releases](https://github.com/gtxpz2021/LilithBridge/releases)，下载源码 ZIP 不包含安装器 EXE 或插件 DLL。目前只接受已验证的 **1.0.4 游戏及其配套环境**，会逐项核对 32 个前置文件；其他版本和 Steam 1.1.0 不在支持范围内。
+**想在游戏里和莉莉丝聊天：** 先读[安装与使用说明](docs/PLAYER-GUIDE.md)。可安装文件会放在仓库的 [Releases](https://github.com/gtxpz2021/LilithBridge/releases) 中；请以实际发布的附件为准。GitHub 的“Download ZIP”下载的是源码，不能直接安装。
 
-安装、配置保存和回退已经过手工界面验证；完整游戏启动还没有完成验证。先把它当作限定环境下的安装候选，不要当成所有版本都能直接使用的正式发行版。
+当前安装候选只接受已验证的 **1.0.4 游戏及其配套环境**，会核对 32 个前置文件；其他版本和 Steam 1.1.0 不在支持范围内。安装、配置保存和回退已有手工界面验证，完整游戏启动尚未完成验证。
 
-**不装游戏，只想看设计：** 直接看[架构入门](ARCHITECTURE.md)。它从一次聊天讲起，说明旧经历怎样参与新对话，以及为什么要分清“模型写出来了”和“你真的看到了”。不需要先懂代码，也不需要安装任何东西。
+**不装游戏，只想看设计：** 从[架构入门](ARCHITECTURE.md)开始。它从一次聊天解释经历、记忆和实际交付，不需要先懂代码。
 
-## 源码与安装包
+**想阅读源码：** 核心代码在 `src/LilithBridge/`；安装与配置器源码在 `tools/installer-source/`。可选环境工具在 `optional-recall/`，生产 worker 在 `optional/semantic-worker/`。源码导入没有附带游戏依赖或构建产物，不能据此假设新环境已经能够直接编译。
 
-仓库包含[角色插件源码](src/LilithBridge)、[安装与配置器源码](installer-source)、API Key 留空的配置示例，以及可选本地召回的准备工具和生产 worker。角色插件目标为 .NET 6；构建时通过 `LILITH_GAME_DIR` 指定自己的匹配游戏目录，依赖其中的 BepInEx 与 interop 程序集。
+## 使用远程 API 不必先安装本地模型
 
-安装包与源码分别提供。取得完整安装候选包后，解压并从包内 `Start-Setup.cmd` 打开安装器，按提示选择自己的匹配游戏目录、核对改动，再决定是否安装。仓库本身没有可直接运行的安装器 EXE。
+远程聊天 API 路线不要求 Python。可选的本地语义召回帮助寻找旧经历，需要另外准备 Python 环境和模型；生产 worker 已提供，但不会自动部署或启用。具体见[依赖与本地召回说明](docs/DEPENDENCIES.md)。
 
-只使用远程聊天 API **不需要 Python，也不用先配置本地召回**。如果之后想启用本地语义召回，可以再准备 Python 环境和模型，并选择 `optional/semantic-worker/semantic_worker.py`。这部分是可选功能，不影响先完成 API 配置；具体见[依赖与本地召回说明](docs/DEPENDENCIES.md)。
-
-项目只分发自有的轻量插件和配套工具，不捆绑游戏、加载器、interop、Python、模型或 wheel。角色插件源码位于本仓库，独立观察器未附带。配置器能真实保存设置，安装、恢复和回退也会修改对应文件，操作前请核对目标目录和改动预览。
+仓库不包含游戏、加载器、interop、Python、模型、wheel、用户配置或记忆。`optional-recall/probe-fixture/` 只用于合成自检，不能选择为游戏 worker。
 
 ## 想再深入一点
 
-- [技术附录](docs/TECHNICAL-NOTES.md)：当前支持范围、实现入口，以及来源、版本和交付的精确含义。
-- [依赖与本地召回说明](docs/DEPENDENCIES.md)：API 路线需要什么，以及如何区分生产 worker 与自检示例。
-- [许可状态](LICENSE-STATUS.md)：项目与第三方组件的许可核对情况，自有代码与可许可文档采用 MIT，第三方权利另行保留。
-
-精确文件身份和验证范围收在技术附录中，想核对时再看即可。
+- [技术附录](docs/TECHNICAL-NOTES.md)：实现入口、来源、版本和交付的精确含义。
+- [依赖说明](docs/DEPENDENCIES.md)：游戏环境、API 与可选召回分别需要什么。
+- [许可与第三方内容](LICENSE-STATUS.md)：自有代码与可许可文档采用 MIT，第三方与原作权利分别保留。

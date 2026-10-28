@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "product": "LilithBridge",
+  "id": "LilithBridge-6a028692-win-x64-private-candidate-r1",
+  "plugin_sha256": "6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369",
+  "previous_plugin_hashes": [
+    "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353"
+  ],
+  "target_hashes": {
+    "Lilith.exe": "ed30029bfcdd8b8fa5b691ffc2505ac711353e67b49e3e300b1182934abc38dc",
+    "GameAssembly.dll": "10d84498cdd86fd8d10d3ac89a11c7bb8bd91256ca39b877d9f2005967caf94a",
+    "Lilith_Data\\il2cpp_data\\Metadata\\global-metadata.dat": "4c25a9f70638c8a5bc93bf979fa846b4bd57438a7dca269666ae8155f231bc59",
+    "winhttp.dll": "8c6cdbc38836dee87e3368f5de1994d7c0ccebf29e4ce7aba3c0981f9375412c",
+    "doorstop_config.ini": "1c1c9e37b37bd9d157aa503569afe8299741ee496764129c7f78bc7732654e2d",
+    "dotnet\\coreclr.dll": "04377968c540f704aae92ecb0ec9bbfd5fddfe226dfca30aa3eeb52006a44fd8",
+    "dotnet\\hostpolicy.dll": "3eee1bf88acdac74aedea15eb4ba2c4410d2082184266cd929c1310462115095",
+    "dotnet\\Microsoft.NETCore.App.deps.json": "879dc0cb9c9a7a41681e399fc4f18c15ef1ac9a3410f68b94a8d13dd0c6c391c",
+    "dotnet\\Microsoft.NETCore.App.runtimeconfig.json": "1b7aa545d9d3216979a9efe8d72967f6e559a9c6a22288d14444d6c5c4c15738",
+    "BepInEx\\core\\BepInEx.Core.dll": "b7713d709a66926132fb8deeb3b7cfe853264dcd1af74570031b0605976c240c",
+    "BepInEx\\core\\BepInEx.Unity.Common.dll": "855714711a4be373e4ac345862efc84ebccbfa3ceadaac8d76c5b9f803e56dcc",
+    "BepInEx\\core\\BepInEx.Unity.IL2CPP.dll": "dc91707a7daa70452d2837e11d4f85b2a68520e4c467193bbae334110ac11913",
+    "BepInEx\\core\\Il2CppInterop.Runtime.dll": "302f0b4a229266d8747a2b7c9ea4ba16e15dd6ecabcf0d575c6f0487ec8da82e",
+    "BepInEx\\core\\Il2CppInterop.Common.dll": "7445f52b59c4141d8f627d93b021de3d958d5ee1d18dc52236e0ed19e97a1da8",
+    "BepInEx\\core\\Il2CppInterop.HarmonySupport.dll": "ac580929efa69ea785e71e9405a7a10c41b920024a6dd1b84095ed917bd1c68a",
+    "BepInEx\\core\\0Harmony.dll": "6c898933b52149e8bcf6722305c7e4d94add47c9e53b364096f91721624c0877",
+    "BepInEx\\interop\\Assembly-CSharp.dll": "20384451b3ed3257076a4ffca949ff4f38f67b4ad660583720cf4210712970b5",
+    "BepInEx\\interop\\Il2Cppmscorlib.dll": "b76cf289becd0799199c22ec708eaeff73306a85165ff28d567dabe2c2f8bc6a",
+    "BepInEx\\interop\\Il2CppSystem.dll": "c236c9aa61e6b630fe8bd672d37d6d06dd065f985fbf13e728162be0685f13f5",
+    "BepInEx\\interop\\UnityEngine.dll": "02de2e3abdc5c764dcdf0fe57131a7740047326c0b277cbaa9fad2772e8f500d",
+    "BepInEx\\interop\\UnityEngine.CoreModule.dll": "95ea59822ed59beb3b5787b8a72370eeaaad3cd128cbd9a6521202af4f0c9d91",
+    "BepInEx\\interop\\UnityEngine.UI.dll": "a97c2a09753f88fc2f5f4e80288dd2799a0d830d8e0868e0a5f86b1adf2ba869",
+    "BepInEx\\interop\\Unity.TextMeshPro.dll": "5549522fb967c59d325680bb65440c05b1d51092039e3d40ad9ee142029faebf",
+    "BepInEx\\interop\\UnityEngine.UIModule.dll": "49a515b84a496871e6a47fb78d710f840f51df0c3c0d1e89d8d215e58364c977",
+    "BepInEx\\interop\\UnityEngine.IMGUIModule.dll": "c9b8fe3feaa1907be2cdb8898119517f2ba12e9ead0dc600907bc987d258bc1e",
+    "BepInEx\\interop\\UnityEngine.TextRenderingModule.dll": "5d269a5daa7561680126ad64dc26ffeada0de75fdf8281678924301aa9249cbb",
+    "BepInEx\\interop\\UnityEngine.InputLegacyModule.dll": "681ee5df8c4cb2ec4853c670202c05b52e83ab1879feeb8886618167c916457a",
+    "BepInEx\\interop\\UnityEngine.ImageConversionModule.dll": "ca749de984455845b5200fcd910461b0fc7fe038b1f9cde0ea96ceeb9355def0",
+    "BepInEx\\interop\\UnityEngine.Physics2DModule.dll": "0064bb14a5f5585d3462f581d94d4b3ad2844756a20fe939f3d1895f2efb2261",
+    "BepInEx\\interop\\spine-csharp.dll": "6bcf99033a6dcdc13ab5970de84c16d63c67edd55291912627f4893af18b8c1c",
+    "BepInEx\\interop\\spine-unity.dll": "1a4dd245c72c3afc577f68d4460123c0e9c701fdc0f9d2ccfb11f519246b4ba7",
+    "BepInEx\\interop\\BehaviorDesigner.Runtime.dll": "0d8526748bcea88b184e8f6154912145d9cec2fbb315728138d13cacf3acb01f"
+  }
+}

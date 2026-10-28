@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>LilithBridge</AssemblyName>
+    <RootNamespace>LilithBridge</RootNamespace>
+    <Version>0.3.150.63-r7</Version>
+    <Product>Lilith Native Bridge</Product>
+  </PropertyGroup>
+  <PropertyGroup>
+    <BepInExRuntimeDir Condition="'$(LILITH_GAME_DIR)' == ''">$(USERPROFILE)\Desktop\PrjL\The NOexistenceN of Lilith\BepInEx</BepInExRuntimeDir>
+    <BepInExRuntimeDir Condition="'$(LILITH_GAME_DIR)' != ''">$(LILITH_GAME_DIR)\BepInEx</BepInExRuntimeDir>
+    <BepInExCoreDir>$(BepInExRuntimeDir)\core</BepInExCoreDir>
+    <BepInExInteropDir>$(BepInExRuntimeDir)\interop</BepInExInteropDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="api-client-test\**\*.cs" />
+    <None Remove="api-client-test\**" />
+    <None Remove="PREVIOUS_GAME_STORY.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx.Core"><HintPath>$(BepInExCoreDir)\BepInEx.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.Common"><HintPath>$(BepInExCoreDir)\BepInEx.Unity.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(BepInExCoreDir)\BepInEx.Unity.IL2CPP.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(BepInExCoreDir)\Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Common"><HintPath>$(BepInExCoreDir)\Il2CppInterop.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.HarmonySupport"><HintPath>$(BepInExCoreDir)\Il2CppInterop.HarmonySupport.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(BepInExCoreDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Assembly-CSharp"><HintPath>$(BepInExInteropDir)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(BepInExInteropDir)\Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppSystem"><HintPath>$(BepInExInteropDir)\Il2CppSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(BepInExInteropDir)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(BepInExInteropDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(BepInExInteropDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(BepInExInteropDir)\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(BepInExInteropDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(BepInExInteropDir)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(BepInExInteropDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(BepInExInteropDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(BepInExInteropDir)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.Physics2DModule"><HintPath>$(BepInExInteropDir)\UnityEngine.Physics2DModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="spine-csharp"><HintPath>$(BepInExInteropDir)\spine-csharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="spine-unity"><HintPath>$(BepInExInteropDir)\spine-unity.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BehaviorDesigner.Runtime"><HintPath>$(BepInExInteropDir)\BehaviorDesigner.Runtime.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Import Project="PublicBuild.props" />
+</Project>
+
+

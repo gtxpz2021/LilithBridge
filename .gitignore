@@ -1,0 +1,40 @@
+# Build output and editor state
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.dll
+*.pdb
+*.exe
+*.zip
+
+# Local environments and downloaded dependencies
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+*.whl
+*.safetensors
+/models/
+/wheel-cache/
+/runtime/
+
+# Personal configuration, credentials, and conversation data
+.env
+.env.*
+!.env.example
+config.json
+config.json.*
+**/api-key.txt
+/data/
+/memory/
+/logs/
+/captures/
+/semantic-index/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
