@@ -1,0 +1,3 @@
+# These pinned manifests are verified byte-for-byte by the installer.
+optional/semantic-worker/model-manifest.json -text
+tools/setup/model-manifest.json -text
