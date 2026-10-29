@@ -1,108 +1,87 @@
 # LilithBridge 技术附录
 
-这篇附录供核对实现细节和验证结果时使用。如果只是想了解项目，先读[首页](../README.md)与[架构入门](../ARCHITECTURE.md)即可，不必从这些术语和版本号开始。
+这里列出当前预览的支持范围、主要模块和排查入口。首次安装请先读[玩家指南](PLAYER-GUIDE.md)，了解设计则读[架构入门](../ARCHITECTURE.md)。
 
-## 当前安装候选与支持范围
+## 当前预览
 
-当前说明对应已公开的 [`preview-20261029` 预览](https://github.com/gtxpz2021/LilithBridge/releases/tag/preview-20261029)，插件标识为 `6a028692`。安装宿主是《不/存在的莉莉丝》，不是《不/存在的你，和我》。可执行文件由 Release 附件提供，源码仓库不包含 DLL。预览与开发者自己的日用版本分别管理，不把其他版本的运行成绩算作该预览成绩。
+本页对应 [preview-20261029](https://github.com/gtxpz2021/LilithBridge/releases/tag/preview-20261029)，插件标识为 `6a028692`，安装宿主是《不/存在的莉莉丝》（Steam App ID 4643090）。可运行的安装器和插件由 Release 附件提供。
 
 | 项目 | 当前状态 |
 |---|---|
-| 安装范围 | 《不/存在的莉莉丝》，Windows x64；只接受 `game-1.0.4-be769-exact-r1`，逐项核对 32 个前置文件摘要 |
-| 其他游戏版本 | 未知版本与 Steam 1.1.0 不放行；静态对照不等于已适配或运行验证 |
-| 界面安装与回退 | 手工安装、假配置保存、取消预览及回退已验证，实际回滚结果已核对 |
-| 完整游戏运行 | 完整游戏启动尚未验证；安装成功不能代替运行验证 |
-| 远程聊天 API | 不要求 Python，可先安装插件并保存自己的 API 配置；配置器不调用 API 测试 |
-| 可选生产 worker | 已在 `optional/semantic-worker/` 附带，与此前真实离线验证的 worker/相邻模型清单同字节；本轮没有重跑模型验证 |
-| 可选运行环境 | `optional-recall/` 提供依赖准备与检查工具；Python、wheel、venv 和模型不捆绑 |
-| 召回游戏接入 | 用户自行选择生产 worker、Python 和模型路径；安装器不自动部署或启用，完整游戏接入仍待验证 |
-| 独立观察器 | 未随包附带；已有独立合成 demo 不等于真实全链路 hooks 已部署 |
+| 安装环境 | Windows x64；游戏 1.0.4 与匹配依赖，环境标识 `game-1.0.4-be769-exact-r1` |
+| Steam 1.1.0 及其他文件组合 | 当前安装包不支持 |
+| 安装器 | 安装、配置保存、取消预览与回退已检查；配置检查使用测试内容 |
+| 游戏运行 | 完整游戏启动与聊天尚未完成验证 |
+| 远程 API | 不要求 Python；配置器保存设置，不发送测试请求 |
+| 本地语义召回 | 附带 worker 脚本；Python、依赖环境和模型另行准备；worker 已有独立离线验证，游戏接入仍待实测 |
 | 一起看 | 未启用 |
-| 许可 | 自有代码与可许可文档采用 MIT；第三方权利与分发通知分别处理；附件已公开，文件名中的 private-candidate 仅是保留的候选标识 |
 
-安装目标的精确指纹保留在 `tools/setup/install-manifest.json`。本仓库导入没有重新运行安装器、游戏或 worker，也不附带私有验收记录。
+安装器按 `tools/setup/install-manifest.json` 检查目标游戏与依赖文件。若环境不匹配，请使用支持该环境的发布包，保留原有文件。
 
-## 材料在不同阶段代表什么
+## 一次请求中的材料
 
-一条经历被检索找到，不代表它就能用于当前请求。来源和状态符合要求后，还要看它与这次对话是否相关、剩余空间是否够用。即使已经选入材料，也要继续区分：请求是否构建完成、是否开始发送、是否生成成功、是否显示完成，以及记录是否保存成功。
+检索先找出可能相关的记录；材料选择再检查来源、状态、关联上下文和剩余空间。选入的材料与当前用户发言分开，并保留说话人、来源和时间。转述按转述处理。
 
-每一步都需要各自的证据。前一步成功，不能代替后一步的记录；“进入请求”也不等于“模型理解或采纳”。查看观察器、日志或实际聊天时，要按它们确实记录到的范围判断。
+材料进入请求后，还会经历发送、模型生成、游戏显示和保存。排查时分别查看这些阶段：没有被选入，可能是相关性不足或空间不够；已经生成却没显示完整，则需要检查交付过程。检索分数用于挑选候选，材料使用权限由另外的规则检查。
 
-检索分数只帮助寻找候选，不能决定来源有没有使用权限，也不能证明内容为真。程序把记录整理成请求材料时，应将当前用户发言与历史材料分开，并保留来源、角色和时间。转述也要保留为转述，不能因为写进请求，就当成已核实的本人发言。
+不同模块的容量可能按字符或 token 计量，查看日志时注意单位。
 
-程序会按相关性和预算选择材料，但字符数与模型 token 数不是同一种计量。一条有效记忆没有进入本次请求，可能只是放不下，不意味着它已被删除或否定。
+## 更正、反思和原始记录
 
-## 更正关系与原始记录
+明确的更正关系会把原话与后来的澄清关联起来。例如“周六去海边”与“我更正刚才那句，周六去图书馆”，在关联建立后应作为有上下文的一组材料处理。自然语言中的更正仍需要识别与判断。
 
-如果两条记录之间已经建立了明确的更正关系，就保留旧话原文，并把后来的澄清与它关联起来。选择材料时要保留理解这次更正所需的上下文，不能为了多放几条记录而把关联切断。
+反思使用一份状态快照，模型提出整理或修订，程序再检查来源、权限、依赖与版本后保存。原始经历与历次理解分别保留。
 
-例如，原话是“周六去海边”，后来的话是“我更正刚才那句，周六去图书馆”。系统明确关联这两条记录后，可以把它们作为一组材料提供给模型。这个例子只说明关联建立后怎样处理，不宣称系统能自动、可靠地识别所有自然语言更正，也不证明这个人最后真的去了哪里。
+| 字段 | 用途 |
+|---|---|
+| `SourceEventIds` | 可引用的事件来源 |
+| `SourceDayIds` | 可引用的日来源 |
+| `RevisionTargets` | 本次允许修订的目标版本 |
+| `NoteHistory` | 供阅读的历史内容 |
 
-来源 ID、来源版本和内容摘要各有用途，不能互相代替。同一个来源可能有不同版本；两个摘要相同，也不会自动成为同一来源。材料如果已撤回、失效，或不符合当前请求的约束，相似度再高也不能因此重新获得使用资格。
+记录状态描述的是处理进度：`active` 为尚未结算或被替代，`settled` 保留结算理由与时间，`superseded` 保留版本替代关系。角色如何看待这些内容，由模型结合具体对话判断。
 
-## 生成与实际交付
+## 回复显示与历史
 
-原始生成、显示计划、已显示片段和实际交付文本是不同记录。若生成“你后来改成去图书馆了。要不要聊聊那天的安排？”，但只显示了第一句，第二句就不能算作已经对用户说过的话。
-
-后续历史、经历和反思引用都应以实际交付情况为准。这个例子只解释未显示内容应怎样对待，不表示召回器会枚举全部原始生成内容，也不表示所有中断情况都已经验证过。
-
-## 反思怎样引用和修订
-
-反思请求使用当时状态的一份快照，模型可以引用哪些来源、可以修订哪个具体版本，都由程序限定。相关字段如下：
-
-- `SourceEventIds`：事件来源的引用范围。
-- `SourceDayIds`：日来源的引用范围。
-- `RevisionTargets`：允许修订的精确目标版本。
-- `NoteHistory`：供阅读的历史内容，不额外授予任意引用或修订权限。
-
-模型返回的只是整理或修订提案。保存前，程序仍需检查格式、来源、权限、依赖和版本；如果状态已经改变，基于旧快照的提案不能直接套用。保存修订时要保留旧版本以及新旧之间的关系，也不能把模型形成的理解另写成一件实际发生过的事。
-
-生命周期标签用于管理记录，不是心理状态标签。`active` 表示尚未结算或被替代，并不表示角色现在一定赞同这句话；`settled` 保留结算理由与时间；`superseded` 保留被新版本替代的关系。
+模型原始生成、显示计划、已显示片段和实际交付文本分别记录。后续历史、经历和反思引用以实际交付情况为依据。有关中断行为的完整覆盖仍需运行验证。
 
 ## 实现入口
 
-下列文件名帮助定位核心源码职责。核心源码在 `src/LilithBridge/`，安装与配置器源码单独放在 `tools/installer-source/`。
-
-| 实现入口 | 主要职责 |
+| 文件 | 主要职责 |
 |---|---|
-| `Plugin.cs`、`NativeHooks.cs`、`BridgeController*.cs` | BepInEx 加载、Unity/IL2CPP 与原生输入/UI 适配、请求和交付编排 |
-| `ConfigStore.cs`、`DataPaths.cs`、`MemoryStore*.cs` | 配置、数据根、经历与派生记忆的存储和生命周期 |
-| `HistoryProjection.cs`、`ContextBuilder.cs` | 历史投影、预算选择和请求材料构建；构建本身不证明发送或结算已发生 |
-| `MemoryStore.Experiences.cs`、`MemoryStore.SemanticRecall.cs` | 经历候选、来源资格、相关性、完整关联单元及可选语义召回 |
-| `DialogueMaterialEnvelope.cs`、`UtteranceAttribution.cs` | 区分当前发言与程序材料，保留来源、角色和转述边界 |
-| `BridgeController.Delivery.cs` | 区分生成、显示计划、已显示片段与实际交付 |
-| `MemoryStore.Reflections.cs`、`MemoryStore.SourceCorrections.cs` | 反思快照、来源约束、修订/结算与明确更正关系 |
-| `ReflectionProjectionObservation.cs` | 观察资格、相关性、选入与预算省略；仍有项目内依赖 |
+| `Plugin.cs`、`NativeHooks.cs`、`BridgeController*.cs` | 加载、游戏输入与界面适配、请求编排 |
+| `ConfigStore.cs`、`DataPaths.cs`、`MemoryStore*.cs` | 配置、数据目录、经历与记忆存储 |
+| `HistoryProjection.cs`、`ContextBuilder.cs` | 整理历史与请求材料、选择容量预算 |
+| `MemoryStore.Experiences.cs`、`MemoryStore.SemanticRecall.cs` | 经历检索、关联上下文和可选语义召回 |
+| `DialogueMaterialEnvelope.cs`、`UtteranceAttribution.cs` | 发言、历史材料与转述的来源归属 |
+| `BridgeController.Delivery.cs` | 回复显示与实际交付记录 |
+| `MemoryStore.Reflections.cs`、`MemoryStore.SourceCorrections.cs` | 反思、修订与明确更正关系 |
+| `ReflectionProjectionObservation.cs` | 记录材料的选入与省略情况 |
 
-请求协议、状态管理、失败恢复和游戏交互还涉及其他模块。因此，这张表不是完整调用图，列出的文件也不能据此当作独立程序运行。
+以上文件位于 `src/LilithBridge/`，共同组成依赖游戏与加载环境的插件。安装与配置器另在 `tools/installer-source/`。
 
-几类检查入口也需要分开看：安装器的路径/provider 测试夹具检查配置变更；产品显示、来源和反思测试夹具会加载产品 DLL 及 loader/interop；独立观察器则用合成示例展示机制。它们目的和依赖不同，合在一起也不是一个已经交付的无游戏 SDK。`SubmitEnterGate.cs` 等小状态机曾被列为独立示例候选，但本预览没有提取或编译它们。
+## 安装包文件核对
 
-## 安装候选与可选组件身份
+下列路径指 Release 安装包内的位置：
 
-下面的插件和安装器路径指 Release 安装包内的位置，不是源码仓库里的二进制文件。
+| 文件 | SHA-256 |
+|---|---|
+| `setup/payload/LilithBridge.dll` | `6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369` |
+| `setup/LilithBridge-Installer.exe` | `74fcebbc45e0cc01af672a9de773f022ff1b3fc8f690bbbfd65a1b284745b679` |
+| `optional/semantic-worker/semantic_worker.py` | `6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036` |
+| `optional/semantic-worker/model-manifest.json` | `c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17` |
 
-- 插件：`setup/payload/LilithBridge.dll`，SHA-256 `6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369`。
-- 安装器：`setup/LilithBridge-Installer.exe`，SHA-256 `74fcebbc45e0cc01af672a9de773f022ff1b3fc8f690bbbfd65a1b284745b679`；与手工界面验证使用的安装器同字节。
-- 生产 worker：`optional/semantic-worker/semantic_worker.py`，SHA-256 `6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036`。
-- 生产 worker 相邻模型清单：`optional/semantic-worker/model-manifest.json`，SHA-256 `c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17`。
+安装包根目录的 `Verify-Package.ps1` 可检查包内文件是否与清单一致。它用于文件完整性检查；支持范围以本页说明为准。无需为此修改系统脚本执行策略。
 
-安装包的 `setup/install-manifest.json`（仓库中为 `tools/setup/install-manifest.json`）保存允许安装的精确前置指纹与已知升级前身。不要手工修改指纹来让其他版本通过检查。安装器刚打开、尚未选择目标目录时可能仍显示通用模板说明；选择匹配目录并检查后，以具体检查结果和文件改动预览为准。
-
-**生产 worker 与自检 fixture 是两套不同文件。** `optional-recall/probe-fixture/semantic_worker.py` 只供合成协议检查，不能选作游戏 worker。游戏配置应选 `optional/semantic-worker/semantic_worker.py`，并保留它旁边的模型清单。安装器不会自动复制 worker 到游戏中，也不会替用户开启召回。
-
-worker 独立离线验证不等于完整游戏接入验证。使用说明见[可选生产 worker](../optional/semantic-worker/README.md)与[模型取得说明](../optional/semantic-worker/MODEL-ACQUISITION.md)。模型只按固定 revision 和文件清单取得，不随本包分发。
-
-在 Release 安装包中，可手动使用其根目录 `Verify-Package.ps1` 检查文件摘要一致性，无需为此修改脚本执行策略。它只确认文件与清单相符，不认证发布者身份、许可或游戏兼容性。第三方通知与权利范围见[许可状态](../LICENSE-STATUS.md)。
+本地召回的文件与路径要求见[依赖说明](DEPENDENCIES.md#可选本地召回)，第三方内容范围见[许可说明](../LICENSE-STATUS.md)。
 
 ## 小词典
 
-- **召回**：从已有记录里寻找这次对话可能用得上的材料。
-- **语义召回**：尝试按意思接近程度寻找材料，即使两次使用的词不同。
-- **投影**：把保存的记录整理成本次模型请求使用的形式。
-- **预算**：本次允许放入的材料量；不同模块可能按字符或 token 计量。
-- **反思**：模型基于允许使用的经历提出整理、理解或修订。
-- **交付**：回复实际显示给用户的部分，不是模型生成过的全部内容。
-- **hooks**：把程序运行时发生的事件接到观察或处理逻辑上的连接点。
+- **召回**：从已有记录中寻找这次可能用得上的内容。
+- **语义召回**：按意思接近程度寻找内容。
+- **投影**：把保存的记录整理为本次请求所需的形式。
+- **预算**：本次可容纳的材料量。
+- **反思**：模型依据经历提出的整理、理解或修订。
+- **交付**：实际显示给用户的回复。
 
-[回到项目首页](../README.md) · [架构入门](../ARCHITECTURE.md) · [安装与使用说明](PLAYER-GUIDE.md)
+[回到首页](../README.md) · [架构入门](../ARCHITECTURE.md) · [安装说明](PLAYER-GUIDE.md)

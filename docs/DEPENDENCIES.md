@@ -1,60 +1,91 @@
-# 依赖与本地召回说明
+# 依赖与本地召回
 
-先使用远程聊天 API，只需要匹配的游戏环境和自己的 API 服务；不需要 Python 或本地模型。只有决定启用本地语义召回时，才需要后半部分的可选环境。
+先使用远程聊天 API，只需准备匹配的游戏环境和自己的聊天服务。**Python 与本地模型都是可选项。**
 
-## 游戏与安装器
+## 游戏与加载环境
 
-本 MOD 的运行宿主是 **《不/存在的莉莉丝》（The NOexistenceN of Lilith）**。[Steam 官方商店](https://store.steampowered.com/app/4643090/?l=schinese)提供正版购买与下载入口，App ID 为 4643090。《不/存在的你，和我》是另一款作品，不是安装前置。
+安装目标是 [《不/存在的莉莉丝》（The NOexistenceN of Lilith）](https://store.steampowered.com/app/4643090/?l=schinese)，Steam App ID 为 **4643090**。
 
-当前公开预览仅接受 Windows x64、**游戏 1.0.4 的已核验配套文件组合**。Steam 1.1.0 和其他不匹配版本不在安装支持范围内；静态对照不能当作适配或运行验证。商店下载的当前版本未必是所需组合，不能承诺购买后就能安装本预览。
+当前公开预览要求 Windows x64、游戏 **1.0.4 的指定文件组合**，不支持 Steam 1.1.0。游戏版本号相同也可能存在文件差异，最终以安装器检查结果为准。请先确认自己有匹配环境，再决定是否尝试安装。
 
-| 需要准备 | 当前要求 |
+| 组件 | 当前要求 |
 |---|---|
-| 游戏本体 | 自备合法的《不/存在的莉莉丝》，实际文件必须匹配 |
-| BepInEx / interop | 自备下述固定组合，不随 MOD 包分发 |
-| 安装器运行条件 | .NET Framework 4.8/4.8.1 |
-| 远程聊天 API | 自己选择服务，准备地址、模型名和 Key |
-| Python / BGE 模型 | **仅本地语义召回需要**，API-only 路线不需要 |
+| 游戏 | 自行合法取得《不/存在的莉莉丝》及匹配文件 |
+| BepInEx | `6.0.0-be.769`，Unity IL2CPP Windows x64 构建 |
+| Il2CppInterop | `1.5.1-ci.829` |
+| HarmonyX | `2.10.2` |
+| 安装器运行环境 | .NET Framework 4.8/4.8.1 |
 
-安装器逐项核对安装包 `setup/install-manifest.json` 中的 32 个文件（仓库对应 `tools/setup/install-manifest.json`）。仅仅显示同一个版本号还不够，实际文件摘要也必须匹配。
+游戏、加载器和 interop 不在 MOD 安装包中。BepInEx 从[官方构建页](https://builds.bepinex.dev/projects/bepinex_be)取得，对应文件名为：
 
-本包不含游戏、加载器或 interop。BepInEx 的取得入口是[官方构建页](https://builds.bepinex.dev/projects/bepinex_be)，对应档案名为 `BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip`；安装方法见[官方 Unity IL2CPP 指南](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)。不要任意改用较新构建来代替当前组合。官方指南包含解压到游戏根目录、首次启动以生成所需文件等步骤；它说明加载器怎样准备，不保证生成结果一定符合本 MOD 的固定指纹。首次游戏启动由用户自行决定，本安装包不会执行。
+`BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip`
 
-所需组合包括 BepInEx 6.0.0-be.769、Il2CppInterop 1.5.1-ci.829 和 HarmonyX 2.10.2，仍以完整文件检查结果为准。官方入口不等于任何下载文件都已与本包指纹对应；缺少或不匹配时应先停下来核对。安装目标指纹在仓库 `tools/setup/install-manifest.json` 中；许可范围另见[许可说明](../LICENSE-STATUS.md)。
+按照[官方 Unity IL2CPP 安装说明](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)准备加载器，并首次启动游戏以生成相应文件；退出游戏后，再运行 LilithBridge 安装器检查。已有加载器时先备份，确认版本匹配后再操作。
+
+如果检查提示缺少文件，按提示补齐；如果提示版本不匹配，请停在这里，使用支持该环境的安装包。不要改清单或换一个更新的加载器来强行通过。当前环境要求的详细文件清单在 `tools/setup/install-manifest.json`。
 
 ## 远程聊天 API
 
-API 地址、模型名称和 Key 由你选择并在配置器主动保存。配置器不会联网替你试调用；实际使用前请自行了解该服务的费用与数据处理方式。Key 和备份是本机明文文件，不要随包分享。
+你需要准备提供 Chat Completions 接口的 HTTPS 服务，并在配置器填写：
 
-## 可选的 Python 环境
+- **API 地址**：使用服务商提供的接口地址，而不是聊天网页地址。
+- **模型名**：使用服务商文档中的模型标识。
+- **API Key**：使用自己账户的 Key。
 
-`optional-recall/` 包含环境准备、依赖锁和自检工具，不包含 Python、wheel 或已建好的 venv。当前工具面向普通 CPython 3.12 Windows x64，已有验证使用 3.12.10；这不是对所有补丁版本或其他 Python 发行方式的保证。
+不同服务商和模型的接口行为可能有差异，能否配合本插件正常聊天仍需实际确认。配置器只保存设置，不会发送测试请求。
 
-根目录 `Optional-Recall.ps1` 是工具入口，需要明确传入自己的 `python.exe` 和新环境目录。默认动作 `plan` 用来查看计划；下载需要显式选择 `download` 并给出下载预算，`install` 从已核验的离线 wheel 缓存安装，`verify` 做导入与合成协议检查。工具不会改游戏配置或开启召回。
+API 可能按使用量收费；你的发言和本次用到的历史材料会发送到该服务。使用前请查看价格、额度及数据处理说明。Key 和配置备份以明文保存在本机，请勿随包分享。
 
-例如，下面只预览会使用的命令，不执行环境准备；请把示例路径换成自己的实际路径：
+## 可选本地召回
+
+本地语义召回用 `BAAI/bge-small-zh-v1.5` 按意思寻找旧经历，不生成聊天回复。它需要 Python、依赖环境、模型和包内的 worker 脚本。当前预览的游戏接入仍待实测；初次使用可以先跳过这一节。
+
+### 1. 准备 Python 环境
+
+可选环境工具位于 `optional-recall/`，入口是根目录的 `Optional-Recall.ps1`。工具面向普通 CPython 3.12 Windows x64，已用 3.12.10 检查；其他 Python 版本和发行方式尚未验证。仓库和安装包不包含 Python、依赖安装包或建好的环境。
+
+先把下面两条示例路径换成自己的路径，预览准备命令：
 
 ```powershell
 .\Optional-Recall.ps1 -PythonExe 'C:\YourPython\python.exe' -RuntimeRoot 'C:\YourRuntime\LilithBridge' -Action plan -PreviewCommand
 ```
 
-不需要为此修改全局 PATH 或脚本执行策略。若系统策略不允许运行脚本，应保留策略并使用已允许的操作方式，不要绕过它。准备环境时，按工具给出的明确计划逐步操作，不能把 `verify` 的合成协议检查当成真实 BGE 模型推理。
+这个命令仅显示计划。后续动作如下：
 
-## 生产 worker 与模型
+| 动作 | 用途 |
+|---|---|
+| `plan` | 查看准备计划 |
+| `download` | 在明确给出下载预算后，下载依赖安装包 |
+| `install` | 从已核验的离线安装包缓存建立环境 |
+| `verify` | 检查依赖导入与脚本通信；模型运行需要另外检查 |
 
-可以供游戏配置选择的生产文件在 `optional/semantic-worker/`：
+工具不会修改游戏配置或开启召回。无需修改全局 PATH 或系统脚本策略；如果系统不允许运行脚本，请保留策略并使用已允许的方式准备环境。
 
-- `semantic_worker.py` 是实际 worker；
-- 同目录 `model-manifest.json` 是它使用的固定模型文件清单；
-- [worker 使用说明](../optional/semantic-worker/README.md)说明手动诊断与路径约定；
-- [模型取得说明](../optional/semantic-worker/MODEL-ACQUISITION.md)给出官方固定 revision 和所需文件。
+### 2. 准备模型与 worker
 
-模型为 BAAI/bge-small-zh-v1.5，固定 revision `7999e1d3359715c523056ef9478215996d62a620`，需要清单中的 11 个文件。当前 MOD 安装 ZIP 不含模型权重，worker 也不会自动下载缺失文件。现在可按上面的官方固定 revision 手动取得；不要把未发布的单独模型包当成已有下载项。
+模型需要自行下载，安装器和 worker 不会自动下载。请按[模型取得说明](../optional/semantic-worker/MODEL-ACQUISITION.md)取得固定版本及清单中的文件，保留目录结构。
 
-取得后保留子目录结构并核对清单。配置器选择的模型目录须严格对应清单中的 11 个文件，不能混入额外文件或目录。如果模型压缩包外层包含说明、许可证和清单，内层是 `bge-small-zh-v1.5/`，请选择**内层权重目录**，而不是整个解压目录。外层说明和许可证留在原位，不要复制进内层。
+配置器需要选择三个路径：
 
-`optional-recall/probe-fixture/` 是自检夹具，里面的同名 `semantic_worker.py` **不能选入游戏配置**。生产 worker 已经过独立离线验证，但这份插件的完整游戏接入仍待实测；安装器不会自动部署或启用它。
+| 配置项 | 选择什么 |
+|---|---|
+| Python | 自己准备的环境中的 `Scripts/python.exe` |
+| worker | 安装包内的 `optional/semantic-worker/semantic_worker.py` |
+| 模型 | `bge-small-zh-v1.5` 权重目录；其中应只包含模型清单要求的文件及子目录 |
 
-准备好 Python、生产 worker 和模型后，在配置器选择路径，并明确选择“关闭本地召回”，勾选确认后保存；再重新读取、检查本地文件，选择启用，再次勾选确认并保存。worker 的索引放在产品自己的数据根内，不放进模型或 worker 目录；不要复制别人的索引、记忆或配置。
+保留 worker 旁边的 `model-manifest.json`。如果模型下载包有外层说明目录，请选择内层权重目录；说明和许可证留在外层，模型中的官方 `README.md` 保持原样。
 
-[返回安装说明](PLAYER-GUIDE.md) · [许可状态](../LICENSE-STATUS.md)
+只选择上表中的 worker 路径。`optional-recall/probe-fixture/` 用于工具自检，不用于游戏配置。
+
+### 3. 保存并启用
+
+1. 在配置器选择模型、Python 和 worker 路径。
+2. 明确选择“关闭本地召回”，勾选配置确认，再保存。
+3. 点击“重新读取”，然后“检查本地文件”。这一步检查文件与路径，不会运行模型。
+4. 检查通过后，选择“启用本地召回（先检查文件）”，再次勾选确认并保存。
+
+更换任一路径时，重复上述顺序。如果检查失败，保持召回关闭，按错误提示核对缺失或不匹配的文件。[worker 使用说明](../optional/semantic-worker/README.md)提供单独诊断方法。
+
+运行时生成的索引保存在插件数据目录中。请使用自己的配置和数据，不要复制他人的记忆或索引。
+
+[返回安装说明](PLAYER-GUIDE.md) · [许可与第三方内容](../LICENSE-STATUS.md)

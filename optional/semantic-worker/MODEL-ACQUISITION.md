@@ -1,11 +1,29 @@
-# 模型单独取得：固定官方 BAAI revision
+# 下载本地召回模型
 
-仓库和安装包都不含模型权重。用户需要自行从 [BAAI 的官方 Hugging Face 仓库固定 revision](https://huggingface.co/BAAI/bge-small-zh-v1.5/tree/7999e1d3359715c523056ef9478215996d62a620) 取得 `BAAI/bge-small-zh-v1.5`，不能只写 main/latest。
+本地召回使用 **BAAI/bge-small-zh-v1.5**。仓库和安装包不含模型权重，需要从 [BAAI 官方固定版本页面](https://huggingface.co/BAAI/bge-small-zh-v1.5/tree/7999e1d3359715c523056ef9478215996d62a620)另行下载。
 
-只取本包 `model-manifest.json` 中的 11 个路径，并保持相对结构；逐项字节数和 SHA-256 已在清单列明，总量 96,405,966 字节，约 91.94 MiB。不要默认 clone/download 整个仓库：同 revision 另有约 95.8 MB 的 `pytorch_model.bin`，本清单用 `model.safetensors`，不需要再取该重复权重。
+固定 revision：`7999e1d3359715c523056ef9478215996d62a620`。
 
-固定单文件官方来源的格式为 `https://huggingface.co/BAAI/bge-small-zh-v1.5/resolve/7999e1d3359715c523056ef9478215996d62a620/<manifest中的相对路径>`。这是来源说明，不是自动下载脚本；用户实际下载前应确认总量、磁盘与路径。不要运行网页给出的在线 from_pretrained 示例替代固定本地路径，也不要允许 worker 自动 fallback 下载。
+## 下载哪些文件
 
-下载完可用 README 中的 `verify_model_files.py --model <明确目录>` 只读核验，不匹配或缺失就停止；不要修改 manifest 的 hash 来凑通过。该检查不会读取配置/记忆，不会下载。
+按本目录的 `model-manifest.json` 下载列出的文件，并保留相对目录结构。清单共 11 个文件，总计 **96,405,966 字节，约 91.94 MiB**，每个文件的大小和 SHA-256 都列在清单中。
 
-官方固定版本页面显示模型卡许可标签 MIT；这只是来源事实，完整模型许可文本/固定 revision 来源映射仍保留为发布材料审阅项，不由本任务推导最终法律结论，也不把模型许可套给 Python 依赖。
+这套配置使用 `model.safetensors`，无需下载另一份 `pytorch_model.bin`，也无需下载整个模型仓库。
+
+官方单文件地址格式为：
+
+```text
+https://huggingface.co/BAAI/bge-small-zh-v1.5/resolve/7999e1d3359715c523056ef9478215996d62a620/<清单中的相对路径>
+```
+
+选择有足够空间的本地目录，并保留清单中的官方 `README.md`。如果另存说明或许可证，请放在权重目录外；配置器要求权重目录中只保留清单规定的文件和子目录。
+
+## 检查后再配置
+
+按 [worker 使用说明](README.md#单独诊断)运行 `verify_model_files.py --model <模型目录>`。它检查已有文件，不会下载缺失内容。检查失败时，按提示补齐或重新下载相应文件；不要修改清单来通过检查。
+
+下载完成后，在配置器选择实际包含权重的目录。如果压缩包外层有说明文件、内层才是 `bge-small-zh-v1.5/`，应选择这个内层目录。
+
+此版本使用固定本地模型，不会在运行时自动下载。启用顺序见[依赖说明](../../docs/DEPENDENCIES.md#3-保存并启用)。
+
+模型适用其官方许可。若计划重新分发模型，请先核对固定版本的完整许可与所需通知；LilithBridge 的 MIT 许可仅覆盖项目自有内容。
