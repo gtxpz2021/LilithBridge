@@ -105,20 +105,14 @@ namespace LilithSetup
             SetupCore.Require(Directory.Exists(game) && File.Exists(Join(game, "Lilith.exe")), "LBINSTALL_SELECT_GAME_FOLDER_WITH_LILITH_EXE");
             SetupCore.Require(Pending(game).Count == 0, "LBINSTALL_INTERRUPTED_TRANSACTION_RECOVER_FIRST");
             SetupCore.Require(FileState(Join(m.PackageRoot, "install-manifest.json")) == m.ManifestDigest, "LBINSTALL_MANIFEST_CHANGED_RELOAD");
-            SetupCore.Require(m.TargetHashes.Count == InstallManifest.Required.Length && InstallManifest.Required.All(k => m.TargetHashes.ContainsKey(k)), "LBINSTALL_COMPATIBILITY_NOT_VERIFIED_INSTALL_DISABLED");
-            foreach (string relative in InstallManifest.Required)
-            {
-                string path = Join(game, relative);
-                SetupCore.Require(File.Exists(path), "LBINSTALL_DEPENDENCY_MISSING:" + relative);
-                SetupCore.Require(SetupCore.FileHash(path) == m.TargetHashes[relative], "LBINSTALL_UNSUPPORTED_TARGET_OR_DEPENDENCY:" + relative);
-            }
+            SetupCore.Require(FileState(Join(m.PackageRoot, @"payload\LilithBridge.dll")) == m.PluginSha256, "LBINSTALL_PAYLOAD_HASH_MISMATCH"); var capabilities = HostCapabilities.Inspect(game, Join(m.PackageRoot, @"payload\LilithBridge.dll")); SetupCore.Require(capabilities.CanInstall, "LBINSTALL_HOST_" + capabilities.State);
             CheckPe64(Join(game, "Lilith.exe")); CheckPe64(Join(game, "GameAssembly.dll"));
             string payload = Join(m.PackageRoot, @"payload\LilithBridge.dll");
             SetupCore.Require(FileState(payload) == m.PluginSha256, "LBINSTALL_PAYLOAD_HASH_MISMATCH");
             string plugin = Join(game, InstallManifest.Plugin), marker = Join(game, InstallManifest.Marker);
             SetupCore.Require(Directory.Exists(Path.GetDirectoryName(plugin)), "LBINSTALL_DEPENDENCY_MISSING:BepInEx\\plugins");
             string old = FileState(plugin), oldMarker = FileState(marker);
-            SetupCore.Require(old == "MISSING" || old == m.PluginSha256 || m.PreviousPluginHashes.Contains(old), "LBINSTALL_UNKNOWN_EXISTING_PLUGIN_BACK_UP_MANUALLY");
+            SetupCore.Require(old == "MISSING" || old == m.PluginSha256 || m.PreviousPluginHashes.Contains(old) || HostCapabilities.IsNamedBridge(plugin), "LBINSTALL_UNKNOWN_EXISTING_PLUGIN_BACK_UP_MANUALLY");
             // Avoid silently switching an existing APPDATA-based installation.
             SetupCore.Require(old == "MISSING" || oldMarker != "MISSING", "LBINSTALL_EXISTING_INSTALL_NEEDS_EXPLICIT_DATA_MIGRATION");
             string data = oldMarker == "MISSING" ? Join(game, "LilithBridgeData") : MarkerRoot(game, marker);

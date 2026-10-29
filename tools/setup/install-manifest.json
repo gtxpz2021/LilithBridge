@@ -1,12 +1,16 @@
 {
   "schema": 1,
   "product": "LilithBridge",
-  "id": "LilithBridge-6a028692-win-x64-private-candidate-r1",
-  "plugin_sha256": "6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369",
+  "id": "lilithbridge-installer-20261029-r5",
+  "plugin_sha256": "47a9493ae11e34afa8b3b1bb4028308bfa00b029052b00ad1631984f88b9ee44",
   "previous_plugin_hashes": [
-    "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353"
+    "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353",
+    "d387eff9e0422fd62ff0ce1943e2383293c978fb373d0632c4b8298655e150db",
+    "6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369"
   ],
-  "target_hashes": {
+  "target_hashes": {},
+  "compatibility_mode": "actual static interfaces and loader freshness; no game hash whitelist",
+  "diagnostic_104_hashes": {
     "Lilith.exe": "ed30029bfcdd8b8fa5b691ffc2505ac711353e67b49e3e300b1182934abc38dc",
     "GameAssembly.dll": "10d84498cdd86fd8d10d3ac89a11c7bb8bd91256ca39b877d9f2005967caf94a",
     "Lilith_Data\\il2cpp_data\\Metadata\\global-metadata.dat": "4c25a9f70638c8a5bc93bf979fa846b4bd57438a7dca269666ae8155f231bc59",

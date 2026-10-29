@@ -23,7 +23,7 @@ namespace LilithSetup
                 using (var form = new InstallerForm(AppDomain.CurrentDomain.BaseDirectory, root)) Application.Run(form);
                 return 0;
             }
-            catch (Exception error) { MessageBox.Show(InstallerCore.Explain(error), "LilithBridge 安装候选", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+            catch (Exception error) { MessageBox.Show(InstallerCore.Explain(error), "LilithBridge 安装与配置", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
         }
     }
 }

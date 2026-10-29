@@ -2,21 +2,9 @@
 
 这里列出当前预览的支持范围、主要模块和排查入口。首次安装请先读[玩家指南](PLAYER-GUIDE.md)，了解设计则读[架构入门](../ARCHITECTURE.md)。
 
-## 当前预览
+## 适用范围
 
-本页对应 [preview-20261029](https://github.com/gtxpz2021/LilithBridge/releases/tag/preview-20261029)，插件标识为 `6a028692`，安装宿主是《不/存在的莉莉丝》（Steam App ID 4643090）。可运行的安装器和插件由 Release 附件提供。
-
-| 项目 | 当前状态 |
-|---|---|
-| 安装环境 | Windows x64；游戏 1.0.4 与匹配依赖，环境标识 `game-1.0.4-be769-exact-r1` |
-| Steam 1.1.0 及其他文件组合 | 当前安装包不支持 |
-| 安装器 | 安装、配置保存、取消预览与回退已检查；配置检查使用测试内容 |
-| 游戏运行 | 完整游戏启动与聊天尚未完成验证 |
-| 远程 API | 不要求 Python；配置器保存设置，不发送测试请求 |
-| 本地语义召回 | 附带 worker 脚本；Python、依赖环境和模型另行准备；worker 已有独立离线验证，游戏接入仍待实测 |
-| 一起看 | 未启用 |
-
-安装器按 `tools/setup/install-manifest.json` 检查目标游戏与依赖文件。若环境不匹配，请使用支持该环境的发布包，保留原有文件。
+Windows x64 下，已在《不/存在的莉莉丝》Steam 1.1.0 测试环境中完成安装、配置、启动和基本聊天；其他环境由安装器检查运行条件，游戏更新仍可能影响兼容性，本地召回的游戏接入尚待实测。
 
 ## 一次请求中的材料
 
@@ -60,18 +48,9 @@
 
 以上文件位于 `src/LilithBridge/`，共同组成依赖游戏与加载环境的插件。安装与配置器另在 `tools/installer-source/`。
 
-## 安装包文件核对
+## 安装包与依赖
 
-下列路径指 Release 安装包内的位置：
-
-| 文件 | SHA-256 |
-|---|---|
-| `setup/payload/LilithBridge.dll` | `6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369` |
-| `setup/LilithBridge-Installer.exe` | `74fcebbc45e0cc01af672a9de773f022ff1b3fc8f690bbbfd65a1b284745b679` |
-| `optional/semantic-worker/semantic_worker.py` | `6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036` |
-| `optional/semantic-worker/model-manifest.json` | `c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17` |
-
-安装包根目录的 `Verify-Package.ps1` 可检查包内文件是否与清单一致。它用于文件完整性检查；支持范围以本页说明为准。无需为此修改系统脚本执行策略。
+可安装文件以 [Releases](https://github.com/gtxpz2021/LilithBridge/releases) 中实际提供的 Windows 安装 ZIP 附件为准。对应发布说明和包内清单用于核对安装包身份与内容。
 
 本地召回的文件与路径要求见[依赖说明](DEPENDENCIES.md#可选本地召回)，第三方内容范围见[许可说明](../LICENSE-STATUS.md)。
 

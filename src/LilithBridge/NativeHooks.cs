@@ -26,16 +26,57 @@ internal static class NativeHooks
             .Where(x=>x.Patch.owner==owner&&x.Patch.PatchMethod.DeclaringType?.DeclaringType==typeof(NativeHooks))
             .Select(x=>new InstalledHook(target,x.Patch.PatchMethod,x.Phase));
     }).ToArray();
-    // Plugin.Load and the isolated registration test use this exact entry, not PatchAll on the shell type.
-    internal static IReadOnlyList<MethodBase> Apply(Harmony harmony)
+    internal sealed record RegistrationPlan(string OwnerId, IReadOnlyList<PatchClassProcessor> Processors);
+
+    internal static RegistrationPlan Prepare(Harmony harmony)
     {
+        var types = PatchClasses;
+        foreach (var type in types)
+        {
+            MethodInfo? targetProvider = type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                .SingleOrDefault(m => m.GetCustomAttributes(typeof(HarmonyTargetMethods), false).Length > 0);
+            if (targetProvider != null)
+            {
+                var targets = ((IEnumerable<MethodBase>?)targetProvider.Invoke(null, null))?.ToArray();
+                if (targets == null || targets.Length == 0 || targets.Any(t => t == null))
+                    throw new MissingMethodException("Native hook target set is empty: " + type.Name);
+            }
+            else
+            {
+                var attributes = type.GetCustomAttributes(typeof(HarmonyPatch), false).Cast<HarmonyPatch>();
+                var info = HarmonyMethod.Merge(attributes.Select(a => a.info).ToList());
+                if (info.declaringType == null || info.methodName == null
+                    || AccessTools.Method(info.declaringType, info.methodName, info.argumentTypes) == null)
+                    throw new MissingMethodException("Native hook target unavailable: " + type.Name);
+            }
+            // Resolve callback signature types before any owner patches are active.
+            foreach (var method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                _ = method.ReturnType;
+                foreach (var parameter in method.GetParameters()) _ = parameter.ParameterType;
+            }
+        }
+        return new RegistrationPlan(harmony.Id, types.Select(harmony.CreateClassProcessor).ToArray());
+    }
+
+    internal static void ForgetRegistration(string owner)
+    {
+        lock (RegistrationLock) Registrations.Remove(owner);
+    }
+
+    // Plugin.Load and the isolated registration test use this exact entry, not PatchAll on the shell type.
+    internal static IReadOnlyList<MethodBase> Apply(Harmony harmony) => Apply(harmony, Prepare(harmony));
+
+    internal static IReadOnlyList<MethodBase> Apply(Harmony harmony, RegistrationPlan plan)
+    {
+        if (plan.OwnerId != harmony.Id) throw new InvalidOperationException("Native hook plan owner mismatch");
         lock(RegistrationLock)
         {
             var installed=Installed(harmony.Id);
             if(Registrations.TryGetValue(harmony.Id,out var previous)&&installed.Length==previous.Length
                 &&new HashSet<InstalledHook>(previous).SetEquals(installed))return installed.Select(x=>x.Target).Distinct().ToArray();
             if(installed.Length>0)throw new InvalidOperationException("Native hook registration is partial or externally changed; refusing duplicate installation");
-            foreach(var type in PatchClasses)harmony.CreateClassProcessor(type).Patch();
+            foreach(var processor in plan.Processors) processor.Patch();
             installed=Installed(harmony.Id);Registrations[harmony.Id]=installed;
             return installed.Select(x=>x.Target).Distinct().ToArray();
         }

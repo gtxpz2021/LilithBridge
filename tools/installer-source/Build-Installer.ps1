@@ -1,8 +1,7 @@
-$ErrorActionPreference = 'Stop'
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if (-not (Test-Path -LiteralPath $compiler)) { throw 'Existing Framework compiler required; no SDK initialization or dependency install.' }
-$common = @('/nologo','/platform:x64','/optimize+','/debug-','/langversion:5','/utf8output','/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll','/reference:System.Web.Extensions.dll')
-$sources = @('Setup.Core.cs','Setup.Form.cs','Installer.Core.cs','Installer.Form.cs','Program.cs') | ForEach-Object { Join-Path $PSScriptRoot ('src\'+$_) }
-$setup = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\setup'))
-& $compiler @common /target:winexe "/win32manifest:$PSScriptRoot\src\app.manifest" "/out:$setup\LilithBridge-Installer.exe" @sources
-if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
+$ErrorActionPreference='Stop'
+$setup=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\setup'))
+$facade=Join-Path $env:WINDIR 'Microsoft.NET\assembly\GAC_MSIL\netstandard\v4.0_2.0.0.0__cc7b13ffcd2ddd51\netstandard.dll'
+$compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$sources=@(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -File -Filter '*.cs' | ForEach-Object {$_.FullName})
+& $compiler /nologo /codepage:65001 /langversion:5 /target:winexe /platform:x64 /optimize+ /debug- /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/reference:$facade" "/reference:$setup\Mono.Cecil.dll" "/win32manifest:$PSScriptRoot\src\app.manifest" "/out:$setup\LilithBridge-Installer.exe" @sources
+if($LASTEXITCODE -ne 0){throw 'Own installer compilation failed. Product DLL was not rebuilt.'}

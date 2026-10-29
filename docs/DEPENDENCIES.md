@@ -1,40 +1,43 @@
 # 依赖与本地召回
 
-先使用远程聊天 API，只需准备匹配的游戏环境和自己的聊天服务。**Python 与本地模型都是可选项。**
+先使用远程聊天 API，只需准备游戏加载环境和自己的聊天服务。**Python 与本地模型都是可选项。**
 
 ## 游戏与加载环境
 
-安装目标是 [《不/存在的莉莉丝》（The NOexistenceN of Lilith）](https://store.steampowered.com/app/4643090/?l=schinese)，Steam App ID 为 **4643090**。
+安装目标是[《不/存在的莉莉丝》（The NOexistenceN of Lilith）](https://store.steampowered.com/app/4643090/?l=schinese)，Steam App ID 为 **4643090**，运行系统为 Windows x64。
 
-当前公开预览要求 Windows x64、游戏 **1.0.4 的指定文件组合**，不支持 Steam 1.1.0。游戏版本号相同也可能存在文件差异，最终以安装器检查结果为准。请先确认自己有匹配环境，再决定是否尝试安装。
+安装器会检查游戏目录中的运行组件和所需功能，再决定能否安装。游戏版本号不是唯一依据；游戏更新或不同加载环境仍可能影响兼容性。
 
-| 组件 | 当前要求 |
-|---|---|
-| 游戏 | 自行合法取得《不/存在的莉莉丝》及匹配文件 |
-| BepInEx | `6.0.0-be.769`，Unity IL2CPP Windows x64 构建 |
-| Il2CppInterop | `1.5.1-ci.829` |
-| HarmonyX | `2.10.2` |
-| 安装器运行环境 | .NET Framework 4.8/4.8.1 |
+### 首次给原版游戏安装 MOD
 
-游戏、加载器和 interop 不在 MOD 安装包中。BepInEx 从[官方构建页](https://builds.bepinex.dev/projects/bepinex_be)取得，对应文件名为：
+1. 从[BepInEx 官方构建页](https://builds.bepinex.dev/projects/bepinex_be)准备 **BepInEx 6 的 Unity IL2CPP、Windows x64 构建**。推荐使用已验证的 **be.769+32fb12f**，文件名为 `BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip`；不要选成 Mono 或 x86 构建。
+2. 按[官方 Unity IL2CPP 安装说明](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)将加载器放入游戏目录。
+3. 启动一次游戏，让加载器生成所需的 interop 文件；首次准备可能需要一些时间。
+4. 正常退出游戏，再打开 LilithBridge 安装器检查并安装。
 
-`BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip`
+其他构建是否可用，仍需由安装器检查并在游戏中确认；并非构建越新越适合。
 
-按照[官方 Unity IL2CPP 安装说明](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)准备加载器，并首次启动游戏以生成相应文件；退出游戏后，再运行 LilithBridge 安装器检查。已有加载器时先备份，确认版本匹配后再操作。
+游戏、加载器和 interop 不在 MOD 安装包中；LilithBridge 安装器不会替你下载加载器。安装器本身需要 .NET Framework 4.8/4.8.1 运行环境。
 
-如果检查提示缺少文件，按提示补齐；如果提示版本不匹配，请停在这里，使用支持该环境的安装包。不要改清单或换一个更新的加载器来强行通过。当前环境要求的详细文件清单在 `tools/setup/install-manifest.json`。
+### 已经有加载环境
+
+**先运行 LilithBridge 安装器检查即可，不必重装已有依赖。** 如果检查提示缺少组件，按提示补齐；若现有环境不支持，先备份并查看对应发布说明，不要随意覆盖共享加载器或修改清单。
 
 ## 远程聊天 API
 
-你需要准备提供 Chat Completions 接口的 HTTPS 服务，并在配置器填写：
+默认服务商是 **DeepSeek 官方**，默认模型是 **deepseek-flash**。初次配置只需填入自己的 Key，服务地址由预设填写。
 
-- **API 地址**：使用服务商提供的接口地址，而不是聊天网页地址。
-- **模型名**：使用服务商文档中的模型标识。
-- **API Key**：使用自己账户的 Key。
+模型列表也提供 **Pro（`deepseek-v4-pro`）**。选择前请查看服务商对该模型的费用和账户要求。
 
-不同服务商和模型的接口行为可能有差异，能否配合本插件正常聊天仍需实际确认。配置器只保存设置，不会发送测试请求。
+如需其他服务，使用自定义高级入口，准备：
 
-API 可能按使用量收费；你的发言和本次用到的历史材料会发送到该服务。使用前请查看价格、额度及数据处理说明。Key 和配置备份以明文保存在本机，请勿随包分享。
+- **HTTPS API 地址**：兼容 Chat Completions 的接口地址，而不是聊天网页地址。
+- **模型名**：服务商文档中的模型标识。
+- **API Key**：该服务账户的 Key；切换服务商时不能沿用另一家服务的 Key。
+
+不同服务商和模型的接口行为可能有差异，仍需实际确认是否能正常配合本插件。配置器只保存设置，不发送测试请求。
+
+API 可能按使用量收费；你的发言和本次用到的历史材料会发送到所选服务。使用前请查看价格、额度及数据处理说明。Key 和配置备份以明文保存在本机，请勿随包分享。
 
 ## 可选本地召回
 

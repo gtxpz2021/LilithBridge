@@ -23,6 +23,8 @@ internal sealed partial class BridgeController : MonoBehaviour
     private ApiResult? _queuedReply;
 
     private bool _systemReady;
+    private bool _reportedFirstUpdate;
+    private bool _reportedReadyFault;
     private bool _listening;
     private bool _requestPending;
     private bool _queuedReplyBlockedByStory;
@@ -146,6 +148,7 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void OnDestroy()
     {
+        try { Plugin.PluginLog.LogInfo("LilithBridge lifecycle: controller destroyed"); } catch { }
         if (ReferenceEquals(Instance, this))
             Instance = null;
         CancelPendingDialogue();
@@ -174,6 +177,11 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void Update()
     {
+        if (!_reportedFirstUpdate)
+        {
+            _reportedFirstUpdate = true;
+            try { Plugin.PluginLog.LogInfo("LilithBridge lifecycle: first Update"); } catch { }
+        }
         BeginPreparationFrame();
         if (Time.unscaledTime >= _nextConfigReload)
         {
@@ -576,8 +584,13 @@ internal sealed partial class BridgeController : MonoBehaviour
                     "debug proactive trigger armed");
             }
         }
-        catch
+        catch (Exception error)
         {
+            if (!_reportedReadyFault)
+            {
+                _reportedReadyFault = true;
+                try { Plugin.PluginLog.LogWarning("LilithBridge readiness probe: " + error.GetType().Name); } catch { }
+            }
             // Wait for the scene to finish loading.
         }
     }

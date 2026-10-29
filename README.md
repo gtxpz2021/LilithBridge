@@ -6,11 +6,12 @@ LilithBridge 是桌面伴侣游戏 **《不/存在的莉莉丝》（The NOexiste
 
 ## 第一次使用
 
-**当前公开预览只适用于 Windows x64、游戏 1.0.4 的指定配套环境，不支持 Steam 1.1.0。** 如果你还没有匹配的环境，请先等候支持自己游戏版本的安装包，不要仅为这个预览购买游戏。它仍是测试预览，完整游戏启动与聊天尚未完成验证。
+你需要 Windows x64、正版游戏和自己的聊天 API Key。安装器会检查所选游戏环境；游戏更新可能影响兼容性，遇到提示时请先按[依赖说明](docs/DEPENDENCIES.md)处理。
 
-1. **确认游戏。** 安装目标是 [《不/存在的莉莉丝》](https://store.steampowered.com/app/4643090/?l=schinese)（Steam App ID：4643090）。游戏和匹配的 BepInEx 加载环境需要另行准备，见[依赖说明](docs/DEPENDENCIES.md)。
-2. **下载安装包。** 在 [preview-20261029 发布页](https://github.com/gtxpz2021/LilithBridge/releases/tag/preview-20261029)下载 `LilithBridge-6a028692-win-x64-private-candidate-r1.zip`。请选择这个附件；“Source code”和“Download ZIP”是供开发者使用的源码。
-3. **安装并配置。** 退出游戏，完整解压安装包，运行 `Start-Setup.cmd`。选择游戏目录、检查改动，再按提示安装，填写自己的 API 地址、模型名和 Key。[逐步安装与常见问题](docs/PLAYER-GUIDE.md)。
+1. **准备游戏。** 安装目标是[《不/存在的莉莉丝》](https://store.steampowered.com/app/4643090/?l=schinese)（Steam App ID：4643090）。首次安装 MOD，先准备官方 BepInEx 加载器并启动一次游戏，生成所需文件后退出。已有加载环境的用户先检查即可，不必重复安装依赖。[查看准备步骤](docs/DEPENDENCIES.md)。
+2. **下载安装包。** 在 [Releases](https://github.com/gtxpz2021/LilithBridge/releases) 中选择适合自己环境的 **Windows 安装 ZIP 附件**，以对应发布说明为准。“Source code”和仓库的“Download ZIP”是源码，不能直接安装。
+3. **安装并配置。** 完整解压安装包，运行 `Start-Setup.cmd`。选择游戏目录、检查改动并安装。配置时保留默认的 **DeepSeek 官方**和 **deepseek-flash**，填写自己的 Key，再确认保存；不必手填服务地址。
+4. **说第一句话。** 启动游戏，等角色进入桌面场景、保持清醒且原作选项菜单关闭后，按回车打开输入框，输入想说的话。[逐步安装与常见问题](docs/PLAYER-GUIDE.md)。
 
 先用远程聊天 API 即可，**不需要 Python 或本地模型**。API 可能按用量收费；聊天内容和本次用到的历史材料会发送到你选择的服务。API Key 以明文保存在本机，请保管好配置和备份。
 

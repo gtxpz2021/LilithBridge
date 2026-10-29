@@ -187,7 +187,7 @@ namespace LilithSetup
 
     public static class SetupCore
     {
-        public const string PluginCandidate = "6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369";
+        public const string PluginCandidate = "47a9493ae11e34afa8b3b1bb4028308bfa00b029052b00ad1631984f88b9ee44";
         public const string Plugin062 = "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353";
         public const string Plugin061 = "1df82a2620b2a62af17458d087c090660c8af690a0e2ae37f0eba2c86301a0f0";
         public const string ModelRevision = "7999e1d3359715c523056ef9478215996d62a620";
@@ -238,7 +238,7 @@ namespace LilithSetup
             NoReparse(plugin); NoReparse(marker);
             Require(File.Exists(plugin), "LBSETUP_PLUGIN_MISSING");
             string pluginHash = FileHash(plugin);
-            Require(pluginHash == PluginCandidate || pluginHash == Plugin062 || pluginHash == Plugin061, "LBSETUP_UNSUPPORTED_PLUGIN_IDENTITY");
+            Require(pluginHash == PluginCandidate || pluginHash == Plugin062 || pluginHash == Plugin061 || HostCapabilities.IsNamedBridge(plugin), "LBSETUP_UNSUPPORTED_PLUGIN_IDENTITY");
             Require(File.Exists(marker) && new FileInfo(marker).Length <= 8192, "LBSETUP_ISOLATION_MARKER_REQUIRED");
             byte[] markerBytes = File.ReadAllBytes(marker);
             var lines = new List<string>();
@@ -283,6 +283,9 @@ namespace LilithSetup
             var doc = DataJson.Read(DataJson.Write(snapshot.Document));
             var provider = DataJson.Map(doc, "provider", true);
             Require(!(edit.ClearKey && edit.ApiKey.Length != 0), "LBSETUP_KEY_CLEAR_AND_REPLACE_CONFLICT");
+            var originalProvider = DataJson.EffectiveProvider(snapshot.Document);
+            if (!String.IsNullOrWhiteSpace(edit.BaseUrl) && !ProviderPresets.SameEndpoint(DataJson.String(originalProvider, "base_url", ""), edit.BaseUrl.Trim()) && !String.IsNullOrEmpty(DataJson.String(originalProvider, "api_key", "")))
+                Require(edit.ApiKey.Length != 0 || edit.ClearKey, "LBSETUP_NEW_SERVICE_REQUIRES_OWN_KEY_OR_EXPLICIT_CLEAR");
             if (edit.ApiKey.Length != 0)
             {
                 Require(edit.ApiKey.Length <= 4096 && !Regex.IsMatch(edit.ApiKey, @"[\x00-\x1f\x7f]"), "LBSETUP_INVALID_KEY_FORMAT");
