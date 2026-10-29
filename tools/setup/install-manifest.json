@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "product": "LilithBridge",
-  "id": "lilithbridge-installer-20261029-r5",
+  "id": "lilithbridge-unified-installer-20261029-r3",
   "plugin_sha256": "47a9493ae11e34afa8b3b1bb4028308bfa00b029052b00ad1631984f88b9ee44",
   "previous_plugin_hashes": [
     "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353",
@@ -43,5 +43,7 @@
     "BepInEx\\interop\\spine-csharp.dll": "6bcf99033a6dcdc13ab5970de84c16d63c67edd55291912627f4893af18b8c1c",
     "BepInEx\\interop\\spine-unity.dll": "1a4dd245c72c3afc577f68d4460123c0e9c701fdc0f9d2ccfb11f519246b4ba7",
     "BepInEx\\interop\\BehaviorDesigner.Runtime.dll": "0d8526748bcea88b184e8f6154912145d9cec2fbb315728138d13cacf3acb01f"
-  }
+  },
+  "min_installer_schema": 2,
+  "config_schema": 1
 }

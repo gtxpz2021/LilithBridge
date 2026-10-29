@@ -8,12 +8,14 @@ LilithBridge 是桌面伴侣游戏 **《不/存在的莉莉丝》（The NOexiste
 
 你需要 Windows x64、正版游戏和自己的聊天 API Key。安装器会检查所选游戏环境；游戏更新可能影响兼容性，遇到提示时请先按[依赖说明](docs/DEPENDENCIES.md)处理。
 
-1. **准备游戏。** 安装目标是[《不/存在的莉莉丝》](https://store.steampowered.com/app/4643090/?l=schinese)（Steam App ID：4643090）。首次安装 MOD，先准备官方 BepInEx 加载器并启动一次游戏，生成所需文件后退出。已有加载环境的用户先检查即可，不必重复安装依赖。[查看准备步骤](docs/DEPENDENCIES.md)。
+1. **准备游戏。** 安装[正版游戏](https://store.steampowered.com/app/4643090/?l=schinese)（Steam App ID 4643090）。在向导中勾选自动准备 BepInEx 加载环境；需要首次生成运行文件时，按提示主动运行一次游戏，再退出继续。已有健康组件会复用。
 2. **下载安装包。** 在 [Releases](https://github.com/gtxpz2021/LilithBridge/releases) 中选择适合自己环境的 **Windows 安装 ZIP 附件**，以对应发布说明为准。“Source code”和仓库的“Download ZIP”是源码，不能直接安装。
-3. **安装并配置。** 完整解压安装包，运行 `Start-Setup.cmd`。选择游戏目录、检查改动并安装。配置时保留默认的 **DeepSeek 官方**和 **deepseek-flash**，填写自己的 Key，再确认保存；不必手填服务地址。
+3. **安装并配置。** 完整解压安装包，运行 `Start-Setup.cmd`，选择游戏目录，勾选插件、自动准备加载环境；需要时再选本地召回，Python、环境和模型会一起准备。默认使用 **DeepSeek 官方** 和 **deepseek-flash**，填写自己的 Key，核对计划后点“开始安装”。已有安装保留原数据根与设置；高级地址仍可展开配置。
 4. **说第一句话。** 启动游戏，等角色进入桌面场景、保持清醒且原作选项菜单关闭后，按回车打开输入框，输入想说的话。[逐步安装与常见问题](docs/PLAYER-GUIDE.md)。
 
 先用远程聊天 API 即可，**不需要 Python 或本地模型**。API 可能按用量收费；聊天内容和本次用到的历史材料会发送到你选择的服务。API Key 以明文保存在本机，请保管好配置和备份。
+
+游戏更新时保留 Key、模型、记忆与索引；实际接口仍满足时可以继续使用。项目更新从向导的“项目更新”检查并由你确认应用，运行中的游戏不会被强行替换。
 
 ## 聊起来会是什么样
 
@@ -28,7 +30,7 @@ LilithBridge 是桌面伴侣游戏 **《不/存在的莉莉丝》（The NOexiste
 ## 想再了解一点
 
 - [架构入门](ARCHITECTURE.md)：从一次聊天解释经历、记忆和回复如何衔接。不安装游戏也能读。
-- [本地召回](docs/DEPENDENCIES.md#可选本地召回)：用本地小模型按意思寻找旧经历。它是可选辅助，不负责生成聊天回复；Python 和模型需要另行准备。
+- [本地召回](docs/DEPENDENCIES.md)：按意思寻找旧经历；Python、环境和模型可在向导内勾选一起准备，聊天回复仍由所选远程 API 生成。
 - [技术附录](docs/TECHNICAL-NOTES.md)：支持范围、已知限制和源码入口。
 - [许可与第三方内容](LICENSE-STATUS.md)：自有代码采用 MIT；游戏、角色素材及第三方组件保留各自权利。
 

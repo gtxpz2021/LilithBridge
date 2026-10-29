@@ -48,7 +48,7 @@ namespace LilithSetup
     }
     public sealed class InstallPlan
     {
-        public string GameRoot, DataRoot, OldPlugin, OldMarker, PayloadHash, ManifestDigest;
+        public string GameRoot, DataRoot, OldPlugin, OldMarker, PayloadHash, ManifestDigest, RetainedDataStamp;
         public bool CreateMarker, NoChange;
         public readonly List<string> Changes = new List<string>();
     }
@@ -116,16 +116,43 @@ namespace LilithSetup
             // Avoid silently switching an existing APPDATA-based installation.
             SetupCore.Require(old == "MISSING" || oldMarker != "MISSING", "LBINSTALL_EXISTING_INSTALL_NEEDS_EXPLICIT_DATA_MIGRATION");
             string data = oldMarker == "MISSING" ? Join(game, "LilithBridgeData") : MarkerRoot(game, marker);
-            if (oldMarker == "MISSING") SetupCore.Require(!Directory.Exists(data) && !File.Exists(data), "LBINSTALL_EXISTING_DATA_FOLDER_REQUIRES_REVIEW");
+            RetainedDataProof retained = null;
+            if (oldMarker == "MISSING" && (Directory.Exists(data) || File.Exists(data)))
+            { retained = RetainedData(game); SetupCore.Require(old == "MISSING" && retained != null && SetupCore.Same(retained.Root, data), "LBINSTALL_EXISTING_DATA_FOLDER_REQUIRES_REVIEW"); }
             string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
             if (env != null) SetupCore.Require(SetupCore.Same(SetupCore.SafePath(env, game), data), "LBINSTALL_ENVIRONMENT_ROOT_CONFLICT");
             CheckDuplicates(Path.GetDirectoryName(plugin), plugin);
-            var plan = new InstallPlan { GameRoot = game, DataRoot = data, OldPlugin = old, OldMarker = oldMarker, PayloadHash = m.PluginSha256, ManifestDigest = m.ManifestDigest, CreateMarker = oldMarker == "MISSING", NoChange = old == m.PluginSha256 && oldMarker != "MISSING" };
+            var plan = new InstallPlan { GameRoot = game, DataRoot = data, OldPlugin = old, OldMarker = oldMarker, PayloadHash = m.PluginSha256, ManifestDigest = m.ManifestDigest, RetainedDataStamp = retained == null ? "" : retained.Stamp, CreateMarker = oldMarker == "MISSING", NoChange = old == m.PluginSha256 && oldMarker != "MISSING" };
+            if (retained != null) plan.Changes.Add("继续使用已回退事务保留的配置和记忆目录：" + data);
             if (plan.NoChange) plan.Changes.Add("版本相同：无需覆盖文件。可直接打开配置器。");
             else { plan.Changes.Add((old == "MISSING" ? "新增 " : "备份并替换 ") + InstallManifest.Plugin); if (plan.CreateMarker) plan.Changes.Add("新增 " + InstallManifest.Marker + " → LilithBridgeData"); plan.Changes.Add("在 .LilithBridge-installer 保留事务记录与旧插件备份"); }
             return plan;
         }
         static string Transactions(string game) { return Join(game, StateDir + @"\transactions"); }
+        sealed class RetainedDataProof { public string Root, Stamp; }
+        static RetainedDataProof RetainedData(string game)
+        {
+            string expected = Join(game, "LilithBridgeData"); if (!Directory.Exists(expected) || File.Exists(expected)) return null;
+            var records = Records(game).Select(path => new { Path = path, Journal = ReadJournal(game, path) }).Where(x => (string)x.Journal["phase"] == "RolledBack").OrderByDescending(x => (string)x.Journal["utc"], StringComparer.Ordinal);
+            foreach (var record in records)
+            {
+                var files = (object[])record.Journal["files"]; if (files.Length != 2) continue;
+                int markerIndex = Array.FindIndex(files, row => (string)((Dictionary<string, object>)row)["path"] == InstallManifest.Marker), pluginIndex = Array.FindIndex(files, row => (string)((Dictionary<string, object>)row)["path"] == InstallManifest.Plugin);
+                if (markerIndex < 0 || pluginIndex < 0) continue;
+                var marker = (Dictionary<string, object>)files[markerIndex]; var plugin = (Dictionary<string, object>)files[pluginIndex];
+                if ((string)marker["before"] != "MISSING" || (string)plugin["before"] != "MISSING") continue;
+                string folder = Path.GetDirectoryName(record.Path), markerCopy = Join(folder, markerIndex + ".after"), pluginCopy = Join(folder, pluginIndex + ".after");
+                SetupCore.Require(FileState(markerCopy) == (string)marker["after"] && FileState(pluginCopy) == (string)plugin["after"] && HostCapabilities.IsNamedBridge(pluginCopy), "LBINSTALL_RETAINED_DATA_RECORD_CHANGED");
+                string data = MarkerRoot(game, markerCopy); SetupCore.Require(SetupCore.Same(data, expected), "LBINSTALL_RETAINED_DATA_RECORD_CHANGED");
+                string identity = FileIdentity.Directory(data);
+                if (record.Journal.ContainsKey("retained_data_root")) SetupCore.Require(SetupCore.Same((string)record.Journal["retained_data_root"], data), "LBINSTALL_RETAINED_DATA_RECORD_CHANGED");
+                if (record.Journal.ContainsKey("retained_data_identity")) SetupCore.Require((string)record.Journal["retained_data_identity"] == identity, "LBINSTALL_RETAINED_DATA_DIRECTORY_CHANGED");
+                return new RetainedDataProof { Root = data, Stamp = SetupCore.Hash(Utf8.GetBytes(FileState(record.Path) + "|" + identity + "|" + (string)marker["after"])) };
+            }
+            return null;
+        }
+        public static string FindRetainedDataRoot(string gameRoot)
+        { string game = SetupCore.SafePath(gameRoot, null); SetupCore.NoReparse(game); var proof = RetainedData(game); return proof == null ? null : proof.Root; }
         static void CheckDuplicates(string pluginDirectory, string ownedPlugin)
         {
             var queue = new Queue<string>(); queue.Enqueue(pluginDirectory); int count = 0;
@@ -201,7 +228,7 @@ namespace LilithSetup
             var f = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             if (f.Length != 0) { f.Dispose(); throw new SetupException("LBINSTALL_UNKNOWN_LOCK_FILE"); } return f;
         }
-        static bool SamePlan(InstallPlan a, InstallPlan b) { return SetupCore.Same(a.GameRoot, b.GameRoot) && a.OldPlugin == b.OldPlugin && a.OldMarker == b.OldMarker && a.PayloadHash == b.PayloadHash && a.ManifestDigest == b.ManifestDigest && SetupCore.Same(a.DataRoot, b.DataRoot); }
+        static bool SamePlan(InstallPlan a, InstallPlan b) { return SetupCore.Same(a.GameRoot, b.GameRoot) && a.OldPlugin == b.OldPlugin && a.OldMarker == b.OldMarker && a.PayloadHash == b.PayloadHash && a.ManifestDigest == b.ManifestDigest && a.RetainedDataStamp == b.RetainedDataStamp && SetupCore.Same(a.DataRoot, b.DataRoot); }
         public static InstallResult Install(InstallManifest manifest, InstallPlan approved, bool confirm)
         { return InstallInternal(manifest, approved, confirm, null, false); }
         // Test hook stays internal: injected faults cannot be requested by user CLI.
@@ -231,7 +258,7 @@ namespace LilithSetup
                         WriteNew(Join(folder, i + ".after"), payloads[i]);
                         files.Add(new Dictionary<string, object> { { "path", relative }, { "before", before }, { "after", SetupCore.Hash(payloads[i]) } });
                     }
-                    var j = new Dictionary<string, object> { { "schema", 1 }, { "game", approved.GameRoot }, { "package", manifest.Id }, { "utc", DateTime.UtcNow.ToString("o") }, { "phase", "Prepared" }, { "files", files.ToArray() } };
+                    var j = new Dictionary<string, object> { { "schema", 1 }, { "game", approved.GameRoot }, { "data_root", approved.DataRoot }, { "package", manifest.Id }, { "utc", DateTime.UtcNow.ToString("o") }, { "phase", "Prepared" }, { "files", files.ToArray() } };
                     WriteJournal(journal, j); if (checkpoint != null) checkpoint("staged");
                     // The ready record is promoted on the same volume before any target write.
                     // A crash during preparation leaves only inert staging; no half-record can
@@ -269,6 +296,9 @@ namespace LilithSetup
                 SetupCore.Require(now == before || now == (string)f["after"], "LBINSTALL_RECOVERY_CONFLICT_PRESERVED");
                 if (before != "MISSING") SetupCore.Require(FileState(Join(folder, i + ".before")) == before, "LBINSTALL_BACKUP_HASH_MISMATCH");
             }
+            foreach (Dictionary<string, object> file in files)
+                if ((string)file["path"] == InstallManifest.Marker && (string)file["before"] == "MISSING" && File.Exists(Join(game, InstallManifest.Marker)))
+                { string data = MarkerRoot(game, Join(game, InstallManifest.Marker)); if (Directory.Exists(data)) { j["retained_data_root"] = data; j["retained_data_identity"] = FileIdentity.Directory(data); } }
             j["phase"] = "RecoveryBlocked"; WriteJournal(path, j);
             foreach (int i in OwnedFileOrder(files, false))
             {

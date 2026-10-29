@@ -69,10 +69,10 @@ namespace LilithSetup {
    string config=File.ReadAllText(P(game,"doorstop_config.ini"));if(!System.Text.RegularExpressions.Regex.IsMatch(config,@"(?im)^\s*enabled\s*=\s*true\s*$")||!System.Text.RegularExpressions.Regex.IsMatch(config,@"(?im)^\s*target_assembly\s*=\s*BepInEx[\\/]core[\\/]BepInEx\.Unity\.IL2CPP\.dll\s*$")){r.State="NeedsLoaderConfiguration";r.Detail="Doorstop must be enabled and target the IL2CPP loader. Existing configuration is not overwritten.";return r;}
    if(!File.Exists(P(game,"BepInEx/interop/Assembly-CSharp.dll"))){r.State="PendingFirstRun";r.Detail="Start this prepared game once without the plugin, let the loader generate interop, close it, then recheck.";return r;}
    try{r.InteropFresh=InteropMatchesCurrentGame(game);}catch(Exception e){r.Warnings.Add("Interop freshness could not be read: "+e.GetType().Name);}
-   if(!r.InteropFresh){r.State="PendingRegeneration";r.Detail="Interop is missing its current-game generation association or is stale. Regenerate with the loader; do not copy another game's interop.";return r;}
-   r.ContractFailures.AddRange(CheckContract(plugin,game));r.ContractPassed=r.ContractFailures.Count==0;
+   try{r.ContractFailures.AddRange(CheckContract(plugin,game));r.ContractPassed=r.ContractFailures.Count==0;}catch(Exception e){if(r.InteropFresh)throw;r.State="PendingRegeneration";r.Detail="Generated interfaces could not be inspected; let the loader regenerate them at the next game start.";r.Warnings.Add(e.GetType().Name);return r;}
+   if(!r.InteropFresh&&!r.ContractPassed){r.State="PendingRegeneration";r.Detail="Generated interfaces are stale or incomplete. Let the loader regenerate before deciding whether an interface is missing.";return r;}
    if(!r.ContractPassed){r.State="ConfirmedIncompatible";r.Detail="Current generated interop is missing required plugin interfaces. See exact member failures.";return r;}
-   r.State="StaticContractPassed";r.CanInstall=true;r.Detail="Required static signatures passed; runtime/game behaviour is not yet verified.";r.Warnings.Add("Trigger value 35 semantics and complete Hook/Plugin.Load behaviour need manual runtime validation; the initialization candidate has owner-scoped rollback, while actual Unity lifecycle and same-frame reload remain unverified.");return r;
+   r.State="StaticContractPassed";r.CanInstall=true;r.Detail="Required static signatures passed; runtime/game behaviour is not yet verified.";if(!r.InteropFresh)r.Warnings.Add("Game generation association changed, but required interfaces still match. The loader can regenerate its runtime files on the next game start; configuration is preserved.");return r;
   }
  }
 }

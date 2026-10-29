@@ -312,13 +312,14 @@ namespace LilithSetup
             }
             bool changeModel = !String.IsNullOrEmpty(edit.ModelOverride);
             bool changeRuntime = !String.IsNullOrEmpty(edit.PythonOverride) || !String.IsNullOrEmpty(edit.WorkerOverride);
-            Require(!changeModel || edit.Recall == RecallAction.Disable, "LBSETUP_MODEL_CHANGE_REQUIRES_EXPLICIT_RECALL_OFF");
-            Require(!changeRuntime || edit.Recall == RecallAction.Disable, "LBSETUP_RUNTIME_PATH_CHANGE_REQUIRES_EXPLICIT_RECALL_OFF");
+            bool preparedEnable = edit.Recall == RecallAction.Enable && edit.CheckedLocal != null && edit.CheckedLocal.FilesVerified;
+            Require(!changeModel || edit.Recall == RecallAction.Disable || preparedEnable, "LBSETUP_MODEL_CHANGE_REQUIRES_EXPLICIT_RECALL_OFF");
+            Require(!changeRuntime || edit.Recall == RecallAction.Disable || preparedEnable, "LBSETUP_RUNTIME_PATH_CHANGE_REQUIRES_EXPLICIT_RECALL_OFF");
             if (changeModel || changeRuntime || edit.Recall != RecallAction.Preserve)
             {
                 var semantic = DataJson.Map(doc, "semantic_recall", true);
                 if (edit.Recall == RecallAction.Disable) semantic["enabled"] = false;
-                if (changeModel) { semantic["model_path"] = edit.ModelOverride; semantic["index_directory"] = DefaultIndex; }
+                if (changeModel) { semantic["model_path"] = edit.ModelOverride; if (String.IsNullOrWhiteSpace(DataJson.String(semantic, "index_directory", ""))) semantic["index_directory"] = DefaultIndex; }
                 if (!String.IsNullOrEmpty(edit.PythonOverride)) semantic["python_path"] = edit.PythonOverride;
                 if (!String.IsNullOrEmpty(edit.WorkerOverride)) semantic["worker_script"] = edit.WorkerOverride;
                 if (edit.Recall == RecallAction.Enable)
@@ -366,6 +367,8 @@ namespace LilithSetup
             b.Append(validator.Fingerprint(check.Model)); return Hash(Utf8.GetBytes(b.ToString()));
         }
         public static SaveResult Save(CopyContext context, Snapshot snapshot, EditRequest edit, ModelValidator validator)
+        { return SaveWithCommitBoundary(context, snapshot, edit, validator, null); }
+        internal static SaveResult SaveWithCommitBoundary(CopyContext context, Snapshot snapshot, EditRequest edit, ModelValidator validator, Action enterCommit)
         {
             Require(edit.ConfirmCopy, "LBSETUP_EXPLICIT_COPY_CONFIRMATION_REQUIRED");
             Current(context, snapshot.Digest); var doc = Patch(snapshot, edit);
@@ -374,17 +377,17 @@ namespace LilithSetup
             if (!String.IsNullOrEmpty(edit.ModelOverride))
             {
                 LocalCheck selected = Locate(context, snapshot, edit.ModelOverride);
-                Require(!Inside(selected.Model, SafePath(DefaultIndex, context.DataRoot), true) && !Inside(SafePath(DefaultIndex, context.DataRoot), selected.Model, true), "LBSETUP_MODEL_INDEX_OVERLAP");
+                Require(!Inside(selected.Model, selected.Index, true) && !Inside(selected.Index, selected.Model, true), "LBSETUP_MODEL_INDEX_OVERLAP");
                 validator.Verify(selected.Model);
             }
             if (edit.Recall == RecallAction.Enable)
             {
-                LocalCheck expected = Locate(context, snapshot, ""); LocalCheck check = edit.CheckedLocal;
+                LocalCheck expected = Locate(context, snapshot, edit.ModelOverride, edit.PythonOverride, edit.WorkerOverride); LocalCheck check = edit.CheckedLocal;
                 Require(check != null && check.FilesVerified && Same(check.GameRoot, context.GameRoot) && check.ConfigDigest == snapshot.Digest && Same(check.Python, expected.Python) && Same(check.Worker, expected.Worker) && Same(check.Model, expected.Model) && Same(check.Index, expected.Index), "LBSETUP_EXPLICIT_LOCAL_CHECK_REQUIRED");
                 Require(check.Stamp == LocalStamp(expected, validator), "LBSETUP_LOCAL_FILES_CHANGED_RECHECK");
             }
             byte[] bytes = Utf8.GetBytes(DataJson.Write(doc));
-            string temp = null, lockPath = Path.Combine(context.DataRoot, ".clean-setup.write.lock"); FileStream held = null;
+            string temp = null, lockPath = Path.Combine(context.DataRoot, ".clean-setup.write.lock"); FileStream held = null, guardedOriginal = null;
             var result = new SaveResult();
             try
             {
@@ -398,16 +401,28 @@ namespace LilithSetup
                 if (current.Exists)
                 {
                     result.BackupPath = context.ConfigPath + ".before-setup." + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "." + Guid.NewGuid().ToString("N") + ".bak";
+                    // Guard the actual source file while checking its bytes after the temp write.
+                    // Ordinary external writers cannot write through this handle. ShareDelete permits
+                    // atomic replacement, so recheck the path identity immediately before our replace.
+                    guardedOriginal = new FileStream(context.ConfigPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                    string identity = FileIdentity.Of(guardedOriginal.SafeFileHandle);
+                    using (var sha = SHA256.Create()) Require(BitConverter.ToString(sha.ComputeHash(guardedOriginal)).Replace("-", "").ToLowerInvariant() == snapshot.Digest, "LBSETUP_CONFIG_CHANGED_RECHECK");
+                    if (enterCommit != null) enterCommit();
+                    using (var currentPath = new FileStream(context.ConfigPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+                        Require(FileIdentity.Of(currentPath.SafeFileHandle) == identity, "LBSETUP_CONFIG_CHANGED_RECHECK");
+                    // Windows ReplaceFile provides atomic replacement, not a file-ID compare-and-swap.
+                    // A noncooperating atomic rename in the tiny final OS call gap cannot be excluded.
                     File.Replace(temp, context.ConfigPath, result.BackupPath, false);
                 }
-                else File.Move(temp, context.ConfigPath);
+                else { if (enterCommit != null) enterCommit(); File.Move(temp, context.ConfigPath); }
                 result.Committed = true;
-                try { result.ReadbackVerified = ReadSnapshot(context.ConfigPath).Digest == Hash(bytes); if (!result.ReadbackVerified) result.Warnings.Add("LBSETUP_COMMITTED_READBACK_CHANGED"); }
+                try { result.ReadbackVerified = ReadSnapshot(context.ConfigPath).Digest == Hash(bytes) && (!current.Exists || FileHash(result.BackupPath) == snapshot.Digest); if (!result.ReadbackVerified) result.Warnings.Add("LBSETUP_COMMITTED_READBACK_OR_BACKUP_CHANGED"); }
                 catch { result.Warnings.Add("LBSETUP_COMMITTED_READBACK_UNAVAILABLE"); }
             }
             finally
             {
                 if (temp != null && File.Exists(temp)) try { File.Delete(temp); } catch { result.Warnings.Add("LBSETUP_TEMP_CLEANUP_FAILED"); }
+                if (guardedOriginal != null) guardedOriginal.Dispose();
                 if (held != null) try { held.Dispose(); } catch { result.Warnings.Add("LBSETUP_LOCK_CLEANUP_FAILED"); }
             }
             return result;
