@@ -1,7 +1,7 @@
 # LilithBridge
 
 > To call up a demon, you must learn its name.
-让共同经历，参与下一次相处
+
 
 LilithBridge 是桌面伴侣游戏《不/存在的莉莉丝》的非官方 MOD。它连接游戏中的莉莉丝、语言模型和本地记忆，让日常交流能够留下来，在以后的对话中继续发挥作用。
 
