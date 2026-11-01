@@ -111,7 +111,7 @@ namespace LilithSetup
                 manifest = InstallManifest.Load(packageRoot); var host = HostCapabilities.Inspect(root.Text, Path.Combine(packageRoot, @"payload\LilithBridge.dll")); if (!host.CanInstall) { summary.Text = UserHostSummary(host, root.Text); return; }
                 plan = InstallerCore.Inspect(manifest, root.Text);
                 string latest = InstallerCore.LatestCommitted(plan.GameRoot);
-                summary.Text = "目标：" + plan.GameRoot + "\r\n独立数据目录：" + plan.DataRoot + "\r\n\r\n将进行的改动：\r\n" + String.Join("\r\n", plan.Changes.ToArray()) + "\r\n\r\n不读取或迁移旧记忆/原生存档。缺模型可先保存 API 配置。\r\n最近可回退事务：" + (latest ?? "无");
+                summary.Text = "目标：" + plan.GameRoot + "\r\n独立数据目录：" + plan.DataRoot + "\r\n\r\n将进行的改动：\r\n" + String.Join("\r\n", plan.Changes.ToArray()) + "\r\n\r\n只读检查反思回执，不迁移或改写记忆/原生存档。缺模型可先保存 API 配置。\r\n最近可回退事务：" + (latest ?? "无");
             });
         }
         void ReviewDependencies()

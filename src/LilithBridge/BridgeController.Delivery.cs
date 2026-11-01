@@ -279,7 +279,6 @@ internal sealed partial class BridgeController
             {
                 native.EffectsApplied = true;
                 HandleDesktopArrangeIntent(reply);
-                NativeMemoWriter.Apply(reply, _config);
                 HandleReplyPaper(reply);
                 ApplyAutonomousMemory(reply);
             }
@@ -421,18 +420,5 @@ internal sealed partial class BridgeController
         return true;
     }
 
-    // UI-independent tail of Update's display step: once the playback window is
-    // free, the queued reply is handed to the actual presenter. The gate that
-    // decides when this may run stays in Update (native state); the harness
-    // enters this same state transfer instead of duplicating the controller.
-    [HideFromIl2Cpp]
-    internal bool TryBeginQueuedReplyDisplay()
-    {
-        ApiResult? reply = _queuedReply;
-        if (reply == null)
-            return false;
-        _queuedReply = null;
-        NativeBubblePresenter.Show(reply);
-        return true;
-    }
+
 }

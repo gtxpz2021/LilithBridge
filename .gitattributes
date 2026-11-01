@@ -1,3 +1,7 @@
 # These pinned manifests are verified byte-for-byte by the installer.
 optional/semantic-worker/model-manifest.json -text
 tools/setup/model-manifest.json -text
+
+# Pinned installer inputs retain their verified release bytes.
+optional/semantic-worker/semantic_worker.py -text
+optional-recall/wheels.lock.json -text

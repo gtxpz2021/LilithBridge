@@ -82,7 +82,8 @@ internal sealed partial class MemoryStore
         // anchor turn while saying nothing about the current topic, and that must
         // not pull an unrelated reading into the request.
         var sourceIds = new HashSet<string>(StringComparer.Ordinal);
-        GetExperienceCandidates(text, 6, onAnchorSelection: anchors =>
+        // No reading can consume source anchors when the eligible pool is empty.
+        if (candidates.Count > 0) GetExperienceCandidates(text, 6, onAnchorSelection: anchors =>
         {
             foreach (MemoryTurn anchor in anchors)
                 sourceIds.Add(anchor.EventId);

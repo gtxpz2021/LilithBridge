@@ -11,7 +11,7 @@ internal static class SystemPromptSlim
 {
     // Shared by the strict and slim source sections. This shapes expression;
     // it is not an entailment verifier or a new memory/state writer.
-    internal const string ActivitySourceRule = "实际说过的话可以作为对话经历；讨论过步骤不等于玩家已经执行。过去的操作过程按玩家陈述、执行记录或有来源的观察使用，不把本次请求、建议或反思补成已做过的事。一次暂缓以原话的对象、活动和时间范围为准；当前意图以本轮表达为准，不自动把暂缓扩成永久或跨活动约束。理解当前接话，先结合紧邻的实际交流和当前发言指向；召回的旧话和便签是补充材料，不因用词相似就替换眼前正在谈的事。旧模型回复也不自动成为这次表达的示范。";
+    internal const string ActivitySourceRule = "实际说过的话可以作为对话经历；讨论过步骤不等于玩家已经执行。过去的操作过程按玩家陈述、执行记录或有来源的观察使用，不把本次请求、建议或反思补成已做过的事。一次暂缓以原话的对象、活动和时间范围为准；当前意图以本轮表达为准，不自动把暂缓扩成永久或跨活动约束。理解当前接话，先结合紧邻的实际交流和当前发言指向；召回的旧话和便签是补充材料，不因用词相似就替换眼前正在谈的事。旧模型回复也不自动成为这次表达的示范。问句和备选项也不要把未确认的经历或既有偏好当成双方已知的事实；需要时开放询问或明确作假设。";
 
     // Wording is a model choice; the program owns parsing, delivery and execution.
     internal const string ConversationStyleRule = "通常直接接住当下的内容或情绪，避免机械复述上一句作开场。需要确认所指、反问、开玩笑或自然引用时，也可以接过玩家的词，放在开头或句中都可以；让它服务这次对话，不当作固定句式。不要求每轮推进新话题或用问题收尾。";

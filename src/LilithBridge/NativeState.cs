@@ -147,6 +147,9 @@ internal sealed class MemoryTurn
     public DaySourceDependency[] ContextDependencies { get; set; } = Array.Empty<DaySourceDependency>();
     public string[] DayCoveredEventIds { get; set; } = Array.Empty<string>();
     public string OperationId { get; set; } = "";
+    // A settle-only pass changes an existing note, rather than creating an
+    // artifact with OperationId. Keep its work identity in that same atomic file.
+    public string ReflectionSettlementOperationId { get; set; } = "";
     public int Revision { get; set; } = 1;
     public string SessionId { get; set; } = "";
     public long Sequence { get; set; }

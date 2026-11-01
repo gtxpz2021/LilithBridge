@@ -254,11 +254,31 @@ internal sealed partial class MemoryStore
         if (identifiers.Length > 0) available = available.Where(t => identifiers.All(id => MemorySemantics.ContainsRecallIdentifier(t.Text,id))).ToList();
         bool countSpeech = System.Text.RegularExpressions.Regex.IsMatch(MemorySemantics.MaskRecallQuotes(query ?? ""), "几次|多少次|次数|每次|全部原话");
         string[] literalQuotes = UtteranceAttribution.LiteralQuotes(query);
-        var candidates = available.Select(t => new { Turn = t, Score = MemorySemantics.Similarity(t.Text, scoringQuery),
-            QuoteMatch = UtteranceAttribution.QuoteMatch(t.Text, literalQuotes) })
-            .Where(item => (recallQuery != null ? recallQuery.MatchesContent(item.Turn.Text) || MemorySemantics.IsRelevantRecall(scoringQuery, item.Turn.Text)
+        // Reuse tokens only within this candidate pass. Ranking and the ordinary
+        // relevance floor use the same overlap; no source permission is cached.
+        var scoringTokens = MemorySemantics.MatchingTokens(scoringQuery);
+        bool emptyScoringQuery = string.IsNullOrWhiteSpace(scoringQuery);
+        var candidates = available.Select(t =>
+            {
+                int overlap = 0;
+                double score = 0d;
+                // Empty tokens still follow the blank/punctuation, quote and
+                // scope rules below; only unnecessary body tokenization stops.
+                if (scoringTokens.Count > 0)
+                {
+                    var tokens = ExperienceBodyTokens(t.Text);
+                    overlap = tokens.Count(scoringTokens.Contains);
+                    if (tokens.Count > 0)
+                        score = overlap / (double)Math.Max(1, Math.Min(tokens.Count, scoringTokens.Count));
+                }
+                bool relevant = emptyScoringQuery || score >= MemorySemantics.MinRecallSimilarity
+                    && (overlap >= MemorySemantics.MinRecallOverlap || score >= 0.5);
+                return new { Turn = t, Score = score, Relevant = relevant,
+                    QuoteMatch = UtteranceAttribution.QuoteMatch(t.Text, literalQuotes) };
+            })
+            .Where(item => (recallQuery != null ? recallQuery.MatchesContent(item.Turn.Text) || item.Relevant
                 : contentView ? MemorySemantics.IsContentRecallMatch(scoringQuery, item.Turn.Text)
-                : MemorySemantics.IsRelevantRecall(scoringQuery, item.Turn.Text)) || IsExplicitMentionRecall(item.Turn) || item.QuoteMatch > 0)
+                : item.Relevant) || IsExplicitMentionRecall(item.Turn) || item.QuoteMatch > 0)
             // A broad question about a correction can have several verbatim
             // copies in the archive. Their lexical score must not consume all
             // anchors ahead of an eligible original correction declaration.

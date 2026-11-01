@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "product": "LilithBridge",
-  "id": "lilithbridge-unified-installer-20261029-r3",
-  "plugin_sha256": "47a9493ae11e34afa8b3b1bb4028308bfa00b029052b00ad1631984f88b9ee44",
+  "id": "lilithbridge-preview-20261101-rc3",
+  "plugin_sha256": "f7030fd9686c0fa98166d31c61b8ca2b851e23851959f6b0e9bda19da9dbfedf",
   "previous_plugin_hashes": [
     "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353",
     "d387eff9e0422fd62ff0ce1943e2383293c978fb373d0632c4b8298655e150db",

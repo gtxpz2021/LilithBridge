@@ -93,6 +93,7 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
 internal sealed class DialogueRequest : IDisposable
 {
     private readonly object _b1Ownership = new();
+    internal NativeMemoTarget? MemoAnnotationTarget { get; set; }
     internal B1Packet? B1Packet { get; set; }
     internal PreparationTiming? PreparationTrace {get;set;}
     internal SessionReadMethodOwner? MethodOwner {get;set;}
@@ -143,6 +144,9 @@ internal sealed class DialogueRequest : IDisposable
     // Request reading configuration, never a cached permission verdict. The
     // store rebuilds the current native window and validates sources at commit.
     internal BridgeConfig B1ReadConfig => _b1Config;
+    // A result expression belongs to the original main-model request, even if
+    // the controller has since published a different configuration object.
+    internal BridgeConfig RequestConfig => _b1Config;
     private readonly B1CapabilityOwner? _b1CapabilityOwner;
     private readonly long _b1CapabilityGeneration;
     private readonly bool _b1InitiallyEnabled;
@@ -189,6 +193,9 @@ internal sealed class DialogueRequest : IDisposable
             : _b1CapabilityOwner == null ? commit() : _b1CapabilityOwner.WithBoundary(commit);
     }
     public RequestWaitStatus WaitStatus { get; } = new();
+    private int _memoResultContinuationStarted;
+    internal bool TryBeginMemoResultContinuation() => !IsCancelled
+        && Interlocked.CompareExchange(ref _memoResultContinuationStarted, 1, 0) == 0;
     public const string ScreenRequest = "<screen:request>";
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public UserMemoryOperationResult? MemoryOperation { get; private set; }

@@ -372,7 +372,7 @@ internal static partial class MemorySemantics
                 continue;
             for (int i = 0; i < chars.Length - 1; i++)
             {
-                result.Add((chars[i].ToString() + chars[i + 1]).ToLowerInvariant());
+                result.Add(new string(chars, i, 2).ToLowerInvariant());
             }
         }
         return result;

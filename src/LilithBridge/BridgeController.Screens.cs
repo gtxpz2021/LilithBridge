@@ -90,6 +90,7 @@ internal sealed partial class BridgeController
         _activeDialogue?.PreparationTrace?.Finish("cancelled");
         // Nullable-owner proactive callbacks share this cancellation generation.
         _conversationGeneration++;
+        CancelMemoResultContinuation("request_cancelled", finishDelivery: false);
         // A generated reply waiting for its playback window belongs to the
         // cancelled request: close its delivery record before display so it
         // cannot arrive late or enter history.

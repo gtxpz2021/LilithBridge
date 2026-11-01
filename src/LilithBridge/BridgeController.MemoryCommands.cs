@@ -12,9 +12,14 @@ internal sealed partial class BridgeController
         if (input == null)
             return false;
         NativeEventLog.Flush();
+        string? priorWork = _reflectionWindow.Snapshot.Work?.Request.RequestId;
         UserMemoryOperationResult? outcome = _memory.TryApplyUserMemoryCommand(input);
         if (outcome == null)
             return false;
+        if (_reflectionPreparation is { } owner
+            && (priorWork != null && _reflectionWindow.Snapshot.Work == null
+                || !_memory.ReflectionPreparationCurrent(owner)))
+            CancelReflectionPreparation("memory_source_removed");
         if (outcome.ContinueDialogue)
         {
             naturalOutcome = outcome;
@@ -31,7 +36,7 @@ internal sealed partial class BridgeController
             _sessionState.LastAssistantText = "";
             _sessionState.ConversationTopic = "";
             _sessionState.Relationship.RemoveTextReferences(texts);
-            RemovePendingPaperReferences(texts);
+            RemoveInvalidPendingPapers();
         }
         QueueGeneratedReply(outcome.CreateReply(input));
         _queuedReplyBlockedByStory = HasActiveNativeStory();

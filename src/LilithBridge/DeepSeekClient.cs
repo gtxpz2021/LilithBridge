@@ -27,6 +27,17 @@ internal static class RequestHistoryOwnership
 
 internal sealed class ApiResult
 {
+    internal PaperSourceSnapshot? PaperSources { get; set; }
+    internal NativeMemoTarget? MemoAnnotationTarget { get; set; }
+    internal NativeMemoWriteOutcome? MemoWriteOutcome { get; set; }
+    // Generated response segments, never copied from an earlier request/reply.
+    internal string MemoConfirmation { get; set; } = "";
+    internal bool MemoConfirmationProvided { get; set; }
+    internal bool MemoReplySeparated { get; set; }
+    internal bool MemoReplySettled { get; set; }
+    internal bool MemoResultFinal { get; set; }
+    internal NativeMemoResultInput? MemoResultInput { get; set; }
+    internal PaperSourceSnapshot? MemoResultSources { get; set; }
     internal SharedActivitySupply? SharedSupply { get; set; }
     internal Func<Func<bool>, bool>? SharedDispatch { get; set; }
     internal B1Choice? B1 { get; set; }
@@ -114,6 +125,8 @@ internal sealed class ApiResult
 
     public void CopyRequestFrom(ApiResult original)
     {
+        PaperSources = original.PaperSources;
+        MemoAnnotationTarget = original.MemoAnnotationTarget;
         SharedSupply = original.SharedSupply;
         SharedDispatch = original.SharedDispatch;
         IsMemoryOperation = original.IsMemoryOperation;
@@ -128,6 +141,8 @@ internal sealed class ApiResult
         PublicViewSources = original.PublicViewSources;
         ClaimBoundary = original.ClaimBoundary;
         HistoryBoundary = original.HistoryBoundary;
+        MemoResultInput = original.MemoResultInput;
+        MemoResultSources = original.MemoResultSources;
     }
     public string Text { get; set; } = "";
     public string Error { get; set; } = "";
@@ -291,7 +306,8 @@ internal sealed partial class DeepSeekClient : IDisposable
         MemoryStore? historyOwner = null,
         SemanticRecallTrace? semanticRecallSupply = null,
         ParticipationSnapshot? participationSnapshot = null,
-        SharedActivitySupply? sharedActivitySupply = null)
+        SharedActivitySupply? sharedActivitySupply = null,
+        NativeMemoResultInput? memoResultInput = null)
     {
         bool programParticipation = requestPurpose == "proactive"
             || requestPurpose.StartsWith("proactive:", StringComparison.Ordinal);
@@ -328,6 +344,7 @@ internal sealed partial class DeepSeekClient : IDisposable
             DialogueRequest = dialogueRequest, HistoryBoundary = historyBoundary,
             MemoryOperation = dialogueRequest?.MemoryOperation,
             IsMemoryOperation = dialogueRequest?.MemoryOperation != null };
+        requestIdentity.MemoResultInput = memoResultInput;
         if (dialogueRequest != null)
         {
             // Supply evidence is per transaction: a rewrite or a recursive send
@@ -431,7 +448,7 @@ internal sealed partial class DeepSeekClient : IDisposable
                 b1Context.Length > 0 ? dialogueRequest?.B1Packet : null);
             if (claimBoundary.RequiresSourceCheck)
                 systemPrompt += Environment.NewLine + BuildClaimSourceContext(claimBoundary);
-            if (dialogueRequest != null)
+            if (dialogueRequest != null && memoResultInput == null)
             {
                 systemPrompt += Environment.NewLine + dialogueRequest.ScreenContract();
                 string reviewContract = dialogueRequest.ReviewContract();
@@ -533,6 +550,15 @@ internal sealed partial class DeepSeekClient : IDisposable
                 messages.Add(new { role = "user", content = currentContent });
                 AppendRuntimeContextAfterPlayer();
             }
+            if (memoResultInput != null)
+            {
+                // This independent input is appended after every semantic base
+                // refresh. It is programme data, not a fabricated tool result.
+                messages.Add(new { role = "system", content = NativeMemoResultInput.Contract });
+                messages.Add(new { role = "user", content = memoResultInput.Material() });
+                requestIdentity.MemoResultSources = PaperSourceSnapshot.Combine(memoResultInput.DraftSources,
+                    dialogueRequest?.SemanticMaterial?.Current?.PaperSources ?? memoResultInput.ContextSources);
+            }
             // Budget units stay separate on purpose: records read, records
             // represented, projected messages and characters are all reported.
             if(dialogueRequest!=null && config.SessionReadMethodsEnabled)
@@ -617,11 +643,11 @@ internal sealed partial class DeepSeekClient : IDisposable
                     return await SendAsync(config, userText, nativeContext, images, cancellationToken,
                         effectiveHistory, allowStoryRecall, thoughtBoundary, allowThoughtRewrite,
                         claimBoundary, allowClaimRewrite, requestPurpose, requestIdentity.RequestId,
-                        requireVisibleText, dialogueRequest, historyOwner, semanticRecallSupply, participationSnapshot, sharedActivitySupply).ConfigureAwait(false);
+                        requireVisibleText, dialogueRequest, historyOwner, semanticRecallSupply, participationSnapshot, sharedActivitySupply, memoResultInput).ConfigureAwait(false);
                 }
                 dialogueRequest.PendingPayloadIncludesB1=true;
             }
-            if (dialogueRequest?.NativeTools == true)
+            if (dialogueRequest?.NativeTools == true && memoResultInput == null)
                 text = await SendNativeToolCompletionAsync(config, payload, messages, requestPurpose,
                     requestIdentity, cancellationToken, ExtractRuntimeBlocks(dynamicContext), effectiveHistory,
                     historySummary, images is { Count: > 0 }, historyOwner, userText,
@@ -649,7 +675,7 @@ internal sealed partial class DeepSeekClient : IDisposable
                 NativeEventLog.Trace("review.thought_boundary", "mod", "system",
                     "prior provider thought actually supplied to this generation for optional reference");
             dialogueRequest?.ObserveResponse(images is { Count: > 0 }, requestIdentity.Response.HttpStatus);
-            if (text.Trim() == DialogueRequest.ScreenRequest)
+            if (text.Trim() == DialogueRequest.ScreenRequest && memoResultInput == null)
             {
                 if (dialogueRequest?.NativeTools == true)
                 {
@@ -694,11 +720,17 @@ internal sealed partial class DeepSeekClient : IDisposable
             result.RawText = requestIdentity.RawText;
             ActionPathDiagnostic.TraceParsed(result, text);
             result.LatencyMs = stopwatch.ElapsedMilliseconds;
+            if (memoResultInput != null && !NativeMemoResultInput.ExpressionOnly(result))
+            {
+                result.Error = "Memo result continuation must contain visible expression only";
+                result.Response.Outcome = "memo_result_invalid";
+                return result;
+            }
             ClearHistoricalRequestControls(result, requireVisibleText);
             // Background paper tasks intentionally return only hidden output.
             // Their caller supplies this contract; parsing a note is not a
             // general permission to leave a player-facing reply empty.
-            if (requireVisibleText && result.Error.Length == 0 && result.Text.Length == 0 && !result.ExplicitEmptyText
+            if (memoResultInput == null && requireVisibleText && result.Error.Length == 0 && result.Text.Length == 0 && !result.ExplicitEmptyText
                 && HasControlSignal(result)
                 && !requestPurpose.EndsWith(":empty_visible", StringComparison.Ordinal)
                 && !cancellationToken.IsCancellationRequested)
@@ -1329,6 +1361,13 @@ internal sealed partial class DeepSeekClient : IDisposable
                         && claimCheck.ValueKind == JsonValueKind.Object)
                         result.ClaimCheck = JsonSerializer.Deserialize<ClaimCheck>(claimCheck.GetRawText());
                 }
+                if (doc.RootElement.TryGetProperty("memo_confirmation", out var confirmation))
+                {
+                    result.MemoConfirmationProvided = true;
+                    result.MemoReplySeparated = confirmation.ValueKind == JsonValueKind.String
+                        && text.ValueKind == JsonValueKind.String;
+                    if (result.MemoReplySeparated) result.MemoConfirmation = MemoryStore.Clean(confirmation.GetString() ?? "");
+                }
                 if (doc.RootElement.TryGetProperty("emotion", out JsonElement emotion)
                     && emotion.ValueKind == JsonValueKind.String)
                 {
@@ -1414,6 +1453,8 @@ internal sealed partial class DeepSeekClient : IDisposable
             result.B1 = result.B1 == null ? nested.Choice : new B1Choice { Kind = "invalid" };
             result.B1ChoiceProvided = nested.Provided;
         }
+        tagSource = NativeMemoReplySegments.Extract(result, tagSource, playerText,
+            playerText != null && LooksLikeReadAloudRequest(playerText));
         ParseInlineTags(result, tagSource, playerText);
         result.Text = MemoryStore.Clean(result.Text);
         // Her visible words must not carry this program's own block markers. Both
@@ -1421,6 +1462,8 @@ internal sealed partial class DeepSeekClient : IDisposable
         // here, before either of them can see it (2026-09-20: she echoed
         // "[莉莉丝情绪底层] 有点忍不住想知道更多。" into a bubble).
         result.Text = ReplySanitizer.StripInternalHeaders(result.Text);
+        if (result.MemoConfirmationProvided && result.Text.Length == 0)
+            result.ExplicitEmptyText = true; // settlement needs no extra model fill
         return result;
     }
 

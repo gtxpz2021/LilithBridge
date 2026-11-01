@@ -76,6 +76,7 @@ internal sealed partial class BridgeController
         var semanticComposeWatch=System.Diagnostics.Stopwatch.StartNew();
         if(!IsCurrentDialogue(dialogueRequest)||submissionGeneration!=_conversationGeneration)return;
         var semanticTrace=dialogueRequest?.SemanticMaterial!=null?new SemanticRecallTrace():null;
+        using var experienceMatching = _memory.BeginExperienceMatchingPreparation();
         using var mentionScope = _memory.BeginMentionRequest(text, !_proactiveRequest);
         var nativeDialogueAuthorization = CaptureNativeDialogueAuthorization();
         using var nativeDialogueScope = _memory.BeginNativeDialogueRequest(text, !_proactiveRequest, _config,
@@ -95,7 +96,8 @@ internal sealed partial class BridgeController
         // the two chains must never be joined. Correlation stays here.
         var reflectionObservations = new List<ReflectionProjectionObservation>();
         using var b1Capture = B1Continuity.BeginCapture(dialogueRequest?.B1HostFootprint ?? new List<MemoryTurn>());
-        using var methodRuntime = MethodRuntimeEvidence.Begin(requestConfig.SessionReadMethodsEnabled);
+        using var methodRuntime = MethodRuntimeEvidence.Begin(true);
+        using var memoCapture = new NativeMemoCapture(enabled: requestConfig.MemoWriteEnabled && requestConfig.MemoAnnotationEnabled);
         string context = ContextBuilder.Build(
             _memory,
             _sessionState,
@@ -142,6 +144,7 @@ internal sealed partial class BridgeController
         {
             dialogueRequest.MethodRuntimeTracked=methodRuntime.Available&&string.IsNullOrWhiteSpace(extraContext);
             dialogueRequest.MethodRuntimeSources=methodRuntime.Sources;
+            dialogueRequest.MemoAnnotationTarget=memoCapture.Target;
         }
         // The automatic story-archive recall that used to be appended here now
         // travels inside ContextBuilder.Build's single material selection
@@ -156,7 +159,7 @@ internal sealed partial class BridgeController
                 + ";recall_query_source=" + recallQuerySource);
         ObservePlayerClaim(text, userEventId);
         ThoughtRecallBoundary thoughtBoundary = _memory.CaptureThoughtRecallBoundary(text,
-            requestConfig.ReflectionEnabled && requestConfig.RuntimeContextCleanupEnabled,dialogueRequest?.SemanticMaterial?.Result);
+            requestConfig.ReflectionEnabled,dialogueRequest?.SemanticMaterial?.Result);
         // Every recognized historical-claim question carries original source
         // candidates. Similarity selects material but never establishes support.
         ClaimRecallBoundary claimBoundary = _memory.CaptureClaimBoundary(text);
@@ -166,14 +169,20 @@ internal sealed partial class BridgeController
         if (claimBoundary.Sources.Count > 0)
             recallUsed = (recallUsed ?? Array.Empty<MemoryTurn>()).Concat(claimBoundary.Sources)
                 .GroupBy(t => t.EventId).Select(g => g.First()).ToList();
+        PaperSourceSnapshot paperSources = _memory.CapturePaperSources(
+            methodRuntime.Sources.Concat(_memory.GetRequestHistorySelection(requestConfig, finalRequestHistory)).Concat(claimBoundary.Sources),
+            _sessionState.RecentEvents, text, !_proactiveRequest);
         if(dialogueRequest?.SemanticMaterial!=null)
             BindSemanticMaterial(dialogueRequest,conversationGeneration,recallQuery,requestConfig,extraContext,
-                context,finalRequestHistory,semanticTrace!,recallUsed??Array.Empty<MemoryTurn>(),thoughtBoundary,claimBoundary);
+                context,finalRequestHistory,semanticTrace!,recallUsed??Array.Empty<MemoryTurn>(),thoughtBoundary,claimBoundary,paperSources);
         LastRequestComposeMs=semanticComposeWatch.Elapsed.TotalMilliseconds;
         ParticipationSnapshot? participationSnapshot = _proactiveRequest
             ? _sessionState.CaptureParticipationSnapshot() : null;
         SharedActivitySupply? sharedSupply = _proactiveRequest ? null
             : CaptureSharedActivitySupply(dialogueRequest?.Id ?? Guid.NewGuid().ToString("N"));
+        NativeMemoTarget? memoTarget = memoCapture.Target;
+        // Release pure tokens before the sender captures any async context.
+        experienceMatching.Dispose();
         Task.Run(async () =>
         {
             if (submissionGeneration != _conversationGeneration) return;
@@ -191,6 +200,7 @@ internal sealed partial class BridgeController
                 dialogueRequest: dialogueRequest, historyOwner: _memory,
                 participationSnapshot: participationSnapshot, requestId: sharedSupply?.RequestId,
                 sharedActivitySupply: sharedSupply).ConfigureAwait(false);
+            SubmittedMaterialBinding.Apply(result, dialogueRequest, paperSources, memoTarget);
             result.NativeLinkage = nativeAttempt;
             result.ConversationGeneration = conversationGeneration;
             _mainThread.Enqueue(() =>

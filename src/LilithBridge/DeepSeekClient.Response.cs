@@ -70,6 +70,8 @@ internal sealed partial class DeepSeekClient
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
             diagnostic.TimeoutSeconds=timeoutSeconds;
             budgetToken.ThrowIfCancellationRequested();
+            if (kind == "main" && envelope.MemoResultInput?.Permitted(envelope.MemoResultSources) == false)
+                return RejectCompletion(envelope, "source_permission_changed", "Undelivered memo draft source permission changed before send");
             if(kind=="main" && envelope.DialogueRequest is { } reviewOwner
                 && !reviewOwner.ReviewSupplyPermitted())
                 return RejectCompletion(envelope,"source_permission_changed","Review source permission changed before send");
@@ -83,6 +85,8 @@ internal sealed partial class DeepSeekClient
                     diagnostic.AttemptId, historyProjection, envelope.HistoryBoundary);
             Task<HttpResponseMessage> Dispatch()
             {
+                if (kind == "main" && envelope.MemoResultInput?.Permitted(envelope.MemoResultSources) == false)
+                    throw new SemanticMaterialException("source_permission_changed");
                 diagnostic.Outcome = "started";
                 diagnostic.Phase = "sending_headers";
                 if(kind!="review" && !(kind=="reflection" && envelope.ReflectionDispatch!=null))TraceCompletion("model.request", model, kind, purpose, envelope);

@@ -7,7 +7,10 @@ internal sealed record SemanticMaterialAudit(int Revision,string Reason,IReadOnl
 internal sealed record SemanticPreparedMaterial(int Revision,string RequestId,long Generation,string QueryHash,string Context,
     IReadOnlyList<MemoryTurn> History,SemanticRecallTrace Trace,IReadOnlyList<MemoryTurn> HostFootprint,IReadOnlyList<MemoryTurn> RecallSources,
     ThoughtRecallBoundary Thought,ClaimRecallBoundary Claim,
-    IReadOnlyList<MemoryTurn>? MethodRuntimeSources=null,bool MethodRuntimeTracked=true);
+    IReadOnlyList<MemoryTurn>? MethodRuntimeSources=null,bool MethodRuntimeTracked=true)
+{
+    internal PaperSourceSnapshot? PaperSources { get; init; }
+}
 internal sealed record SemanticMessageRefresh(List<object> Messages,IReadOnlyList<string> RuntimeBlocks,
     IReadOnlyList<MemoryTurn> History,HistoryProjectionSummary Projection);
 
@@ -28,6 +31,7 @@ internal sealed class SemanticRequestMaterial
     private int _lastRebasedBoundary=-1;
     internal bool RebasedAtBoundary(int attempts)=>_lastRebasedBoundary==attempts;
     private readonly object _auditLock=new();
+    private readonly List<PaperSourceSnapshot> _sentPaperSources = new();
     internal SemanticRequestMaterial(string id,long generation,string query,string dataRoot)
     {RequestId=id;Generation=generation;QueryHash=MemoryStore.SemanticTextHash(query);DataRoot=dataRoot;}
     internal static IReadOnlyList<SemanticSourceAudit> Audit(IEnumerable<MemoryTurn> turns)=>turns
@@ -61,8 +65,23 @@ internal sealed class SemanticRequestMaterial
         lock(_auditLock)
         {
             int at=HttpAudit.FindIndex(a=>a.Attempt==attempt);
-            if(at<0&&Current!=null)HttpAudit.Add((Current.Revision,attempt,outcome,Audit(Current.RecallSources)));
+            if(at<0&&Current!=null)
+            {
+                HttpAudit.Add((Current.Revision,attempt,outcome,Audit(Current.RecallSources)));
+                if (outcome == "started" && Current.PaperSources is { } paper) _sentPaperSources.Add(paper);
+            }
             else if(at>=0){var old=HttpAudit[at];HttpAudit[at]=(old.Revision,old.Attempt,outcome,old.Sources);}
+        }
+    }
+    internal PaperSourceSnapshot PaperSourcesForReply(PaperSourceSnapshot fallback)
+    {
+        lock (_auditLock)
+        {
+            // Keep each actually dispatched version; a later refresh does not
+            // erase sources already read in this logical reply's protocol.
+            if (_sentPaperSources.Count == 0) return Current?.PaperSources ?? fallback;
+            return new(_sentPaperSources.SelectMany(p => p.Records).ToArray(),
+                _sentPaperSources.SelectMany(p => p.SceneIds).Distinct().ToArray(), fallback.Query, fallback.PlayerDirected);
         }
     }
 }

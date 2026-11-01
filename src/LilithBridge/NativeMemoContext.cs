@@ -77,6 +77,7 @@ internal static class NativeMemoContext
         }
 
         var seen = new HashSet<int>();
+        var annotationCandidates = new List<MemoEntry>();
 
         try
         {
@@ -86,6 +87,7 @@ internal static class NativeMemoContext
             {
                 if (entry.done || !seen.Add(entry.id))
                     continue;
+                annotationCandidates.Add(entry);
                 hasUntrackedBodies=true;
                 builder.AppendLine(
                     (entry.remind ? "memo_reminder=" : "memo_book=") + DescribeTodo(entry));
@@ -96,6 +98,7 @@ internal static class NativeMemoContext
             {
                 if (entry.done || !seen.Add(entry.id))
                     continue;
+                annotationCandidates.Add(entry);
                 hasUntrackedBodies=true;
                 builder.AppendLine("memo_overdue=" + DescribeTodo(entry));
                 if (++shown >= 9)
@@ -115,6 +118,7 @@ internal static class NativeMemoContext
             {
                 if (!seen.Add(entry.id))
                     continue;
+                annotationCandidates.Add(entry);
                 hasUntrackedBodies=true;
                 builder.AppendLine("player_quick=" + DescribeScratch(entry));
                 if (++shown >= 7)
@@ -126,6 +130,21 @@ internal static class NativeMemoContext
             NativeEventLog.Trace("native_memo.scratch_error", "mod", "system", error.Message);
         }
 
+        var capture = NativeMemoCapture.Current.Value;
+        if (capture != null)
+        {
+            capture.Target = null;
+            foreach (var entry in annotationCandidates)
+            {
+                if (capture.PreferredId is { } id && entry.id != id) continue;
+                string body = MemoTextAccess.Read(entry);
+                if (string.IsNullOrWhiteSpace(body) || body.Contains("[莉莉丝批注]", StringComparison.Ordinal)) continue;
+                capture.Target = NativeMemoTarget.Capture(entry);
+                builder.AppendLine("[annotation_target] id=" + entry.id + ";body=" + Truncate(body, 700));
+                builder.AppendLine("本次 <annotation> 只批注上述指定目标；其他笔记只作背景。目标已变或不可用时不改写其他条目。最多一条批注，也可以不批注。");
+                break;
+            }
+        }
         return builder.ToString().TrimEnd();
     }
 

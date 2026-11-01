@@ -13,3 +13,5 @@ LilithBridge 的自有源码，以及文档中作者有权许可的部分，采�
 版本与取得入口见[依赖说明](docs/DEPENDENCIES.md)。可选 worker 的第三方来源见 [NOTICE-REFERENCES.md](optional/semantic-worker/NOTICE-REFERENCES.md)。
 
 如果你要重新打包或分发第三方组件、模型或依赖，请先核对具体版本的完整许可及随附通知。本项目的 MIT 许可证仅授权本项目有权许可的内容。
+
+安装器唯一随包的第三方托管库 Mono.Cecil 0.11.4 采用 MIT，完整许可见 [LICENSES/Mono.Cecil.txt](LICENSES/Mono.Cecil.txt)，说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。游戏依赖、加载器、Python 和模型仍不随包分发。

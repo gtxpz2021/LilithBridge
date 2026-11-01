@@ -154,8 +154,8 @@ internal sealed partial class MemoryStore
     /// lessons and readings that were re-read through a day resolve this same set,
     /// so "this day is current" cannot mean two different things in two read paths.
     /// </summary>
-    private HashSet<string> AvailableDayArtifactIds() =>
-        GetDayArtifacts(int.MaxValue).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+    private HashSet<string> AvailableDayArtifactIds(IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null) =>
+        SelectAvailableDayArtifacts(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
 
     /// <summary>
     /// A thought stays available while everything it rests on is: the raw
@@ -174,12 +174,17 @@ internal sealed partial class MemoryStore
     /// </summary>
     public IReadOnlyList<MemoryTurn> GetReflectionNotes(int max,
         Action<ReflectionProjectionObservation>? onObservation = null)
+        => SelectAvailableReflectionNotes(max, onObservation, null);
+
+    private IReadOnlyList<MemoryTurn> SelectAvailableReflectionNotes(int max,
+        Action<ReflectionProjectionObservation>? onObservation,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
         HashSet<string> available = ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        HashSet<string> availableDays = AvailableDayArtifactIds();
-        var isCurrent = CreateCurrentBasisEvaluator(available);
+        HashSet<string> availableDays = AvailableDayArtifactIds(restoredNotes);
+        var isCurrent = CreateCurrentBasisEvaluator(available, restoredNotes);
         var kept = new List<MemoryTurn>();
-        foreach (MemoryTurn candidate in _reflectionNotes)
+        foreach (MemoryTurn candidate in ReflectionNoteView(restoredNotes))
         {
             string[] surviving = candidate.SourceEventIds.Where(available.Contains).ToArray();
             Observe(onObservation, Fact(candidate, ReflectionProjectionStage.CandidateSeen,
@@ -202,9 +207,16 @@ internal sealed partial class MemoryStore
     /// it; they are simply no longer part of what she is carrying.
     /// </summary>
     public IReadOnlyList<MemoryTurn> GetSettledNotes(int max)
+        => SelectAvailableSettledNotes(max, null);
+
+    private IReadOnlyList<MemoryTurn> SelectAvailableSettledNotes(int max,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
         HashSet<string> available = ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        HashSet<string> availableDays = _dreams.Where(IsDerivedMemoryVisible).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var materialPermitted = CreateMaterialPermissionEvaluator();
+        HashSet<string> availableDays = _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind
+                ? IsMentionAllowed(t) && IsDayArtifactCurrent(t, materialPermitted, restoredNotes) : IsDerivedMemoryVisible(t))
+            .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         return _reflectionNotes
             .Where(t => IsMentionAllowed(t) && IsSettledLifecycle(t) && t.Origin == "reflection"
                 && t.SourceEventIds.Length > 0 && t.SourceEventIds.All(available.Contains)
@@ -229,10 +241,14 @@ internal sealed partial class MemoryStore
     }
 
     public IReadOnlyList<MemoryTurn> GetReflectionLessons(int max)
+        => SelectAvailableReflectionLessons(max, null);
+
+    private IReadOnlyList<MemoryTurn> SelectAvailableReflectionLessons(int max,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
         HashSet<string> available = ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        HashSet<string> availableDays = AvailableDayArtifactIds();
-        HashSet<string> availableNotes = CurrentBasisNoteIds(available, availableDays);
+        HashSet<string> availableDays = AvailableDayArtifactIds(restoredNotes);
+        HashSet<string> availableNotes = CurrentBasisNoteIds(available, availableDays, restoredNotes);
         return _reflectionLessons
             .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && t.Kind == "reflection.lesson"
                 && t.SourceNoteIds.Length > 0
@@ -247,10 +263,11 @@ internal sealed partial class MemoryStore
     /// does not falsify it; replacing it retires conclusions resting on that exact
     /// version from default supply. No stored lifecycle is rewritten or cascaded.
     /// </summary>
-    private HashSet<string> CurrentBasisNoteIds(HashSet<string> available, HashSet<string> availableDays)
+    private HashSet<string> CurrentBasisNoteIds(HashSet<string> available, HashSet<string> availableDays,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
     {
-        var isCurrent = CreateCurrentBasisEvaluator(available);
-        return _reflectionNotes.Where(t => (IsActiveLifecycle(t) || IsSettledLifecycle(t))
+        var isCurrent = CreateCurrentBasisEvaluator(available, restoredNotes);
+        return ReflectionNoteView(restoredNotes).Where(t => (IsActiveLifecycle(t) || IsSettledLifecycle(t))
             && t.Origin == "reflection" && isCurrent(t) && t.SourceDayIds.All(availableDays.Contains))
             .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
     }
@@ -263,10 +280,14 @@ internal sealed partial class MemoryStore
     /// available. Newest last; never user evidence.
     /// </summary>
     public IReadOnlyList<MemoryTurn> GetRelationshipReadings(int max)
+        => SelectAvailableRelationshipReadings(max, null);
+
+    private IReadOnlyList<MemoryTurn> SelectAvailableRelationshipReadings(int max,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
         HashSet<string> available = ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        HashSet<string> availableDays = AvailableDayArtifactIds();
-        HashSet<string> availableNotes = CurrentBasisNoteIds(available, availableDays);
+        HashSet<string> availableDays = AvailableDayArtifactIds(restoredNotes);
+        HashSet<string> availableNotes = CurrentBasisNoteIds(available, availableDays, restoredNotes);
         return _relationshipReadings
             .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && t.Kind == RelationshipReadingKind
                 && t.SourceNoteIds.Length > 0
@@ -713,14 +734,25 @@ internal sealed partial class MemoryStore
     /// </summary>
     public bool ApplyReflectionNote(ReflectionResult result, ReflectionRequestSnapshot request,
         out string reason, out ReflectionChainOutcome outcome)
+        => ApplyReflectionNote(result, request, null, out reason, out outcome);
+
+    private bool ApplyReflectionNote(ReflectionResult result, ReflectionRequestSnapshot request,
+        ReflectionChainOutcome? progress, out string reason, out ReflectionChainOutcome outcome)
     {
         lock (_experienceLock)
         {
-            bool noteAttempted = result?.Note != null;
-            bool settleAttempted = Clean(result?.Note?.Settles ?? "").Length > 0;
-            bool lessonAttempted = result?.Lesson != null;
-            bool readingAttempted = result?.Relationship != null;
-            if ((noteAttempted || lessonAttempted || readingAttempted)
+            bool noteAttempted = progress?.NoteProposed ?? result?.Note != null;
+            bool settleAttempted = progress?.SettleProposed ?? Clean(result?.Note?.Settles ?? "").Length > 0;
+            bool lessonAttempted = progress?.LessonProposed ?? result?.Lesson != null;
+            bool readingAttempted = progress?.ReadingProposed ?? result?.Relationship != null;
+            string? noteDone = CompletedChain(progress?.NoteReason) ??
+                (_reflectionNotes.Any(t => t.OperationId == request.RequestId
+                    || t.ReflectionSettlementOperationId == request.RequestId) ? "already_applied" : null);
+            string? lessonDone = CompletedChain(progress?.LessonReason) ??
+                (_reflectionLessons.Any(t => t.OperationId == request.RequestId) ? "already_applied" : null);
+            string? readingDone = CompletedChain(progress?.ReadingReason) ??
+                (_relationshipReadings.Any(t => t.OperationId == request.RequestId) ? "already_applied" : null);
+            if ((noteDone == null && noteAttempted || lessonDone == null && lessonAttempted || readingDone == null && readingAttempted)
                 && !NoteHistoryStillReadable(request, out string historyReason))
             {
                 reason = historyReason;
@@ -732,13 +764,14 @@ internal sealed partial class MemoryStore
                     request.DayArtifacts.Count, request.Settled.Count);
                 return false;
             }
-            bool noteSaved = ApplyNoteCore(result?.Note, request, out string noteReason);
-            bool lessonSaved = ApplyLessonCore(result?.Lesson, request, out string lessonReason);
-            bool readingSaved = ApplyRelationshipReadingCore(result?.Relationship, request, out string readingReason);
+            string noteReason = noteDone ?? "no_new_note", lessonReason = lessonDone ?? "no_lesson", readingReason = readingDone ?? "no_reading";
+            bool noteSaved = noteDone == null && ApplyNoteCore(result?.Note, request, out noteReason);
+            bool lessonSaved = lessonDone == null && ApplyLessonCore(result?.Lesson, request, out lessonReason);
+            bool readingSaved = readingDone == null && ApplyRelationshipReadingCore(result?.Relationship, request, out readingReason);
             // The note proposal carries both a possible new thought and a possible
             // decision to close one; report them separately.
             string settleResult = !settleAttempted ? "no_settle"
-                : noteSaved ? "settled"
+                : _reflectionNotes.Any(t => t.ReflectionSettlementOperationId == request.RequestId) ? "settled"
                 : noteReason;
             outcome = new ReflectionChainOutcome(
                 noteAttempted, noteReason,
@@ -771,6 +804,9 @@ internal sealed partial class MemoryStore
             return false;
         }
     }
+
+    private static string? CompletedChain(string? reason) =>
+        reason != null && !ReflectionWindow.RetainsForRetry(reason) ? reason : null;
 
     private bool ApplyNoteCore(ReflectionNoteProposal? proposal, ReflectionRequestSnapshot request, out string reason)
     {
@@ -860,6 +896,7 @@ internal sealed partial class MemoryStore
             string settleState = settleTarget?.LifecycleState ?? "";
             string priorSettleReason = settleTarget?.SettleReason ?? "";
             DateTimeOffset? priorSettledAt = settleTarget?.SettledAt;
+            string priorSettlementOperation = settleTarget?.ReflectionSettlementOperationId ?? "";
             if (text.Length > 0)
             {
                 note = new MemoryTurn
@@ -880,6 +917,7 @@ internal sealed partial class MemoryStore
                 settleTarget.LifecycleState = ReferenceEquals(settleTarget, parent) ? "superseded" : "settled";
                 settleTarget.SettleReason = settleReason;
                 settleTarget.SettledAt = DateTimeOffset.UtcNow;
+                settleTarget.ReflectionSettlementOperationId = request.RequestId;
             }
             if (!SaveList("v4-reflection-notes.json",_reflectionNotes))
             {
@@ -890,6 +928,7 @@ internal sealed partial class MemoryStore
                     settleTarget.LifecycleState = settleState;
                     settleTarget.SettleReason = priorSettleReason;
                     settleTarget.SettledAt = priorSettledAt;
+                    settleTarget.ReflectionSettlementOperationId = priorSettlementOperation;
                 }
                 reason="persistence_failed"; return false;
             }
@@ -920,7 +959,8 @@ internal sealed partial class MemoryStore
         if (cited.Any(id => !shown.ContainsKey(id)))
         { reason="note_not_in_request"; return false; }
         // New support must name the exact still-current notes that were supplied.
-        var available = GetReflectionNotes(64).ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        var available = GetReflectionNotes(int.MaxValue).Where(IsNativeSupplyAllowed)
+            .ToDictionary(t => t.EventId, StringComparer.Ordinal);
         if (cited.Any(id => !available.ContainsKey(id)))
         { reason="unavailable_note"; return false; }
         MemoryTurn? parent = null;
@@ -990,7 +1030,8 @@ internal sealed partial class MemoryStore
         var shown = request.Notes.ToDictionary(t => t.EventId, StringComparer.Ordinal);
         if (cited.Any(id => !shown.ContainsKey(id)))
         { reason = "note_not_in_request"; return false; }
-        var available = GetReflectionNotes(64).ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        var available = GetReflectionNotes(int.MaxValue).Where(IsNativeSupplyAllowed)
+            .ToDictionary(t => t.EventId, StringComparer.Ordinal);
         if (cited.Any(id => !available.ContainsKey(id)))
         { reason = "unavailable_note"; return false; }
         MemoryTurn? parent = null;

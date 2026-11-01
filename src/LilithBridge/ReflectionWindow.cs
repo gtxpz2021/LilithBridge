@@ -14,10 +14,17 @@ internal sealed record ReflectionRecentReceipt(string UserId, string RequestId, 
 }
 
 internal readonly record struct ReflectionWindowSnapshot(string InputId, long FactActivity, bool ModelRequested,
-    ReflectionRecentReceipt[]? RecentConsumed = null, bool RecentInitialized = false)
+    ReflectionRecentReceipt[]? RecentConsumed = null, bool RecentInitialized = false,
+    ReflectionWork? Work = null)
 {
     public static readonly ReflectionWindowSnapshot Empty = new("", 0L, false);
 }
+
+// One unfinished reflection, in the existing consumption file. Target never
+// contains another Work. The response is saved before any artifact is changed.
+internal sealed record ReflectionWork(ReflectionRequestSnapshot Request, MemoryTurn[] Window,
+    ReflectionWindowSnapshot Target, ReflectionResult? Result = null, ReflectionChainOutcome? Progress = null,
+    bool RequestedAgain = false);
 
 internal static class ReflectionWindow
 {
@@ -66,7 +73,7 @@ internal static class ReflectionWindow
 
 /// <summary>
 /// The live reflection cursor. Only one pass runs at a time, so a single staged
-/// snapshot is enough to put a failed window back without storing anything new.
+/// snapshot puts a failed window back while its durable work remains recoverable.
 /// </summary>
 internal sealed class ReflectionWindowCursor
 {
@@ -81,6 +88,12 @@ internal sealed class ReflectionWindowCursor
     public long FactActivity => _current.FactActivity;
     public bool ModelRequested => _current.ModelRequested;
     public ReflectionWindowSnapshot Snapshot => _current;
+    public bool PassActive => _beforePass.HasValue;
+    internal void SetWork(ReflectionWork? work)
+    {
+        _current = _current with { Work = work };
+        if (_beforePass is { } previous) _beforePass = previous with { Work = work };
+    }
     // In-flight material has not been consumed. Persist only the previous
     // receipt, plus any model request that arrived while this pass was running.
     public ReflectionWindowSnapshot DurableSnapshot => _beforePass is { } previous
@@ -97,6 +110,7 @@ internal sealed class ReflectionWindowCursor
     {
         ModelRequestVersion++;
         _current = _current with { ModelRequested = true };
+        if (_current.Work is { } work) SetWork(work with { RequestedAgain = true });
     }
 
     /// <summary>Stage what this pass may consume, keeping the previous window aside.</summary>

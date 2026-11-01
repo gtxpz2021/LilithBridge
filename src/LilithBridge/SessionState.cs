@@ -339,10 +339,10 @@ internal sealed class SessionState
         if (signal.Length == 0)
             return "";
         var builder = new StringBuilder();
-        builder.AppendLine("[莉莉丝情绪底层（不要复述这些字面描述，也不要把它当成玩家的话）]");
-        builder.AppendLine("这是还没完全散掉的内心余温：");
+        builder.AppendLine("[程序提供的短时反应建议（不要复述，也不要当成玩家的话）]");
+        builder.AppendLine("以下描述由预设基线、近期游戏事件和随时间衰减的状态计算而来，是表达参考，不是已经发生的心理事实：");
         builder.AppendLine("- " + signal);
-        builder.AppendLine("这份余温可参考，也可不采纳；它不证明玩家的意思或关系发生了变化。");
+        builder.AppendLine("请结合当前话语和具体情境决定是否采纳，也可以完全不采纳；触碰等输入本身不证明玩家的意图、双方感受或关系进展。");
         return builder.ToString();
     }
 

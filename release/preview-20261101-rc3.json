@@ -1,0 +1,17 @@
+{
+  "release_tag": "preview-20261101-rc3",
+  "version": "0.3.150.64-rc.3",
+  "numeric_version": "0.3.150.64",
+  "package_id": "lilithbridge-preview-20261101-rc3",
+  "plugin_sha256": "f7030fd9686c0fa98166d31c61b8ca2b851e23851959f6b0e9bda19da9dbfedf",
+  "plugin_bytes": 2025984,
+  "installer_sha256": "207da3f05425501ae4ccfa1f83d200dc34a1237e6d284f323bed5c4c00a3ccac",
+  "handoff_sha256": "f44aa4b40a5ce9217efb9227cacfcd6fdb31080f6b1cc0d880fc74441aee5369",
+  "manifest_sha256": "68faf835a8ee37920fdf0583524a1a105622c9b6e6a150a66878d5c174015a14",
+  "product_directory_tree": "dbc40c7b147198696ec86d3adef0bc2574fe909a",
+  "binary_reused_without_rebuild": true,
+  "loader_default_unchanged": true,
+  "model_and_feature_defaults_unchanged": true,
+  "channel": "prerelease",
+  "public_summary": "One synthetic-seeded real correction/natural-reflection/native-delivery/history/restart case; not cross-day, pixel, all default installs or all multimodal settings."
+}

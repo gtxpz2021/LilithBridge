@@ -1,177 +1,120 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 
 namespace LilithBridge;
 
-/// <summary>
-/// Writes AI-decided memo/scratch requests back through the original
-/// MemoBook API. It is disabled by config when the player does not want the
-/// original save data to be touched by the AI layer.
-/// </summary>
 internal static class NativeMemoWriter
 {
-    public static void Apply(ApiResult reply, BridgeConfig config)
+    public static NativeMemoWriteOutcome Apply(ApiResult reply, BridgeConfig config)
     {
-        if (reply == null || !config.MemoWriteEnabled)
-            return;
-
-        foreach (string value in reply.MemoEntries
-                     .Where(v => !string.IsNullOrWhiteSpace(v))
-                     .Take(6))
+        // Normalize once, then retain the existing execution caps. Coverage is
+        // over every valid proposal, including those not selected by the cap.
+        var memos = Values(reply.MemoEntries);
+        var scratches = Values(reply.ScratchEntries);
+        var annotations = Values(reply.MemoAnnotations);
+        var items = memos.Select(text => (Kind: "memo", Body: text))
+            .Concat(scratches.Select(text => (Kind: "scratch", Body: text)))
+            .Concat(annotations.Select(text => (Kind: "annotation", Body: text)))
+            .Select((proposal, index) => new NativeMemoItemResult(proposal.Kind, index + 1, proposal.Body, "unprocessed"))
+            .ToArray();
+        int index = 0;
+        foreach (string text in memos.Take(6))
         {
-            string text = MemoryStore.Clean(value);
-            if (text.Length == 0)
-                continue;
+            int current = index++;
+            items[current] = items[current] with { Status = "unconfirmed" };
+            if (!config.MemoWriteEnabled) continue;
             try
             {
-                // The generated IL2CPP optional parameter is a reference to a
-                // boxed Nullable<DateTime>, not a managed nullable. Its default
-                // null is rejected by Il2CppObjectBaseToPtrNotNull before the
-                // native call. An allocated empty value preserves "no date".
+                // IL2CPP requires an allocated empty nullable, not managed null.
                 MemoBook.CreateTodoFromText(text, new Il2CppSystem.Nullable<Il2CppSystem.DateTime>());
-                NativeEventLog.Trace("native_memo.written", "mod", "system",
-                    "todo memo written", text);
-                BridgeController.Instance?.OnNativeMemoWritten("memo", text);
             }
-            catch (Exception error)
-            {
-                NativeEventLog.Trace("native_memo.write_error", "mod", "system",
-                    "memo write failed", DescribeFailure(reply, "memo", error));
-            }
+            catch (Exception error) { Failed(reply, "memo", error); continue; }
+            items[current] = items[current] with { Status = "confirmed" };
+            Written("memo", text);
         }
-
-        foreach (string value in reply.ScratchEntries
-                     .Where(v => !string.IsNullOrWhiteSpace(v))
-                     .Take(6))
+        index = memos.Length;
+        foreach (string text in scratches.Take(6))
         {
-            string text = MemoryStore.Clean(value);
-            if (text.Length == 0)
-                continue;
+            int current = index++;
+            items[current] = items[current] with { Status = "unconfirmed" };
+            if (!config.MemoWriteEnabled) continue;
+            try { MemoBook.CreateScratch(text, MemoScratchTier.Normal); }
+            catch (Exception error) { Failed(reply, "scratch", error); continue; }
+            items[current] = items[current] with { Status = "confirmed" };
+            Written("scratch", text);
+        }
+        index = memos.Length + scratches.Length;
+        foreach (string annotation in annotations.Take(4))
+        {
+            int current = index++;
+            items[current] = items[current] with { Status = "unconfirmed" };
+            if (!config.MemoWriteEnabled || !config.MemoAnnotationEnabled) continue;
             try
             {
-                MemoBook.CreateScratch(text, MemoScratchTier.Normal);
-                NativeEventLog.Trace("native_memo.written", "mod", "system",
-                    "scratch note written", text);
-                BridgeController.Instance?.OnNativeMemoWritten("scratch", text);
+                MemoEntry? target = FindTarget(reply.MemoAnnotationTarget);
+                if (target == null || !reply.MemoAnnotationTarget!.Matches(target))
+                {
+                    NativeEventLog.Trace("native_memo.annotation_skip", "mod", "system", "supplied target missing or changed");
+                    continue;
+                }
+                string updated = MemoTextAccess.Read(target) + "\n\n[莉莉丝批注] " + annotation;
+                MemoTextAccess.Write(target, updated);
+                MemoBook.Touch(target);
+                if (MemoTextAccess.Read(target) != updated)
+                {
+                    NativeEventLog.Trace("native_memo.annotation_failed", "mod", "system", "annotation readback mismatch");
+                    continue;
+                }
             }
-            catch (Exception error)
-            {
-                NativeEventLog.Trace("native_memo.write_error", "mod", "system",
-                    "scratch write failed", DescribeFailure(reply, "scratch", error));
-            }
+            catch (Exception error) { Failed(reply, "annotation", error); continue; }
+            items[current] = items[current] with { Status = "confirmed" };
+            Written("annotation", annotation);
         }
-
-        // The master switch above covers every native memo write. Annotation
-        // permission also applies to ordinary replies and in-flight idle tasks.
-        if (config.MemoAnnotationEnabled)
-            WriteAnnotations(reply);
+        var outcome = NativeMemoWriteOutcome.FromItems(items);
+        if (outcome.Attempted > 0)
+            NativeEventLog.Trace("native_memo.settled", "mod", "system", "native memo writes settled",
+                "request_id=" + reply.RequestId + ";attempted=" + outcome.Attempted + ";confirmed=" + outcome.Succeeded
+                + ";eligible=" + outcome.Eligible + ";unprocessed=" + outcome.Unprocessed);
+        return outcome;
     }
 
-    private static string DescribeFailure(ApiResult reply, string kind, Exception error)
+    private static string[] Values(IEnumerable<string> values) => values
+        .Where(v => !string.IsNullOrWhiteSpace(v)).Select(MemoryStore.Clean).Where(v => v.Length > 0).ToArray();
+
+    private static void Written(string kind, string text)
     {
-        // Method identities are enough to distinguish interop argument failures
-        // from native exceptions. Never log arguments, note text or stack locals.
+        NativeEventLog.Trace("native_memo.written", "mod", "system", kind + " written");
+        // An optional receipt failure cannot undo a successful native write.
+        try { BridgeController.Instance?.OnNativeMemoWritten(kind, text); }
+        catch (Exception error) { NativeEventLog.Trace("native_memo.receipt_error", "mod", "system", error.GetType().Name); }
+    }
+
+    private static void Failed(ApiResult reply, string kind, Exception error)
+    {
         var methods = new System.Diagnostics.StackTrace(error, false).GetFrames()?
             .Take(8).Select(f => f.GetMethod()).Where(m => m != null)
             .Select(m => (m!.DeclaringType?.FullName ?? "") + "." + m.Name);
-        return "request_id=" + reply.RequestId + ";kind=" + kind + ";error_type=" + error.GetType().FullName
-            + ";managed_path=" + string.Join(" > ", methods ?? Array.Empty<string>());
+        NativeEventLog.Trace("native_memo.write_error", "mod", "system", "memo write failed",
+            "request_id=" + reply.RequestId + ";kind=" + kind + ";error_type=" + error.GetType().FullName
+            + ";managed_path=" + string.Join(" > ", methods ?? Array.Empty<string>()));
     }
 
-    private static void WriteAnnotations(ApiResult reply)
+    private static MemoEntry? FindTarget(NativeMemoTarget? target)
     {
-        foreach (string value in reply.MemoAnnotations
-                     .Where(v => !string.IsNullOrWhiteSpace(v))
-                     .Take(4))
-        {
-            MemoEntry? target = FindFirstUnannotatedMemo();
-            if (target == null)
-            {
-                NativeEventLog.Trace("native_memo.annotation_skip", "mod", "system",
-                    "no unannotated memo/scratch entry available");
-                continue;
-            }
-            string annotation = MemoryStore.Clean(value);
-            if (annotation.Length == 0)
-                continue;
-            try
-            {
-                string marker = "\n\n[莉莉丝批注] ";
-                string current = MemoTextAccess.Read(target);
-                string updated = current + marker + annotation;
-                MemoTextAccess.Write(target, updated);
-                MemoBook.Touch(target);
-                // Read back through the same path: a silent no-op here used to look
-                // identical to success in telemetry (2026-09-19).
-                bool applied = MemoTextAccess.Read(target).Contains(marker, StringComparison.Ordinal);
-                NativeEventLog.Trace(applied ? "native_memo.annotation" : "native_memo.annotation_failed",
-                    "mod", "system",
-                    applied ? "Lilith annotation written to memo/scratch"
-                            : "Lilith annotation did not reach the memo text",
-                    "applied=" + applied + ";" + annotation);
-                if (applied)
-                    BridgeController.Instance?.OnNativeMemoWritten("annotation", annotation);
-            }
-            catch (Exception error)
-            {
-                NativeEventLog.Trace("native_memo.annotation_error", "mod", "system",
-                    error.Message);
-            }
-        }
-    }
-
-    private static MemoEntry? FindFirstUnannotatedMemo()
-    {
+        if (target == null) return null;
         var candidates = new List<MemoEntry>();
         try
         {
             MemoBook.BuildAgenda(SystemSensor.LocalTime, out var todo, out var overdue);
-            foreach (MemoEntry entry in todo)
-                candidates.Add(entry);
-            foreach (MemoEntry entry in overdue)
-                candidates.Add(entry);
+            foreach (MemoEntry entry in todo) candidates.Add(entry);
+            foreach (MemoEntry entry in overdue) candidates.Add(entry);
         }
-        catch
-        {
-            // Fall through to reminder query.
-        }
-        try
-        {
-            var reminders = MemoBook.QueryForReminders(false);
-            foreach (MemoEntry entry in reminders)
-                candidates.Add(entry);
-        }
-        catch
-        {
-            // No reminder entries is normal.
-        }
-        try
-        {
-            var scratches = MemoBook.QueryScratch();
-            foreach (MemoEntry entry in scratches)
-                candidates.Add(entry);
-        }
-        catch
-        {
-            // Scratch entries are optional.
-        }
-
-        foreach (MemoEntry entry in candidates)
-        {
-            string text;
-            try
-            {
-                text = MemoTextAccess.Read(entry);
-            }
-            catch
-            {
-                continue;
-            }
-            if (!string.IsNullOrWhiteSpace(text)
-                && !text.Contains("[莉莉丝批注]", StringComparison.Ordinal))
-                return entry;
-        }
-        return null;
+        catch { /* Continue through the other native views of this same id. */ }
+        try { foreach (MemoEntry entry in MemoBook.QueryForReminders(false)) candidates.Add(entry); }
+        catch { }
+        try { foreach (MemoEntry entry in MemoBook.QueryScratch()) candidates.Add(entry); }
+        catch { }
+        return candidates.FirstOrDefault(entry => entry.id == target.Id);
     }
 }

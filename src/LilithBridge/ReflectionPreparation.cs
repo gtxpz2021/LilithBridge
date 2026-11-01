@@ -65,29 +65,58 @@ internal sealed partial class MemoryStore
 
     // Both dispatch and result application recheck the complete read footprint
     // under the existing source lock. No await/model work runs under this lock.
-    internal bool TryUseReflectionRequest(ReflectionPreparation owner, ReflectionRequestSnapshot request, Func<bool> use)
+    internal bool TryUseReflectionRequest(ReflectionPreparation owner, ReflectionRequestSnapshot request, Func<bool> use,
+        bool recovering = false)
     {
         lock (_experienceLock)
         {
-            if (!ReflectionPreparationCurrent(owner) || !NoteHistoryStillReadable(request, out _)) return false;
-            var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
-            if (request.Evidence.Any(t => !raw.ContainsKey(t.EventId) || !IsMentionAllowed(raw[t.EventId]) || !IsNativeSupplyAllowed(raw[t.EventId]))) return false;
-            var active = GetReflectionNotes(int.MaxValue).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-            var settled = GetSettledNotes(int.MaxValue).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-            var lessons = GetReflectionLessons(int.MaxValue).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-            var readings = GetRelationshipReadings(int.MaxValue).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-            if (request.Notes.Any(t => !active.Contains(t.EventId) || !IsNativeSupplyAllowed(t))
-                || request.Settled.Any(t => !settled.Contains(t.EventId) || !IsNativeSupplyAllowed(t))
-                || request.Lessons.Any(t => !lessons.Contains(t.EventId)) || request.Readings.Any(t => !readings.Contains(t.EventId))
-                || request.RevisionTargets.Any(t => !RecordPermitted(t) || !IsMentionAllowed(t) || !IsNativeSupplyAllowed(t))) return false;
-            foreach (var prior in request.Dependencies)
-            {
-                IEnumerable<MemoryTurn> pool = prior.Kind switch
-                { "note" => _reflectionNotes, "lesson" => _reflectionLessons, "reading" => _relationshipReadings, "day" => _dreams, _ => raw.Values };
-                var current = pool.FirstOrDefault(t => t.EventId == prior.EventId);
-                if (current == null || SourceVersion(prior.Kind, current) != prior || !IsMentionAllowed(current) || !IsNativeSupplyAllowed(current)) return false;
-            }
+            if (!ReflectionPreparationCurrent(owner) || !ReflectionMaterialsCurrent(request, recovering)) return false;
             return use();
         }
+    }
+
+    private bool ReflectionMaterialsCurrent(ReflectionRequestSnapshot request, bool recovering = false)
+    {
+        if (!NoteHistoryStillReadable(request, out _)) return false;
+        var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        if (request.Evidence.Any(t => !raw.ContainsKey(t.EventId) || !IsMentionAllowed(raw[t.EventId]) || !IsNativeSupplyAllowed(raw[t.EventId]))) return false;
+        // A completed chain may itself have retired one of the versions it
+        // read. Only that work's recorded targets may differ in lifecycle;
+        // their body, basis, permissions and all other versions still match.
+        var ownTargets = recovering ? _reflectionNotes.Concat(_reflectionLessons).Concat(_relationshipReadings)
+            .Where(t => t.OperationId == request.RequestId && t.SourceEventId.Length > 0).Select(t => t.SourceEventId)
+            .Concat(_reflectionNotes.Where(t => t.ReflectionSettlementOperationId == request.RequestId).Select(t => t.EventId))
+            .ToHashSet(StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
+        var restoredNotes = new Dictionary<string, MemoryTurn>(StringComparer.Ordinal);
+        foreach (var prior in request.Dependencies)
+        {
+            IEnumerable<MemoryTurn> pool = prior.Kind switch
+            { "note" => _reflectionNotes, "lesson" => _reflectionLessons, "reading" => _relationshipReadings, "day" => _dreams, _ => raw.Values };
+            var current = pool.FirstOrDefault(t => t.EventId == prior.EventId);
+            if (current == null || !IsMentionAllowed(current) || !IsNativeSupplyAllowed(current)) return false;
+            if (ownTargets.Contains(prior.EventId))
+            {
+                if (current.LifecycleState is not ("superseded" or "settled")) return false;
+                var supplied = request.Notes.Concat(request.Settled).Concat(request.Lessons)
+                    .Concat(request.Readings).Concat(request.RevisionTargets).First(t => t.EventId == prior.EventId);
+                current = current.Copy(); current.LifecycleState = supplied.LifecycleState;
+            }
+            if (SourceVersion(prior.Kind, current) != prior) return false;
+            if (prior.Kind == "note" && ownTargets.Contains(prior.EventId)) restoredNotes[prior.EventId] = current;
+        }
+        // Only exact own-target lifecycle changes passed the fingerprint check
+        // above. Re-evaluate the read graph through those original versions so
+        // their unchanged dependent lessons/readings are not mistaken for an
+        // external invalidation. This view grants no new proposal citations.
+        var active = SelectAvailableReflectionNotes(int.MaxValue, null, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var settled = SelectAvailableSettledNotes(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var lessons = SelectAvailableReflectionLessons(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var readings = SelectAvailableRelationshipReadings(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        if (request.Notes.Any(t => !(active.Contains(t.EventId) || ownTargets.Contains(t.EventId)) || !RecordPermitted(t) || !IsNativeSupplyAllowed(t))
+            || request.Settled.Any(t => !(settled.Contains(t.EventId) || ownTargets.Contains(t.EventId)) || !RecordPermitted(t) || !IsNativeSupplyAllowed(t))
+            || request.Lessons.Any(t => !(lessons.Contains(t.EventId) || ownTargets.Contains(t.EventId)) || !RecordPermitted(t))
+            || request.Readings.Any(t => !(readings.Contains(t.EventId) || ownTargets.Contains(t.EventId)) || !RecordPermitted(t))
+            || request.RevisionTargets.Any(t => !RecordPermitted(t) || !IsMentionAllowed(t) || !IsNativeSupplyAllowed(t))) return false;
+        return true;
     }
 }

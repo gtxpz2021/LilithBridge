@@ -46,7 +46,8 @@ internal sealed partial class MemoryStore
                 && MemorySemantics.RequestedHistorySpeaker(query) != "user"
                 && MemorySemantics.ExtractPlayerClaim(query).Length == 0
                 && !Regex.IsMatch(query, @"(?:别|不要|不用|先不|不想).{0,6}(?:提|聊|谈|讲)");
-            if (mayRecall)
+            // Every recall/fallback below can only select from this native pool.
+            if (mayRecall && native.Count > 0)
             {
                 // Reuse the existing relevance/ranking and archive, without changing
                 // their threshold. A bare shared topic is not enough to replay idle lines.

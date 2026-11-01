@@ -88,9 +88,11 @@ internal static class ContextBuilder
         SemanticRecallTrace? semanticTrace = null)
     {
         string retrievalQuery = recallQueryOverride ?? state.LastUserText;
+        if (!config.SemanticRecallEnabled || !playerDirected) semanticRecall = null;
         semanticTrace?.BindQuery(retrievalQuery);
         if (semanticRecall != null && semanticTrace == null)
             throw new ArgumentException("Semantic material requires the caller's request-bound supply trace");
+        using var experienceMatching = memory.BeginExperienceMatchingPreparation();
         using var mentionScope = memory.BeginMentionRequest(retrievalQuery, playerDirected);
         using var nativeDialogueScope = memory.BeginNativeDialogueRequest(retrievalQuery, playerDirected, config, nativeDialogueAuthorization);
         // One read-only material selection per request. The three assembly
@@ -281,6 +283,7 @@ internal static class ContextBuilder
                 : memory.GetRecallCandidates(retrievalQuery, config.MemoryRecallMaxEntries))
             : Array.Empty<MemoryTurn>();
         recalled = memory.FilterMentionSupply(recalled);
+        MethodRuntimeEvidence.Observe(recalled);
         if (recalled.Count > 0)
         {
             builder.AppendLine();
@@ -317,6 +320,11 @@ internal static class ContextBuilder
             }
             builder.AppendLine("没有列入的不要假装记得。");
         }
+
+        AppendExperienceAndReflectionMaterial(builder, memory, state, config,
+            suppliedMemories, profile, recalled, retrievalQuery, requestHistory,
+            allowReflectionChatProjection, onReflectionProjectionObservation,
+            experienceSelection, semanticRecall, semanticTrace, playerDirected);
 
         if (config.MemoryCompressionEnabled)
         {
@@ -487,6 +495,7 @@ internal static class ContextBuilder
                 : Array.Empty<MemoryTurn>())
             .GroupBy(FactIdentity).Select(g => g.First()).ToList();
         recalled = memory.FilterMentionSupply(recalled);
+        MethodRuntimeEvidence.Observe(recalled);
 
         var builder = new StringBuilder();
         var suppliedMemories = new List<MemoryTurn>();
@@ -559,125 +568,10 @@ internal static class ContextBuilder
             builder.AppendLine(timeline);
         }
 
-        // What the request actually supplies, not the wider fetch window: the
-        // projection may drop or join records before they reach the payload.
-        IReadOnlyList<MemoryTurn> suppliedHistory = memory.GetRequestHistorySelection(config, requestHistory);
-        var suppliedExperienceIds = suppliedHistory.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        IReadOnlyList<MemoryTurn> experiences = Array.Empty<MemoryTurn>();
-        var directRanks = new Dictionary<string, DirectRecallRank>(StringComparer.Ordinal);
-        if (config.LongTermMemoryEnabled && config.ExperienceArchiveEnabled)
-        {
-            var excludedIds = new List<string>();
-            foreach (MemoryTurn turn in suppliedHistory)
-                excludedIds.Add(turn.EventId);
-            experiences = queryRetrieval
-                ? experienceSelection ?? memory.GetExperienceCandidates(
-                    retrievalQuery, 9, excludedIds, state.AsksAboutPreviousSession(), onDirectSelection: direct =>
-                    {
-                        var ids=MemorySemantics.RecallIdentifiers(retrievalQuery);
-                        var quotes=UtteranceAttribution.LiteralQuotes(retrievalQuery);
-                        var scope=MemorySemantics.ParseExperienceRecallQuery(retrievalQuery);
-                        for (int i=0; i<direct.Count; i++)
-                        {
-                            bool exact=(ids.Length>0||quotes.Length>0||scope?.From!=null)
-                                && ids.All(id=>MemorySemantics.ContainsRecallIdentifier(direct[i].Text,id))
-                                && (quotes.Length==0||UtteranceAttribution.QuoteMatch(direct[i].Text,quotes)>0)
-                                && (scope==null||scope.AllowsSourceScope(direct[i]));
-                            directRanks[direct[i].EventId] = new(exact ? 0 : 1, i+1);
-                        }
-                    })
-                : Array.Empty<MemoryTurn>();
-            experiences = memory.FilterMentionSupply(experiences);
-            if (experiences.Count > 0)
-            {
-                suppliedExperienceIds.UnionWith(experiences.Select(t => t.EventId));
-                suppliedMemories.AddRange(experiences);
-                builder.AppendLine();
-                builder.AppendLine(MemoryStore.BuildExperienceContext(experiences));
-            }
-        }
-
-        if (semanticRecall != null && config.LongTermMemoryEnabled && config.ExperienceArchiveEnabled)
-        {
-            // Build's public entry requires the caller to retain this same trace.
-            var semantic = memory.SelectSemanticExperiences(retrievalQuery, semanticRecall,
-                suppliedExperienceIds.Concat(suppliedMemories.Select(t => t.EventId))
-                    .Concat(profile.Concat(recalled).Where(t => t.SourceEventId.Length > 0 && t.Evidence == t.Text).Select(t => t.SourceEventId)),
-                state.AsksAboutPreviousSession(), semanticTrace!);
-            if(semanticRecall.Unavailable.Length>0||!semanticRecall.IndexComplete)
-                builder.AppendLine("[历史补检索状态] 本轮语义补充检索未完成；当前已供给材料不是完整的相关历史检索结果，不能据此断言没有其他相关经历。");
-            if (semantic.Count > 0)
-            {
-                experiences = experiences.Concat(semantic).ToList();
-                suppliedExperienceIds.UnionWith(semantic.Select(t => t.EventId));
-                suppliedMemories.AddRange(semantic);
-                builder.AppendLine(MemoryStore.RenderSemanticExperiences(semantic));
-            }
-            foreach (var rank in semanticTrace!.DirectRanks)
-                if (!directRanks.TryGetValue(rank.Key, out var old) || old.Priority > rank.Value.Priority
-                    || old.Priority == rank.Value.Priority && old.Rank > rank.Value.Rank) directRanks[rank.Key] = rank.Value;
-        }
-
-        if (semanticTrace != null) foreach(var rank in directRanks)semanticTrace.DirectRanks[rank.Key]=rank.Value;
-        if (config.ReflectionEnabled)
-        {
-            // The composer owns the supply facts; the note decisions travel up from
-            // MemoryStore and are annotated here, so a probe never has to rebuild
-            // what this request supplied.
-            Action<ReflectionProjectionObservation>? observe = null;
-            if (onReflectionProjectionObservation != null)
-            {
-                string[] historyIds = suppliedHistory.Select(t => t.EventId).ToArray();
-                string[] retrievedIds = experiences.Select(t => t.EventId).ToArray();
-                string[] suppliedIds = suppliedExperienceIds.ToArray();
-                var suppliedSet = new HashSet<string>(suppliedIds, StringComparer.Ordinal);
-                observe = observation =>
-                {
-                    bool relevanceDecided = observation.Stage is ReflectionProjectionStage.RelevanceChecked
-                        or ReflectionProjectionStage.RelevancePassed
-                        or ReflectionProjectionStage.Selected
-                        or ReflectionProjectionStage.BudgetOmitted
-                        or ReflectionProjectionStage.SettledFallbackUsed;
-                    // Past the gate the note's own outcome stands. Below it the
-                    // candidate never reached relevance, so the composer answers
-                    // the frozen question instead — the note's sources that this
-                    // request did supply — which is what keeps "availability
-                    // failed while relevance still held" readable in the trace.
-                    string[] relevantSources = relevanceDecided
-                        ? observation.RelevantSourceIds.ToArray()
-                        : observation.NoteSourceEventIds.Where(suppliedSet.Contains).ToArray();
-                    onReflectionProjectionObservation(observation with
-                    {
-                        SuppliedHistoryEventIds = historyIds,
-                        RetrievedExperienceEventIds = retrievedIds,
-                        SuppliedExperienceIds = suppliedIds,
-                        RelevantSourceIds = relevantSources,
-                        AnyRelevant = relevanceDecided
-                            ? observation.AnyRelevant
-                            : relevantSources.Length > 0
-                    });
-                };
-            }
-            string thoughts = memory.BuildReflectionRecallContext(retrievalQuery, suppliedExperienceIds,
-                list => { suppliedMemories.AddRange(list); if (semanticTrace != null) semanticTrace.Dependents.AddRange(list.Select(t => t.Copy())); },
-                config.ReflectionRecallInChat && allowReflectionChatProjection && queryRetrieval
-                    && !MemorySemantics.DeclinesArchiveRecall(retrievalQuery),
-                observe, directRanks,semanticRecall,
-                memory.SelectReflectionFocus(suppliedHistory, includeCurrentInput: playerDirected
-                    && suppliedHistory.LastOrDefault(t => t.Role == "user")?.Text == MemoryStore.Clean(state.LastUserText))
-                    .Select(t => t.EventId));
-            // Read-only supply trace: which boolean in the final conjunction held,
-            // and whether anything was built from it. Added while the note-supply
-            // probe was splitting stage four; it decides nothing.
-            NativeEventLog.Trace("self_position.supply_gate", "mod", "system",
-                "reflection recall gate",
-                "reflection_recall_in_chat=" + config.ReflectionRecallInChat
-                + ";allow_reflection_chat_projection=" + allowReflectionChatProjection
-                + ";query_retrieval=" + queryRetrieval
-                + ";supplied_experience_ids=" + suppliedExperienceIds.Count
-                + ";thoughts_chars=" + thoughts.Length);
-            if (thoughts.Length > 0) builder.AppendLine(thoughts);
-        }
+        AppendExperienceAndReflectionMaterial(builder, memory, state, config,
+            suppliedMemories, profile, recalled, retrievalQuery, requestHistory,
+            allowReflectionChatProjection, onReflectionProjectionObservation,
+            experienceSelection, semanticRecall, semanticTrace, playerDirected);
 
         if (config.MemoryDreamsEnabled)
         {
@@ -829,6 +723,142 @@ internal static class ContextBuilder
         return builder.ToString();
     }
 
+    // Both shipping context layouts use the same source selection and budgets.
+    // Cleanup no longer gates retrieval; installing recall must not require an
+    // unrelated layout change or enable any other candidate switches.
+    private static void AppendExperienceAndReflectionMaterial(StringBuilder builder,
+        MemoryStore memory, SessionState state, BridgeConfig config,
+        List<MemoryTurn> suppliedMemories, IReadOnlyList<MemoryTurn> profile,
+        IReadOnlyList<MemoryTurn> recalled, string retrievalQuery,
+        IReadOnlyList<MemoryTurn>? requestHistory, bool allowReflectionChatProjection,
+        Action<ReflectionProjectionObservation>? onReflectionProjectionObservation,
+        IReadOnlyList<MemoryTurn>? experienceSelection,
+        SemanticRecallResult? semanticRecall, SemanticRecallTrace? semanticTrace,
+        bool playerDirected)
+    {
+        bool queryRetrieval = !string.IsNullOrWhiteSpace(retrievalQuery);
+        // What the request actually supplies, not the wider fetch window: the
+        // projection may drop or join records before they reach the payload.
+        IReadOnlyList<MemoryTurn> suppliedHistory = memory.GetRequestHistorySelection(config, requestHistory);
+        var suppliedExperienceIds = suppliedHistory.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        IReadOnlyList<MemoryTurn> experiences = Array.Empty<MemoryTurn>();
+        var directRanks = new Dictionary<string, DirectRecallRank>(StringComparer.Ordinal);
+        if (config.LongTermMemoryEnabled && config.ExperienceArchiveEnabled)
+        {
+            var excludedIds = new List<string>();
+            foreach (MemoryTurn turn in suppliedHistory)
+                excludedIds.Add(turn.EventId);
+            experiences = queryRetrieval
+                ? experienceSelection ?? memory.GetExperienceCandidates(
+                    retrievalQuery, 9, excludedIds, state.AsksAboutPreviousSession(), onDirectSelection: direct =>
+                    {
+                        var ids=MemorySemantics.RecallIdentifiers(retrievalQuery);
+                        var quotes=UtteranceAttribution.LiteralQuotes(retrievalQuery);
+                        var scope=MemorySemantics.ParseExperienceRecallQuery(retrievalQuery);
+                        for (int i=0; i<direct.Count; i++)
+                        {
+                            bool exact=(ids.Length>0||quotes.Length>0||scope?.From!=null)
+                                && ids.All(id=>MemorySemantics.ContainsRecallIdentifier(direct[i].Text,id))
+                                && (quotes.Length==0||UtteranceAttribution.QuoteMatch(direct[i].Text,quotes)>0)
+                                && (scope==null||scope.AllowsSourceScope(direct[i]));
+                            directRanks[direct[i].EventId] = new(exact ? 0 : 1, i+1);
+                        }
+                    })
+                : Array.Empty<MemoryTurn>();
+            experiences = memory.FilterMentionSupply(experiences);
+            if (experiences.Count > 0)
+            {
+                suppliedExperienceIds.UnionWith(experiences.Select(t => t.EventId));
+                suppliedMemories.AddRange(experiences);
+                builder.AppendLine();
+                builder.AppendLine(MemoryStore.BuildExperienceContext(experiences));
+            }
+        }
+
+        if (semanticRecall != null && config.LongTermMemoryEnabled && config.ExperienceArchiveEnabled)
+        {
+            // Build's public entry requires the caller to retain this same trace.
+            var semantic = memory.SelectSemanticExperiences(retrievalQuery, semanticRecall,
+                suppliedExperienceIds.Concat(suppliedMemories.Select(t => t.EventId))
+                    .Concat(profile.Concat(recalled).Where(t => t.SourceEventId.Length > 0 && t.Evidence == t.Text).Select(t => t.SourceEventId)),
+                state.AsksAboutPreviousSession(), semanticTrace!);
+            if(semanticRecall.Unavailable.Length>0||!semanticRecall.IndexComplete)
+                builder.AppendLine("[历史补检索状态] 本轮语义补充检索未完成；当前已供给材料不是完整的相关历史检索结果，不能据此断言没有其他相关经历。");
+            if (semantic.Count > 0)
+            {
+                experiences = experiences.Concat(semantic).ToList();
+                suppliedExperienceIds.UnionWith(semantic.Select(t => t.EventId));
+                suppliedMemories.AddRange(semantic);
+                builder.AppendLine(MemoryStore.RenderSemanticExperiences(semantic));
+            }
+            foreach (var rank in semanticTrace!.DirectRanks)
+                if (!directRanks.TryGetValue(rank.Key, out var old) || old.Priority > rank.Value.Priority
+                    || old.Priority == rank.Value.Priority && old.Rank > rank.Value.Rank) directRanks[rank.Key] = rank.Value;
+        }
+
+        if (semanticTrace != null) foreach(var rank in directRanks)semanticTrace.DirectRanks[rank.Key]=rank.Value;
+        if (config.ReflectionEnabled)
+        {
+            // The composer owns the supply facts; the note decisions travel up from
+            // MemoryStore and are annotated here, so a probe never has to rebuild
+            // what this request supplied.
+            Action<ReflectionProjectionObservation>? observe = null;
+            if (onReflectionProjectionObservation != null)
+            {
+                string[] historyIds = suppliedHistory.Select(t => t.EventId).ToArray();
+                string[] retrievedIds = experiences.Select(t => t.EventId).ToArray();
+                string[] suppliedIds = suppliedExperienceIds.ToArray();
+                var suppliedSet = new HashSet<string>(suppliedIds, StringComparer.Ordinal);
+                observe = observation =>
+                {
+                    bool relevanceDecided = observation.Stage is ReflectionProjectionStage.RelevanceChecked
+                        or ReflectionProjectionStage.RelevancePassed
+                        or ReflectionProjectionStage.Selected
+                        or ReflectionProjectionStage.BudgetOmitted
+                        or ReflectionProjectionStage.SettledFallbackUsed;
+                    // Past the gate the note's own outcome stands. Below it the
+                    // candidate never reached relevance, so the composer answers
+                    // the frozen question instead — the note's sources that this
+                    // request did supply — which is what keeps "availability
+                    // failed while relevance still held" readable in the trace.
+                    string[] relevantSources = relevanceDecided
+                        ? observation.RelevantSourceIds.ToArray()
+                        : observation.NoteSourceEventIds.Where(suppliedSet.Contains).ToArray();
+                    onReflectionProjectionObservation(observation with
+                    {
+                        SuppliedHistoryEventIds = historyIds,
+                        RetrievedExperienceEventIds = retrievedIds,
+                        SuppliedExperienceIds = suppliedIds,
+                        RelevantSourceIds = relevantSources,
+                        AnyRelevant = relevanceDecided
+                            ? observation.AnyRelevant
+                            : relevantSources.Length > 0
+                    });
+                };
+            }
+            string thoughts = memory.BuildReflectionRecallContext(retrievalQuery, suppliedExperienceIds,
+                list => { suppliedMemories.AddRange(list); if (semanticTrace != null) semanticTrace.Dependents.AddRange(list.Select(t => t.Copy())); },
+                config.ReflectionRecallInChat && allowReflectionChatProjection && queryRetrieval
+                    && !MemorySemantics.DeclinesArchiveRecall(retrievalQuery),
+                observe, directRanks,semanticRecall,
+                memory.SelectReflectionFocus(suppliedHistory, includeCurrentInput: playerDirected
+                    && suppliedHistory.LastOrDefault(t => t.Role == "user")?.Text == MemoryStore.Clean(state.LastUserText))
+                    .Select(t => t.EventId));
+            // Read-only supply trace: which boolean in the final conjunction held,
+            // and whether anything was built from it. Added while the note-supply
+            // probe was splitting stage four; it decides nothing.
+            NativeEventLog.Trace("self_position.supply_gate", "mod", "system",
+                "reflection recall gate",
+                "reflection_recall_in_chat=" + config.ReflectionRecallInChat
+                + ";allow_reflection_chat_projection=" + allowReflectionChatProjection
+                + ";query_retrieval=" + queryRetrieval
+                + ";supplied_experience_ids=" + suppliedExperienceIds.Count
+                + ";thoughts_chars=" + thoughts.Length);
+            if (thoughts.Length > 0) builder.AppendLine(thoughts);
+        }
+
+    }
+
     /// <summary>
     /// Persona context plus her own current understanding of the relationship.
     /// The reading is offered as her interpretation (sourced, revisable) and is
@@ -955,6 +985,7 @@ internal static class ContextBuilder
                 : memory.GetRecallCandidates(retrievalQuery, config.MemoryRecallMaxEntries))
             : Array.Empty<MemoryTurn>();
         recalled = memory.FilterMentionSupply(recalled);
+        MethodRuntimeEvidence.Observe(recalled);
 
         if (recalled.Count > 0)
         {

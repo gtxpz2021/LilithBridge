@@ -602,6 +602,11 @@ internal sealed partial class MemoryStore
                     foreach (MemoryTurn t in ReadExperiences(true).Where(t => ids.Contains(t.SourceEventId)))
                         added |= ids.Add(t.EventId);
                 } while (added);
+                // Retain the expanded identity closure in the existing delete
+                // receipt, so old captured Work cannot restore purged bodies.
+                receipt.SourceEventIds = ids.ToArray();
+                if (!SaveList("v4-native-autonomous-memory.json", _autonomous)) return false;
+                if (!PurgeReflectionWork(ids)) return false;
                 if (!PurgeB1Sources(ids)) return false;
                 var quotes = _autonomous.Where(t=>t.RecallId == receipt.RecallId)
                     .SelectMany(t=>new[]{t.Text,t.Evidence}).Where(s=>s.Length > 0).ToHashSet(StringComparer.Ordinal);

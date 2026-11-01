@@ -124,13 +124,13 @@ internal sealed partial class BridgeController
     }
     private void BindSemanticMaterial(DialogueRequest owner,long generation,string query,BridgeConfig config,string extraContext,
         string context,IReadOnlyList<MemoryTurn> history,SemanticRecallTrace trace,IReadOnlyList<MemoryTurn> recalled,
-        ThoughtRecallBoundary thought,ClaimRecallBoundary claim)
+        ThoughtRecallBoundary thought,ClaimRecallBoundary claim,PaperSourceSnapshot paperSources)
     {
         owner.PreparationTrace ??= PreparationTiming.Current;
         var state=owner.SemanticMaterial!;
         state.Accept(new(1,owner.Id,generation,MemoryStore.SemanticTextHash(query),context,history,trace,
             owner.B1HostFootprint.Select(t=>t.Copy()).ToArray(),recalled,thought,claim,
-            owner.MethodRuntimeSources,owner.MethodRuntimeTracked),owner,"initial");
+            owner.MethodRuntimeSources,owner.MethodRuntimeTracked) { PaperSources = paperSources },owner,"initial");
         state.RefreshOnOwner=token=>
         {
             var completion=new TaskCompletionSource<SemanticPreparedMaterial>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -148,6 +148,7 @@ internal sealed partial class BridgeController
                 {
                     token.ThrowIfCancellationRequested();
                     if(_semanticDestroyed||!IsCurrentDialogue(owner)||generation!=_conversationGeneration||state.DataRoot!=_memory.SemanticDataRoot)throw new OperationCanceledException();
+                    using var experienceMatching=_memory.BeginExperienceMatchingPreparation();
                     using var mention=PreparationTiming.Run("owner.mention_scope",()=>_memory.BeginMentionRequest(query,true));
                     using var native=PreparationTiming.Run("owner.native_scope",()=>_memory.BeginNativeDialogueRequest(query,true,config));
                     SemanticBoundaryHookForTests?.Invoke(owner);
@@ -183,17 +184,24 @@ internal sealed partial class BridgeController
         var footprint=new List<MemoryTurn>();var recalled=new List<MemoryTurn>();var trace=new SemanticRecallTrace();trace.BindQuery(query);
         var history=_memory.RevalidateRequestHistory(_memory.GetRequestHistory(config));
         using var capture=B1Continuity.BeginCapture(footprint);
-        using var methodRuntime=MethodRuntimeEvidence.Begin(config.SessionReadMethodsEnabled);
+        using var methodRuntime=MethodRuntimeEvidence.Begin(true);
+        using var memoCapture=new NativeMemoCapture(enabled:config.MemoWriteEnabled&&config.MemoAnnotationEnabled);
         string context=ContextBuilder.Build(_memory,_sessionState,config,list=>recalled.AddRange(list),environment:SemanticEnvironmentForTests,
             allowReflectionChatProjection:true,recallQueryOverride:query,imageAttached:owner.Frame is {DataUrl.Length:>0},playerDirected:true,
             requestHistory:history,includeVisionStatus:false,semanticRecall:owner.SemanticMaterial!.Result,semanticTrace:trace);
+        owner.MemoAnnotationTarget=memoCapture.Target;
         context+=Environment.NewLine+_sessionState.VisualSupply.Describe(_memory.GetRequestHistorySelection(config,history));
         if(!string.IsNullOrWhiteSpace(extra))context+=Environment.NewLine+"[程序自动观察] "+extra;
         context+=Environment.NewLine+"[本轮材料更新] 以当前来源和状态为准，旧B1编号不再作为可写引用；继续原交流，不重复已经完成的工具。";
-        var thought=_memory.CaptureThoughtRecallBoundary(query,config.ReflectionEnabled&&config.RuntimeContextCleanupEnabled,owner.SemanticMaterial?.Result);
+        var thought=_memory.CaptureThoughtRecallBoundary(query,config.ReflectionEnabled,owner.SemanticMaterial?.Result);
         var claim=_memory.CaptureClaimBoundary(query);
         recalled.AddRange(claim.Sources);
         return new(revision,owner.Id,generation,MemoryStore.SemanticTextHash(query),context,history,trace,footprint,recalled,thought,claim,
-            methodRuntime.Sources,methodRuntime.Available&&string.IsNullOrWhiteSpace(extra));
+            methodRuntime.Sources,methodRuntime.Available&&string.IsNullOrWhiteSpace(extra))
+        {
+            PaperSources = _memory.CapturePaperSources(methodRuntime.Sources
+                .Concat(_memory.GetRequestHistorySelection(config, history)).Concat(claim.Sources),
+                _sessionState.RecentEvents, query, true)
+        };
     }
 }

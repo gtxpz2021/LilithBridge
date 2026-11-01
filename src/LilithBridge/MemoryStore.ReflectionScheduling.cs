@@ -18,15 +18,30 @@ internal sealed partial class MemoryStore
     // invoked by BridgeController, without creating a Unity process or transport.
     internal bool InitializeReflectionWindow(ReflectionWindowCursor cursor, bool enabled)
     {
+        lock (_experienceLock) return InitializeReflectionWindowCore(cursor, enabled);
+    }
+
+    private bool InitializeReflectionWindowCore(ReflectionWindowCursor cursor, bool enabled)
+    {
+        _reflectionCursors.Add(cursor);
         if (cursor.Initialized) return cursor.InitializationSucceeded;
-        // Reading an existing receipt does not enable reflection or write data.
+        // Reading an existing receipt never enables reflection. Existing physical
+        // delete identities may require removal of an old recovery copy.
         // An invalid existing receipt is not equivalent to no receipt.
         try
         {
+            var deleted = DeletedReflectionSources();
+            if (deleted.Count > 0 && !PurgeReflectionWork(deleted))
+                throw new IOException("deleted reflection work could not be purged");
             if (File.Exists(ReflectionWindowPath))
             {
                 var restored = JsonSerializer.Deserialize<ReflectionWindowSnapshot>(File.ReadAllText(ReflectionWindowPath));
                 if (restored.InputId == null || restored.FactActivity < 0
+                    || restored.Work is { } work && (work.Request == null || string.IsNullOrEmpty(work.Request.RequestId)
+                        || work.Window == null || work.Window.Length == 0 || work.Window.Any(t => t == null)
+                        || work.Target.Work != null || work.Target.InputId == null || work.Target.FactActivity < 0
+                        || work.Request.Evidence == null || work.Request.Notes == null || work.Request.Lessons == null
+                        || work.Request.Readings == null || work.Request.DayArtifacts == null || work.Request.Settled == null)
                     || restored.RecentConsumed?.Any(r => r == null || string.IsNullOrEmpty(r.UserId)
                         || string.IsNullOrEmpty(r.RequestId) || string.IsNullOrEmpty(r.SessionId)
                         || string.IsNullOrEmpty(r.LastShownEventId) || r.ShownChunks <= 0
@@ -52,8 +67,8 @@ internal sealed partial class MemoryStore
         return initialized;
     }
 
-    // Artifact persistence and the receipt are separate atomic files. A failed
-    // receipt keeps the window retryable; existing duplicate checks handle replay.
+    // A failed receipt retains the stable work and its accepted response. Each
+    // artifact's operation identity closes the artifact/checkpoint crash gap.
     internal bool CompleteReflectionWindow(ReflectionWindowCursor cursor, string aggregate,
         ReflectionChainOutcome chains, out string cursorReason)
     {
@@ -68,7 +83,9 @@ internal sealed partial class MemoryStore
             return cursor.EndPass(null);
         }
         cursorReason = ReflectionWindow.CompletionReason(aggregate, chains);
-        return cursor.EndPass(cursorReason, SaveReflectionWindow);
+        bool retained = cursor.EndPass(cursorReason, s => SaveReflectionWindow(s with { Work = null }));
+        if (!retained) cursor.SetWork(null);
+        return retained;
     }
 
     private bool InitializeRecentReflection(ReflectionWindowCursor cursor, bool enabled)
@@ -236,7 +253,16 @@ internal sealed partial class MemoryStore
     }
     internal bool SaveReflectionWindow(ReflectionWindowSnapshot snapshot)
     {
-        if (!_longTermEnabled || !_experienceArchiveEnabled || _reflectionReceiptUnavailable) return false;
+        lock (_experienceLock)
+        {
+            if (!_longTermEnabled || !_experienceArchiveEnabled || _reflectionReceiptUnavailable
+                || snapshot.Work is { } work && ReflectionWorkWasDeleted(work)) return false;
+            return WriteReflectionWindow(snapshot);
+        }
+    }
+
+    private bool WriteReflectionWindow(ReflectionWindowSnapshot snapshot)
+    {
         try
         {
             Directory.CreateDirectory(_root);

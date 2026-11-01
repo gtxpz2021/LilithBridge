@@ -64,6 +64,7 @@ internal static class RuntimeProtocol
         if (allowMemoryCommands && config.MemoWriteEnabled)
         {
             builder.AppendLine("Memo：玩家明确要求记下时可输出 <memo>待办内容</memo> 或 <scratch>随手记内容</scratch>；内容以玩家本次要求为准。");
+            builder.AppendLine("面向玩家的原生笔记回复分段：只要输出 memo/scratch/annotation，普通对话正文与操作成功确认必须分开。正文不得预先宣称写入成功；仅将可选成功确认放在 <memo_confirmation>确认文字</memo_confirmation>，无需确认时也输出空槽 <memo_confirmation></memo_confirmation>。JSON 回复以 text 放正文、memo_confirmation 字符串放确认（无需确认时为空串）。程序执行成功才显示确认；失败只改操作回执。未分段的旧式混合写入未全部确认成功时，程序可在同一请求中给出真实聚合结果，请你重新表达一次；续答仅表达，不重做操作。不要把动作标签放进确认槽。静默后台任务仍只输出隐藏操作，不生成确认槽。");
         }
 
         if (allowMemoryCommands && config.MemoWriteEnabled && config.MemoAnnotationEnabled)

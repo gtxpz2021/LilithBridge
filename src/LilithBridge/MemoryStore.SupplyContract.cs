@@ -47,10 +47,14 @@ internal sealed partial class MemoryStore
     private bool IsCurrentInterpretationBasis(MemoryTurn turn) => CreateCurrentBasisEvaluator()(turn);
 
     // One read-only graph per selection, not an archive scan for every candidate.
-    private Func<MemoryTurn, bool> CreateCurrentBasisEvaluator(HashSet<string>? rawIds = null)
+    private IEnumerable<MemoryTurn> ReflectionNoteView(IReadOnlyDictionary<string, MemoryTurn>? restored) =>
+        _reflectionNotes.Select(t => restored != null && restored.TryGetValue(t.EventId, out var prior) ? prior : t);
+
+    private Func<MemoryTurn, bool> CreateCurrentBasisEvaluator(HashSet<string>? rawIds = null,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
     {
         var raw = rawIds ?? ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        var notes = _reflectionNotes.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+        var notes = ReflectionNoteView(restoredNotes).GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var days = _dreams.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var visiting = new HashSet<string>(StringComparer.Ordinal);
         var memo = new Dictionary<string, bool>(StringComparer.Ordinal);
@@ -64,7 +68,7 @@ internal sealed partial class MemoryStore
             // a day could drift from the day consumer's answer; now it asks the day
             // supplier itself, keeping one definition of "this day is current".
             if ((t.Kind is DayConsolidationKind or DayDreamKind)
-                && !IsDayArtifactCurrent(t, materialPermitted)) return false;
+                && !IsDayArtifactCurrent(t, materialPermitted, restoredNotes)) return false;
             if (!(IsActiveLifecycle(t) || IsSettledLifecycle(t)) || HasUnincorporatedCorrection(t)
                 || !IsMentionAllowed(t) || t.SourceEventIds.Length == 0 || !t.SourceEventIds.All(raw.Contains)) return false;
             if (memo.TryGetValue(t.EventId, out bool known)) return known;

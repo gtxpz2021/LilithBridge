@@ -968,171 +968,6 @@ internal sealed partial class BridgeController : MonoBehaviour
         return;
     }
 
-    private void TryScheduleMemoAnnotation()
-    {
-        if (SharedActivityRunning || SharedActivityUiBusy) return;
-        if (!_config.MemoAnnotationEnabled || !_config.MemoWriteEnabled)
-            return;
-        if (_annotationInProgress || _listening || _requestPending || _queuedReply != null)
-            return;
-        if (Time.unscaledTime < _nextMemoAnnotationAt)
-            return;
-        if (!_systemReady
-            || NativeStateInspector.IsNativeQuietForMod()
-            || NativeStateInspector.TimeSinceLastHardwareInputSeconds < 30d
-            || HasActiveNativeStory()
-            || ActionDirector.NativeBusy(_sessionState))
-        {
-            return;
-        }
-
-        _annotationInProgress = true;
-        NativeEventLog.Trace("memo.annotation.schedule", "mod", "system",
-            "idle annotation request scheduled", "interval_s=" + _config.MemoAnnotationIntervalSeconds);
-        string recallQuery = _sessionState.LastUserText;
-        IReadOnlyList<MemoryTurn>? recallUsed = null;
-        using var mentionAnnotationScope = _memory.BeginMentionRequest("", false);
-        string context = ContextBuilder.Build(
-            _memory,
-            _sessionState,
-            _config,
-            list => recallUsed = list);
-        context += Environment.NewLine
-            + "[annotation_mode] You are Lilith adding one short, natural annotation to one unannotated "
-            + "notebook task. Do not rewrite the original note, do not create a new note, do not display "
-            + "anything in a bubble. Output only an invisible <annotation>one or two sentences</annotation>.";
-        BridgeConfig requestConfig = _config;
-        Task.Run(async () =>
-        {
-            ApiResult result = await _client.SendAsync(
-                requestConfig,
-                "[idle memo annotation]",
-                context,
-                null,
-                System.Threading.CancellationToken.None, requestPurpose: "memo_annotation",
-                // This path passes only the composed context string, no history
-                // window; the mode is explicitly none rather than an implicit guess.
-                historyOwner: null).ConfigureAwait(false);
-            if (recallUsed != null
-                && recallUsed.Count > 0
-                && result.Error.Length == 0)
-            {
-                _memory.RecordRecall(recallQuery, recallUsed, "memo_annotation");
-            }
-            _mainThread.Enqueue(() => OnMemoAnnotationResult(result));
-        });
-    }
-
-    [HideFromIl2Cpp]
-    private void OnMemoAnnotationResult(ApiResult result)
-    {
-        _annotationInProgress = false;
-        _nextMemoAnnotationAt = Time.unscaledTime + _config.MemoAnnotationIntervalSeconds;
-        if (result.Error.Length > 0)
-        {
-            NativeEventLog.Trace("memo.annotation_error", "mod", "system", result.Error);
-            return;
-        }
-        NativeMemoWriter.Apply(result, _config);
-        NativeEventLog.Trace("memo.annotation.done", "mod", "system",
-            "idle annotation finished",
-            "annotations=" + result.MemoAnnotations.Count
-            + ";prompt_tokens=" + result.PromptTokens
-            + ";completion_tokens=" + result.CompletionTokens
-            + ";cache_hit=" + result.PromptCacheHitTokens
-            + ";cache_miss=" + result.PromptCacheMissTokens);
-    }
-
-    private void TryScheduleNoteSupplement()
-    {
-        if (SharedActivityRunning || SharedActivityUiBusy) return;
-        if (!_config.NoteSupplementEnabled)
-        {
-            _lastNoteTestTrigger = false;
-            return;
-        }
-
-        if (_config.NoteSupplementTestTrigger && !_lastNoteTestTrigger)
-        {
-            _lastNoteTestTrigger = true;
-            TryGenerateNoteSupplement(true);
-            return;
-        }
-        _lastNoteTestTrigger = _config.NoteSupplementTestTrigger;
-    }
-
-    internal void OnNativeWriteNoteFailure()
-    {
-        if (_config.NoteSupplementEnabled)
-            TryGenerateNoteSupplement(false);
-    }
-
-    private void TryGenerateNoteSupplement(bool manual)
-    {
-        if (_noteSupplementInProgress
-            || !_systemReady
-            || (!manual && NativeStateInspector.IsNativeQuietForMod())
-            || (!manual && ActionDirector.NativeBusy(_sessionState))
-            || (!manual && NativeStateInspector.TimeSinceLastHardwareInputSeconds
-                < _config.NoteSupplementMinIdleSeconds)
-            || (!manual && Time.unscaledTime < _nextNoteSupplementAt)
-            || _listening
-            || _requestPending
-            || _queuedReply != null)
-        {
-            return;
-        }
-
-        _noteSupplementInProgress = true;
-        NativeEventLog.Trace("native_note.schedule", "mod", "system",
-            "AI supplemental note requested",
-            "manual=" + manual);
-
-        string recallQuery = _sessionState.LastUserText;
-        IReadOnlyList<MemoryTurn>? recallUsed = null;
-        BridgeConfig requestConfig = _config;
-        var request = BuildNoteSupplementRequest(requestConfig, list => recallUsed = list);
-        Task.Run(async () =>
-        {
-            ApiResult result = await _client.SendAsync(
-                requestConfig,
-                "[Lilith note supplement]",
-                request.Context,
-                null,
-                System.Threading.CancellationToken.None, request.History, requestPurpose: "note_supplement",
-                requireVisibleText: false, historyOwner: _memory).ConfigureAwait(false);
-            if (recallUsed != null
-                && recallUsed.Count > 0
-                && result.Error.Length == 0)
-            {
-                _memory.RecordRecall(recallQuery, recallUsed, "note_supplement");
-            }
-            _mainThread.Enqueue(() => OnNoteSupplementResult(result));
-        });
-    }
-
-    [HideFromIl2Cpp]
-    private void OnNoteSupplementResult(ApiResult result)
-    {
-        _noteSupplementInProgress = false;
-        _nextNoteSupplementAt = Time.unscaledTime + _config.NoteSupplementCooldownSeconds;
-        if (result.Error.Length > 0)
-        {
-            NativeEventLog.Trace("native_note.error", "mod", "system", result.Error);
-            return;
-        }
-
-        bool saved = TryDeliverReplyPaper(result);
-        NativeEventLog.Trace("native_note.done", "mod", "system",
-            "AI supplemental note process finished",
-            "saved=" + saved
-            + ";notes=" + result.NoteSupplement.Count
-            + ";prompt_tokens=" + result.PromptTokens
-            + ";completion_tokens=" + result.CompletionTokens
-            + ";cache_hit=" + result.PromptCacheHitTokens
-            + ";cache_miss=" + result.PromptCacheMissTokens);
-    }
-
     private void TrackNativeStateChanges()
     {
         if (Time.unscaledTime < _nextNativeStateCheck)
@@ -1932,7 +1767,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             return;
         }
         if (TrySettleProactiveSilence(result)) return;
-        if (string.IsNullOrWhiteSpace(result.Text))
+        if (string.IsNullOrWhiteSpace(result.Text) && !NativeMemoReplySegments.AwaitingSettlement(result))
         {
             NativeEventLog.Trace("api.empty", "mod", "system", "model returned empty content");
             if (_config.ApiFallbackEnabled)
@@ -2055,24 +1890,9 @@ internal sealed partial class BridgeController : MonoBehaviour
     {
         if (!IsCurrentDialogue(result.DialogueRequest) || !NativeLinkageAllows(result)) return;
         ApiResult requestResult = result;
-        if (_config.SafetyFallbackEnabled
-            && PrivacySafety.IsCrisis(result?.Text))
-        {
-            NativeEventLog.Trace(
-                "safety.local_guard",
-                "mod",
-                "system",
-                "crisis phrasing in reply replaced by a local supportive line");
-            result = new ApiResult
-            {
-                IsLocalFallback = true,
-                Text = PrivacySafety.LocalSupportReply(),
-                Emotion = "emoji_calm_1",
-                LatencyMs = result?.LatencyMs ?? 0
-            };
-            repaired = false;
-        }
-        if (string.IsNullOrWhiteSpace(result?.Text))
+        result = ApplyReplySafetyFallback(result);
+        if (!ReferenceEquals(result, requestResult)) repaired = false;
+        if (result == null || string.IsNullOrWhiteSpace(result.Text) && !NativeMemoReplySegments.AwaitingSettlement(result))
         {
             if (!_config.ApiFallbackEnabled || !_config.SafetyFallbackEnabled)
             {
@@ -2124,6 +1944,8 @@ internal sealed partial class BridgeController : MonoBehaviour
                 string userText = _currentUserText;
                 string recallFollowUpQuery = _sessionState.LastUserText;
                 IReadOnlyList<MemoryTurn>? recallFollowUpUsed = null;
+                using var memoCapture = new NativeMemoCapture(enabled: requestConfig.MemoWriteEnabled && requestConfig.MemoAnnotationEnabled);
+                using var paperCapture = MethodRuntimeEvidence.Begin(true);
                 string expandedContext = ContextBuilder.Build(
                         _memory,
                         _sessionState,
@@ -2149,23 +1971,16 @@ internal sealed partial class BridgeController : MonoBehaviour
                     "Lilith requested a more precise memory recall",
                     "query=" + PrivacySafety.Redact(query)
                     + ";entries=" + candidates.Count);
+                NativeMemoTarget? memoTarget = memoCapture.Target;
+                PaperSourceSnapshot paperSources = _memory.CapturePaperSources(
+                    paperCapture.Sources.Concat(_memory.GetRequestHistorySelection(requestConfig, finalRequestHistory)).Concat(recallFollowUpUsed ?? Array.Empty<MemoryTurn>()), _sessionState.RecentEvents, userText, !_proactiveRequest);
                 Task.Run(async () =>
                 {
                     try
                     {
-                        ApiResult recalled = await _client.SendAsync(
-                            requestConfig,
-                            userText,
-                            expandedContext,
-                            null,
-                            System.Threading.CancellationToken.None,
-                            finalRequestHistory,
-                            false, originalResult.ThoughtBoundary,
-                            claimBoundary: originalResult.ClaimBoundary,
-                            requestPurpose: "memory_recall", requestId: originalResult.RequestId,
-                            dialogueRequest: originalResult.DialogueRequest,
-                            historyOwner: _memory).ConfigureAwait(false);
-                        recalled.CopyRequestFrom(originalResult);
+                        ApiResult recalled = await SendRecallFollowUpAsync(requestConfig, userText,
+                            expandedContext, finalRequestHistory, originalResult, paperSources, memoTarget,
+                            "memory_recall").ConfigureAwait(false);
                         recalled.MemoryRecalls.Clear();
                         _mainThread.Enqueue(() =>
                         {
@@ -2206,6 +2021,8 @@ internal sealed partial class BridgeController : MonoBehaviour
                 IReadOnlyList<MemoryTurn> requestHistory = _memory.GetRequestHistory(requestConfig);
                 IReadOnlyList<MemoryTurn> finalRequestHistory =
                     _memory.RevalidateRequestHistory(requestHistory);
+                using var memoCapture = new NativeMemoCapture(enabled: requestConfig.MemoWriteEnabled && requestConfig.MemoAnnotationEnabled);
+                using var paperCapture = MethodRuntimeEvidence.Begin(true);
                 string expandedContext = ContextBuilder.Build(
                         _memory,
                         _sessionState,
@@ -2223,23 +2040,16 @@ internal sealed partial class BridgeController : MonoBehaviour
                 NativeEventLog.Trace("story.recall.request", "mod", "system",
                     "Lilith requested a full story-archive recall",
                     "query=" + query + ";chars=" + recall.Content.Length);
+                NativeMemoTarget? memoTarget = memoCapture.Target;
+                PaperSourceSnapshot paperSources = _memory.CapturePaperSources(
+                    paperCapture.Sources.Concat(_memory.GetRequestHistorySelection(requestConfig, finalRequestHistory)).Concat(storyRecallUsed ?? Array.Empty<MemoryTurn>()), _sessionState.RecentEvents, userText, !_proactiveRequest);
                 Task.Run(async () =>
                 {
                     try
                     {
-                        ApiResult recalled = await _client.SendAsync(
-                            requestConfig,
-                            userText,
-                            expandedContext,
-                            null,
-                            System.Threading.CancellationToken.None,
-                            finalRequestHistory,
-                            false, originalResult.ThoughtBoundary,
-                            claimBoundary: originalResult.ClaimBoundary,
-                            requestPurpose: "story_recall", requestId: originalResult.RequestId,
-                            dialogueRequest: originalResult.DialogueRequest,
-                            historyOwner: _memory).ConfigureAwait(false);
-                        recalled.CopyRequestFrom(originalResult);
+                        ApiResult recalled = await SendRecallFollowUpAsync(requestConfig, userText,
+                            expandedContext, finalRequestHistory, originalResult, paperSources, memoTarget,
+                            "story_recall").ConfigureAwait(false);
                         recalled.StoryRecalls.Clear();
                         _mainThread.Enqueue(() =>
                         {
@@ -2307,7 +2117,6 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (result.NativeLinkage == null)
         {
             HandleDesktopArrangeIntent(result);
-            NativeMemoWriter.Apply(result, _config);
             HandleReplyPaper(result);
             ApplyAutonomousMemory(result);
         } // Native-event controls settle only after the first actual display.
@@ -2338,7 +2147,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         _requestPending = false;
         if (recalledResult == null
             || recalledResult.Error.Length > 0
-            || string.IsNullOrWhiteSpace(recalledResult.Text))
+            || string.IsNullOrWhiteSpace(recalledResult.Text) && !NativeMemoReplySegments.AwaitingSettlement(recalledResult))
         {
             NativeEventLog.Trace("story.recall.fallback", "mod", "system",
                 "story recall regeneration failed; fallback to original reply",
@@ -2370,7 +2179,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         _requestPending = false;
         if (recalledResult == null
             || recalledResult.Error.Length > 0
-            || string.IsNullOrWhiteSpace(recalledResult.Text))
+            || string.IsNullOrWhiteSpace(recalledResult.Text) && !NativeMemoReplySegments.AwaitingSettlement(recalledResult))
         {
             NativeEventLog.Trace(
                 "memory.recall.fallback",
@@ -2708,8 +2517,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     {
         TickReflectionContinuation();
         if (SharedActivityRunning || SharedActivityUiBusy) return;
-        if (!_config.ReflectionEnabled || !_systemReady || !_reflectionWindow.InitializationSucceeded
-            || string.IsNullOrWhiteSpace(_config.ApiKey) || string.IsNullOrWhiteSpace(_config.ReflectionModel))
+        if (!_config.ReflectionEnabled || !_systemReady || !_reflectionWindow.InitializationSucceeded)
             return;
         // Foreground preparation gets its short critical segment first; drafts,
         // network wait and ordinary display do not invalidate a source window.
@@ -2725,6 +2533,24 @@ internal sealed partial class BridgeController : MonoBehaviour
         double idleSeconds = _config.ReflectionOnlyWhenIdle
             ? NativeStateInspector.TimeSinceLastInteractionSeconds
             : double.PositiveInfinity;
+        if (_reflectionWindow.Snapshot.Work is { } recovery)
+        {
+            if (idleSeconds < _config.ReflectionMinIdleSeconds || !ReflectionMayApply(recovery.Result)) return;
+            if (recovery.Result != null)
+            {
+                _nextReflectionAt = Time.unscaledTime + EffectiveReflectionGapSeconds();
+                _memory.ResumeReflectionWork(_reflectionWindow, out string recoveryReason, out _);
+                NativeEventLog.Trace("memory.reflection.recovered", "mod", "system", "reflection recovery checked without model call",
+                    "work=" + recovery.Request.RequestId + ";reason=" + recoveryReason + ";pending=" + (_reflectionWindow.Snapshot.Work != null));
+            }
+            else if (!string.IsNullOrWhiteSpace(_config.ApiKey) && !string.IsNullOrWhiteSpace(_config.ReflectionModel))
+            {
+                if (!QueueReflectionPreparation(new(recovery.Window, false, MemoryStore.CountReflectionDialogueLines(recovery.Window)), recovery))
+                    _memory.CancelReflectionWork(_reflectionWindow);
+            }
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_config.ApiKey) || string.IsNullOrWhiteSpace(_config.ReflectionModel)) return;
         ReflectionHistorySelection selection = _memory.SelectPendingReflectionHistory(_reflectionWindow.Snapshot);
         IReadOnlyList<MemoryTurn> pendingWindow = selection.History;
         int newDialogueLines = MemoryStore.CountReflectionDialogueLines(pendingWindow);
@@ -2809,12 +2635,20 @@ internal sealed partial class BridgeController : MonoBehaviour
                 "reflection returned no usable result", "window_retained=" + retained);
             return;
         }
-        bool saved = _memory.ApplyReflectionNote(result, snapshot, out string reason,
-            out ReflectionChainOutcome chains);
-        // The window is consumed only by a pass that actually processed it; a
-        // malformed proposal or a failed save keeps the material for later.
-        bool windowRetained = _memory.CompleteReflectionWindow(_reflectionWindow, reason, chains,
-            out string cursorReason);
+        // No artifact may change until this accepted response is recoverable.
+        if (!_memory.SaveReflectionResponse(_reflectionWindow, snapshot, result))
+        {
+            _reflectionWindow.EndPass(null);
+            NativeEventLog.Trace("memory.reflection.response_save_failed", "mod", "system", "reflection work retained before artifact writes");
+            return;
+        }
+        _memory.ResumeReflectionWork(_reflectionWindow, out string reason, out ReflectionChainOutcome? recoveredChains);
+        if (recoveredChains == null) return;
+        ReflectionChainOutcome chains = recoveredChains;
+        bool saved = chains.NoteReason == "saved" || chains.NoteReason == "settled"
+            || chains.LessonReason == "lesson_saved" || chains.ReadingReason == "reading_saved";
+        bool windowRetained = _reflectionWindow.Snapshot.Work != null;
+        string cursorReason = ReflectionWindow.CompletionReason(reason, chains);
         NativeEventLog.Trace("memory.reflection.done", "mod", "lilith",
             "reflection reviewed",
             "saved=" + saved + ";reason=" + reason + ";cursor_reason=" + cursorReason + ";window_retained=" + windowRetained);

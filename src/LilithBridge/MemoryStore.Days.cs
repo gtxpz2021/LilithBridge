@@ -35,13 +35,18 @@ internal sealed partial class MemoryStore
     internal const string DayReceiptKind = "day.receipt";
 
     public IReadOnlyList<MemoryTurn> GetDayArtifacts(int max)
+        => SelectAvailableDayArtifacts(max, null);
+
+    private IReadOnlyList<MemoryTurn> SelectAvailableDayArtifacts(int max,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
         lock (_experienceLock)
         {
             var materialPermitted = CreateMaterialPermissionEvaluator();
+            var isCurrent = CreateCurrentBasisEvaluator(restoredNotes: restoredNotes);
             return _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind)
-                .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && IsDayArtifactCurrent(t, materialPermitted)
-                    && IsCurrentInterpretationBasis(t))
+                .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && IsDayArtifactCurrent(t, materialPermitted, restoredNotes)
+                    && isCurrent(t))
                 .TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
         }
     }
@@ -342,22 +347,24 @@ internal sealed partial class MemoryStore
     // a permission/existence view of what the request actually read. A footprint that was
     // explicitly withdrawn or purged is not re-read through this product, while ordinary
     // revision of a footprint never retires an independent product.
-    private bool IsDayArtifactCurrent(MemoryTurn turn, Func<DaySourceDependency, bool> materialPermitted) =>
+    private bool IsDayArtifactCurrent(MemoryTurn turn, Func<DaySourceDependency, bool> materialPermitted,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null) =>
         turn.DayProvenanceVersion == 2
         && turn.SourceDependencies.Length > 0
         && FootprintPermitted(turn, materialPermitted)
-        && TryResolveDayDependencies(new[] { DayDependency("day", turn) }, out _, materialPermitted);
+        && TryResolveDayDependencies(new[] { DayDependency("day", turn) }, out _, materialPermitted, restoredNotes);
 
     // Exact source identities are checked again under the commit lock. Flattened
     // raw IDs let the existing delete owner purge every downstream day artifact.
     // Legacy incomplete artifacts remain on disk, but are not silently promoted
     // to complete provenance. Migration of real archives requires separate review.
     private bool TryResolveDayDependencies(IEnumerable<DaySourceDependency> dependencies, out string[] rawIds,
-        Func<DaySourceDependency, bool>? materialPermitted = null)
+        Func<DaySourceDependency, bool>? materialPermitted = null,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
     {
         materialPermitted ??= CreateMaterialPermissionEvaluator();
         var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
-        var notes = _reflectionNotes.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+        var notes = ReflectionNoteView(restoredNotes).GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var days = _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind)
             .GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var resolved = new HashSet<string>(StringComparer.Ordinal);

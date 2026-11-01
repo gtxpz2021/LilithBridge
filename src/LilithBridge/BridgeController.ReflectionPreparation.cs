@@ -57,13 +57,13 @@ internal sealed partial class BridgeController
             _reflectionContinuation = null;
     }
 
-    private bool QueueReflectionPreparation(ReflectionHistorySelection selection)
+    private bool QueueReflectionPreparation(ReflectionHistorySelection selection, ReflectionWork? recovery = null)
     {
         if (_reflectionPreparation != null) return false;
         var total = Stopwatch.StartNew();
         var memory = _memory;
         var config = _config;
-        if (config.SemanticRecallEnabled) TickSemanticRuntime();
+        if (config.SemanticRecallEnabled && recovery == null) TickSemanticRuntime();
         double runtimeMs = total.Elapsed.TotalMilliseconds;
         var owner = memory.PrepareReflection(selection.History, ++_reflectionGeneration);
         if (owner == null) return false;
@@ -76,7 +76,7 @@ internal sealed partial class BridgeController
         int budget = config.SemanticQueryTimeoutMs;
         var worker = _semanticWorker;
         var snapshotTiming = Stopwatch.StartNew();
-        Task<SemanticRecallResult>? discovery = config.SemanticRecallEnabled && worker != null && owner.Query.Length > 0
+        Task<SemanticRecallResult>? discovery = recovery == null && config.SemanticRecallEnabled && worker != null && owner.Query.Length > 0
             ? memory.DiscoverSemanticAsync(owner.Id, owner.Generation, owner.Query, SemanticDomain.Thoughts,
                 DateTimeOffset.UtcNow.AddMilliseconds(budget), owner.Token) : null;
         double snapshotMs = snapshotTiming.Elapsed.TotalMilliseconds;
@@ -105,7 +105,7 @@ internal sealed partial class BridgeController
                 { CancelReflectionPreparation("window_or_scope_changed"); return; }
                 double ownerQueueMs = total.Elapsed.TotalMilliseconds - workerMs;
                 var finalTiming = Stopwatch.StartNew();
-                var snapshot = memory.CaptureReflectionRequest(owner.Window, owner.SemanticResult, owner);
+                var snapshot = recovery?.Request ?? memory.CaptureReflectionRequest(owner.Window, owner.SemanticResult, owner);
                 if (snapshot == null) { CancelReflectionPreparation("window_no_longer_available"); return; }
                 NativeEventLog.Trace("memory.reflection.prepared", "mod", "system", "reflection materials prepared without consuming the window",
                     "owner=" + owner.Id + ";status=" + owner.SemanticStatus + ";budget_ms=" + budget
@@ -130,10 +130,15 @@ internal sealed partial class BridgeController
                             bool allowed = memory.TryUseReflectionRequest(owner, snapshot, () =>
                             {
                                 // Only a real outbound attempt stages consumption.
-                                memory.StageReflectionWindow(_reflectionWindow, selection, coveredFactActivity, coveredModelRequest); owner.Staged = true;
+                                if (recovery == null) memory.StageReflectionWindow(_reflectionWindow, selection, coveredFactActivity, coveredModelRequest);
+                                else memory.StageRecoveredReflection(_reflectionWindow);
+                                if (!memory.BeginReflectionWork(_reflectionWindow, snapshot, selection))
+                                { _reflectionWindow.EndPass(null); return false; }
+                                owner.Staged = true;
                                 _nextReflectionAt = UnityEngine.Time.unscaledTime + EffectiveReflectionGapSeconds();
                                 sent = send(); return true;
-                            });
+                            }, recovering: recovery != null);
+                            if (!allowed && recovery != null) memory.CancelReflectionWork(_reflectionWindow);
                             completion.TrySetResult(allowed ? sent : null);
                         }
                         catch (Exception error) { completion.TrySetException(error); }
@@ -157,7 +162,7 @@ internal sealed partial class BridgeController
                             // proposal's citations. New append-only exchanges do
                             // not invalidate this old window; changed versions do.
                             if (!memory.TryUseReflectionRequest(owner, snapshot, () =>
-                                { OnReflectionResult(response, snapshot); return true; }))
+                                { OnReflectionResult(response, snapshot); return true; }, recovering: recovery != null))
                             { CancelReflectionPreparation("source_or_version_changed_before_apply"); return; }
                         }
                         else

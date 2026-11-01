@@ -77,6 +77,20 @@ namespace LilithSetup
             try { SetupCore.Require(processes.Length == 0, "LBINSTALL_GAME_RUNNING_CLOSE_IT_FIRST"); }
             finally { foreach (var p in processes) p.Dispose(); }
         }
+        // On Windows an exclusive read handle denies a new CreateProcess for
+        // this image (and denies renaming/replacing it). An already mapped
+        // image can still be opened, so check processes again after acquisition.
+        // Hold through the last replacement, including automatic rollback.
+        static FileStream HoldStopped(string game)
+        {
+            RequireStopped(); FileStream held = null;
+            try
+            {
+                held = new FileStream(Join(game, "Lilith.exe"), FileMode.Open, FileAccess.Read, FileShare.None);
+                RequireStopped(); return held;
+            }
+            catch { if (held != null) held.Dispose(); throw new SetupException("LBINSTALL_HOST_STOP_GUARD_UNAVAILABLE"); }
+        }
         static void CheckPe64(string path)
         {
             using (var f = File.OpenRead(path)) using (var r = new BinaryReader(f))
@@ -122,10 +136,12 @@ namespace LilithSetup
             string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
             if (env != null) SetupCore.Require(SetupCore.Same(SetupCore.SafePath(env, game), data), "LBINSTALL_ENVIRONMENT_ROOT_CONFLICT");
             CheckDuplicates(Path.GetDirectoryName(plugin), plugin);
+            if (old != m.PluginSha256) ReflectionWorkCompatibility.Check(data, m.PluginSha256);
             var plan = new InstallPlan { GameRoot = game, DataRoot = data, OldPlugin = old, OldMarker = oldMarker, PayloadHash = m.PluginSha256, ManifestDigest = m.ManifestDigest, RetainedDataStamp = retained == null ? "" : retained.Stamp, CreateMarker = oldMarker == "MISSING", NoChange = old == m.PluginSha256 && oldMarker != "MISSING" };
             if (retained != null) plan.Changes.Add("继续使用已回退事务保留的配置和记忆目录：" + data);
             if (plan.NoChange) plan.Changes.Add("版本相同：无需覆盖文件。可直接打开配置器。");
             else { plan.Changes.Add((old == "MISSING" ? "新增 " : "备份并替换 ") + InstallManifest.Plugin); if (plan.CreateMarker) plan.Changes.Add("新增 " + InstallManifest.Marker + " → LilithBridgeData"); plan.Changes.Add("在 .LilithBridge-installer 保留事务记录与旧插件备份"); }
+            plan.Changes.Add("替换前会在阻止游戏重启期间复查未结反思 Work；DLL 备份不包含整套记忆快照。");
             return plan;
         }
         static string Transactions(string game) { return Join(game, StateDir + @"\transactions"); }
@@ -241,6 +257,8 @@ namespace LilithSetup
             using (Lock(approved.GameRoot))
             {
                 SetupCore.Require(SamePlan(approved, Inspect(manifest, approved.GameRoot)), "LBINSTALL_TARGET_CHANGED_RECHECK");
+                using (HoldStopped(approved.GameRoot))
+                {
                 string id = Guid.NewGuid().ToString("N"), destination = Join(Transactions(approved.GameRoot), id);
                 string staging = Join(approved.GameRoot, StateDir + @"\staging"); Directory.CreateDirectory(staging); Directory.CreateDirectory(Transactions(approved.GameRoot));
                 string folder = Join(staging, id); Directory.CreateDirectory(folder);
@@ -267,6 +285,14 @@ namespace LilithSetup
                     SetupCore.Require(SetupCore.Inside(staging, folder, false) && SetupCore.Inside(Transactions(approved.GameRoot), destination, false), "LBINSTALL_STAGE_ESCAPES_ROOT");
                     Directory.Move(folder, destination); folder = destination; journal = Join(folder, "journal.json"); promoted = true;
                     if (checkpoint != null) checkpoint("prepared");
+                    string liveMarker = Join(approved.GameRoot, InstallManifest.Marker);
+                    SetupCore.Require(FileState(liveMarker) == approved.OldMarker, "LBINSTALL_TARGET_CHANGED_RECHECK");
+                    string liveData = approved.CreateMarker ? Join(approved.GameRoot, "LilithBridgeData") : MarkerRoot(approved.GameRoot, liveMarker);
+                    string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
+                    SetupCore.Require(SetupCore.Same(liveData, approved.DataRoot)
+                        && (env == null || SetupCore.Same(SetupCore.SafePath(env, approved.GameRoot), liveData)), "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
+                    ReflectionWorkCompatibility.Check(liveData, approved.PayloadHash);
+                    if (checkpoint != null) checkpoint("work-checked");
                     j["phase"] = "Applying"; WriteJournal(journal, j);
                     foreach (int i in OwnedFileOrder(files.ToArray(), true))
                     {
@@ -281,21 +307,54 @@ namespace LilithSetup
                 catch
                 {
                     if (promoted && journal != null && File.Exists(journal) && !leaveInterrupted)
-                    { try { RestoreJournal(approved.GameRoot, journal); } catch { throw new SetupException("LBINSTALL_RECOVERY_NEEDED_NO_OTHER_FILES_OVERWRITTEN"); } }
+                    {
+                        try { RestoreJournal(approved.GameRoot, journal); }
+                        catch (Exception recoveryError)
+                        {
+                            string reason = SetupCore.SafeError(recoveryError);
+                            // RestoreJournal validated the current image as the new
+                            // payload before rejecting the old image's Work capability.
+                            if (reason == "LBINSTALL_UNFINISHED_WORK_TARGET_UNVERIFIED")
+                                throw new SetupException("LBINSTALL_RECOVERY_NEEDED_NO_OTHER_FILES_OVERWRITTEN:" + reason + ":RETAINED_PLUGIN_SHA256:" + approved.PayloadHash);
+                            throw new SetupException("LBINSTALL_RECOVERY_NEEDED_NO_OTHER_FILES_OVERWRITTEN");
+                        }
+                    }
                     throw;
                 }
+                }
             }
+        }
+        static string CheckRecoveryWork(string game, Dictionary<string, object> j)
+        {
+            var plugin = ((object[])j["files"]).Cast<Dictionary<string, object>>().Single(f => (string)f["path"] == InstallManifest.Plugin);
+            string before = (string)plugin["before"];
+            // Removing a first installation does not hand data to another DLL.
+            if (before == "MISSING") return "remove-plugin-keep-data";
+            if (FileState(Join(game, InstallManifest.Plugin)) == before) return "already-before";
+            string marker = Join(game, InstallManifest.Marker);
+            SetupCore.Require(FileState(marker) != "MISSING", "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
+            string data = MarkerRoot(game, marker), recorded = DataJson.Get(j, "data_root") as string;
+            SetupCore.Require(recorded != null && SetupCore.Same(SetupCore.SafePath(recorded, null), data), "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
+            string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
+            if (env != null) SetupCore.Require(SetupCore.Same(SetupCore.SafePath(env, game), data), "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
+            return data + "|" + ReflectionWorkCompatibility.Check(data, before);
         }
         static void RestoreJournal(string game, string path)
         {
             RequireStopped(); var j = ReadJournal(game, path); string folder = Path.GetDirectoryName(path); var files = (object[])j["files"];
+            var backups = new byte[files.Length][];
             // Validate every target and backup first; refuse to overwrite later user edits.
             for (int i = 0; i < files.Length; i++)
             {
                 var f = (Dictionary<string, object>)files[i]; string before = (string)f["before"], now = FileState(Join(game, (string)f["path"]));
                 SetupCore.Require(now == before || now == (string)f["after"], "LBINSTALL_RECOVERY_CONFLICT_PRESERVED");
-                if (before != "MISSING") SetupCore.Require(FileState(Join(folder, i + ".before")) == before, "LBINSTALL_BACKUP_HASH_MISMATCH");
+                if (before != "MISSING")
+                {
+                    backups[i] = File.ReadAllBytes(Join(folder, i + ".before"));
+                    SetupCore.Require(SetupCore.Hash(backups[i]) == before, "LBINSTALL_BACKUP_HASH_MISMATCH");
+                }
             }
+            CheckRecoveryWork(game, j);
             foreach (Dictionary<string, object> file in files)
                 if ((string)file["path"] == InstallManifest.Marker && (string)file["before"] == "MISSING" && File.Exists(Join(game, InstallManifest.Marker)))
                 { string data = MarkerRoot(game, Join(game, InstallManifest.Marker)); if (Directory.Exists(data)) { j["retained_data_root"] = data; j["retained_data_identity"] = FileIdentity.Directory(data); } }
@@ -307,7 +366,7 @@ namespace LilithSetup
                 SetupCore.Require(now == (string)f["after"], "LBINSTALL_RECOVERY_CONFLICT_PRESERVED");
                 if ((string)f["path"] == InstallManifest.Marker)
                     SetupCore.Require(FileState(Join(game, InstallManifest.Plugin)) == "MISSING", "LBINSTALL_KEEP_ISOLATION_MARKER_UNTIL_PLUGIN_REMOVED");
-                if (before == "MISSING") File.Delete(target); else Atomic(target, File.ReadAllBytes(Join(folder, i + ".before")));
+                if (before == "MISSING") File.Delete(target); else Atomic(target, backups[i]);
                 SetupCore.Require(FileState(target) == before, "LBINSTALL_RESTORE_VERIFY_FAILED");
             }
             j["phase"] = "RolledBack"; WriteJournal(path, j);
@@ -328,7 +387,7 @@ namespace LilithSetup
             ExecuteRecovery(PreviewRecovery(gameRoot, false), true);
         }
         // Read-only: may describe a selected transaction while another game is
-        // running. All mutation entry points retain RequireStopped unchanged.
+        // running. A preview is never permission to skip the stopped recheck.
         public static RecoveryPlan PreviewRecovery(string gameRoot, bool pendingOnly)
         {
             string game = SetupCore.SafePath(gameRoot, null); SetupCore.NoReparse(game);
@@ -344,6 +403,7 @@ namespace LilithSetup
             foreach (string path in selected)
             {
                 var j = ReadJournal(game, path); var files = (object[])j["files"]; string folder = Path.GetDirectoryName(path);
+                stamp.Append(CheckRecoveryWork(game, j)).Append('\n');
                 stamp.Append(path).Append('|').Append(FileState(path)).Append('\n');
                 changes.Add("事务：" + Path.GetFileName(folder) + "；包版本：" + (string)j["package"] + "；日期：" + (string)j["utc"]);
                 foreach (int i in OwnedFileOrder(files, false))
@@ -359,6 +419,7 @@ namespace LilithSetup
                     changes.Add((now == before ? "保持（已是安装前状态） " : before == "MISSING" ? "删除本次新增文件 " : "恢复安装前备份 ") + target + "；目标摘要：" + (before == "MISSING" ? "不存在" : before));
                 }
             }
+            changes.Add("仅保护新入口的未结反思 Work 兼容；DLL 备份不是整套记忆快照。首次安装回退只移除插件并保留数据。");
             return new RecoveryPlan(game, pendingOnly, SetupCore.Hash(Utf8.GetBytes(stamp.ToString())), selected, changes.ToArray());
         }
         internal static void RequireSameRecoveryPlan(RecoveryPlan approved, RecoveryPlan fresh)
@@ -369,6 +430,7 @@ namespace LilithSetup
         {
             SetupCore.Require(confirm && approved != null, "LBINSTALL_REVIEW_AND_CONFIRM_FIRST"); RequireStopped();
             using (Lock(approved.GameRoot))
+            using (HoldStopped(approved.GameRoot))
             {
                 var fresh = PreviewRecovery(approved.GameRoot, approved.PendingOnly); RequireSameRecoveryPlan(approved, fresh);
                 foreach (string path in fresh.Journals) RestoreJournal(fresh.GameRoot, path);
@@ -397,6 +459,11 @@ namespace LilithSetup
         public static string Explain(Exception error)
         {
             string code = SetupCore.SafeError(error);
+            const string workRollback = "LBINSTALL_RECOVERY_NEEDED_NO_OTHER_FILES_OVERWRITTEN:LBINSTALL_UNFINISHED_WORK_TARGET_UNVERIFIED:RETAINED_PLUGIN_SHA256:";
+            if (code.StartsWith(workRollback, StringComparison.Ordinal)) return "安装未完成，旧 DLL 尚无经核验的 Work 恢复能力，自动回退被拒绝。当前保留本次新 DLL（SHA256：" + code.Substring(workRollback.Length) + "），未退回旧版；数据标记、Work 和中断事务记录仍保留。请保留一致备份并核对。";
+            if (code.Contains("UNFINISHED_WORK_TARGET_UNVERIFIED")) return "检测到未完成反思，目标 DLL 尚无经核验的 Work 恢复能力。本次停止替换并保留文件。请使用兼容版本处理；关闭反思或空响应不等于已完成，不要手动删改回执。";
+            if (code.Contains("WORK_STATE_UNKNOWN") || code.Contains("WORK_DATA_ROOT_UNKNOWN")) return "无法可靠判定实际数据目录中的反思回执（目录不明、权限不足、损坏或未知格式）。本次停止替换并保留文件，请先保留一致备份并核对；不要把未知状态当作无未结工作。";
+            if (code.Contains("HOST_STOP_GUARD_UNAVAILABLE")) return "无法在整个替换期间阻止所选游戏重新启动。请正常退出游戏并关闭占用程序后重试；本次未替换插件。";
             if (code.Contains("COMPATIBILITY_NOT_VERIFIED")) return "当前包尚无经核对的游戏/依赖指纹，安装已禁用。维护者需先完成隔离兼容验证。";
             if (code.Contains("DEPENDENCY_MISSING")) return "缺少依赖：" + code.Split(':').Last() + "。请按该游戏经验证的 BepInEx IL2CPP 安装说明补齐，并生成匹配的 interop 后重检；此原型不下载或分发依赖。";
             if (code.Contains("GAME_RUNNING")) return "请先正常退出 Lilith 游戏，再重新检查。";
