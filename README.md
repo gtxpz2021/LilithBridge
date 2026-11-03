@@ -21,20 +21,24 @@ LilithBridge 把原始经历与后来形成的理解分开处理，保留来源�
 
 项目自有代码采用 MIT 许可。架构说明解释了这些机制怎样衔接，也提供了源码入口，方便理解和继续改进。
 
+## 当前修复版：0.3.150.66-rc.3.fix.2
+
+修复召回安装、输入框位置和控制台生命周期，并保留 Work、核对匹配 interop 后升级。**历史记录窗口可能只显示一半，尚未修复。** 详见[本版说明](docs/RELEASE-NOTES-fix2.md)和[验证边界](CANDIDATE-VALIDATION.md)。
+
 ## 第一次使用
 
 你需要 Windows x64、正版游戏和自己的聊天 API Key。安装器会检查所选游戏环境；游戏更新可能影响兼容性，遇到提示时请先按[依赖说明](docs/DEPENDENCIES.md)处理。
 
 1. **准备游戏。** 安装[正版游戏](https://store.steampowered.com/app/4643090/?l=schinese)（Steam App ID 4643090）。在向导中勾选自动准备 BepInEx 加载环境；需要首次生成运行文件时，按提示主动运行一次游戏，再退出继续。已有健康组件会复用。
-2. **下载安装包。** 下载本阶段的 [Windows 一体化安装 ZIP（0.3.150.64-rc.3）](https://github.com/gtxpz2021/LilithBridge/releases/download/preview-20261101-rc3/LilithBridge-unified-installer-20261101-rc3.zip)，或打开[本版发布页](https://github.com/gtxpz2021/LilithBridge/releases/tag/preview-20261101-rc3)核对说明与 SHA256。这仍是预览版本。“Source code”和仓库的“Download ZIP”是源码，不能直接安装。
-3. **安装并配置。** 完整解压安装包，运行 `Start-Setup.cmd`，选择游戏目录，勾选插件、自动准备加载环境；需要时再选本地召回，Python、环境和模型会一起准备。默认使用 **DeepSeek 官方** 和 **deepseek-flash**，填写自己的 Key，核对计划后点“开始安装”。已有安装保留原数据根与设置；高级地址仍可展开配置。
+2. **下载安装包。** 下载 [0.3.150.66-rc.3.fix.2 Windows 一体化安装 ZIP](https://github.com/gtxpz2021/LilithBridge/releases/download/preview-20261103-rc3-fix2/LilithBridge-unified-installer-20261103-rc3-fix2.zip)，或打开[本版发布页](https://github.com/gtxpz2021/LilithBridge/releases/tag/preview-20261103-rc3-fix2)核对说明与 SHA256。Source code/Download ZIP 是源码，不能直接安装。
+3. **安装并配置。** 完整解压安装包，双击 `setup/LilithBridge-Installer.exe`，选择游戏目录，勾选插件、自动准备加载环境；需要时再选本地召回，Python、环境和模型会一起准备。默认使用 **DeepSeek 官方** 和 **deepseek-flash**，填写自己的 Key，核对计划后点“开始安装”。已有安装保留原数据根与设置；高级地址仍可展开配置。
 4. **说第一句话。** 启动游戏，等角色进入桌面场景、保持清醒且原作选项菜单关闭后，按回车打开输入框，输入想说的话。[逐步安装与常见问题](docs/PLAYER-GUIDE.md)。
 
 先用远程聊天 API 即可，**不需要 Python 或本地模型**。API 可能按用量收费；聊天内容和本次用到的历史材料会发送到你选择的服务。API Key 以明文保存在本机，请保管好配置和备份。
 
 游戏更新时保留 Key、模型、记忆与索引；实际接口仍满足时可以继续使用。项目更新从向导的“项目更新”检查并由你确认应用，运行中的游戏不会被强行替换。
 
-## 本阶段基线：0.3.150.64-rc.3
+## 历史 RC3 基线：0.3.150.64-rc.3
 
 本次更新收紧逐项写入事实与后续回答、来源撤回和后台材料范围，补齐未结反思工作的更新/回退兼容检查，并减少同一请求内的重复分词和临时分配。人格、默认功能开关、加载器默认设置与模型设置保持原样。
 

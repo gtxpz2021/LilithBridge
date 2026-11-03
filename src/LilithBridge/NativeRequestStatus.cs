@@ -30,9 +30,10 @@ internal sealed class NativeRequestStatus
             scaler.referenceResolution = new Vector2(1920, 1080);
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = .5f;
+            Transform viewport = NativeUiViewport.Create(canvas);
             var labelGo = new GameObject("Status");
             labelGo.AddComponent<RectTransform>();
-            labelGo.transform.SetParent(_root.transform, false);
+            labelGo.transform.SetParent(viewport, false);
             _label = labelGo.AddComponent<TextMeshProUGUI>();
             _label.font = style.font; _label.fontSize = 16;
             _label.color = new Color(.82f, .85f, .91f, .8f);

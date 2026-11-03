@@ -175,11 +175,12 @@ internal sealed partial class NativeInputField
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = 0.5f;
+            Transform monitorViewport = NativeUiViewport.Create(canvas);
 
             var fieldGo = new GameObject("LilithNativeInput");
             fieldGo.AddComponent<RectTransform>();
             fieldGo.AddComponent<CanvasRenderer>();
-            fieldGo.transform.SetParent(canvasGo.transform, false);
+            fieldGo.transform.SetParent(monitorViewport, false);
             var fieldRect = fieldGo.GetComponent<RectTransform>();
             fieldRect.anchorMin = new Vector2(0.5f, 0.04f);
             fieldRect.anchorMax = new Vector2(0.5f, 0.04f);
@@ -283,7 +284,7 @@ internal sealed partial class NativeInputField
             _failureNotice=failureGo.AddComponent<TextMeshProUGUI>();_failureNotice.font=text.font;_failureNotice.fontSize=16;_failureNotice.color=new Color(1,.72f,.60f,1);
             _failureNotice.richText=false;_failureNotice.raycastTarget=false;_failureNotice.alignment=TextAlignmentOptions.Center;
             var failureRect=_failureNotice.rectTransform;failureRect.anchorMin=failureRect.anchorMax=new Vector2(.5f,1);failureRect.pivot=new Vector2(.5f,0);failureRect.anchoredPosition=new Vector2(0,6);failureRect.sizeDelta=new Vector2(430,28);
-            _menu = new NativeOptionsMenu(fieldGo.transform,canvasGo.transform,text,
+            _menu = new NativeOptionsMenu(fieldGo.transform,monitorViewport,text,
                 mode=>_onModeSelected?.Invoke(mode),()=>_onOpenHistory?.Invoke(),
                 owns=>{_wantsFocus=!owns;if(owns)_input?.DeactivateInputField();else Activate();},
                 ()=>AuthorizeReviewFromMenu(), () => _onOpenSharedActivity?.Invoke());

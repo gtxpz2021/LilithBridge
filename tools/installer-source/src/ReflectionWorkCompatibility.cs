@@ -34,7 +34,11 @@ namespace LilithSetup
                 || imageHash == "47e3ba80e729b651a0a295add89cee549c93d59aa26a5ecf3b5178aa0d05c207"
                 || imageHash == "aab104a05a42a4397a7a04d85681bf0057042449a5e131be62f56f58610546ae"
                 || imageHash == "689222dabaf21c0dfa4967a08920a731b085a595ea1d33f321504b0587bd7f04"
-                || imageHash == "f7030fd9686c0fa98166d31c61b8ca2b851e23851959f6b0e9bda19da9dbfedf";
+                || imageHash == "f7030fd9686c0fa98166d31c61b8ca2b851e23851959f6b0e9bda19da9dbfedf"
+                // RC3 fix2: Work envelope, persistence and recovery sources are
+                // byte-identical to public RC3. Only UI/console lifetime changed.
+                // See docs/UPGRADE-COMPATIBILITY-fix2.md for the bound review.
+                || imageHash == "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7";
         }
 
         static FileAttributes? Attributes(string path)

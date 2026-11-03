@@ -100,10 +100,11 @@ internal sealed class NativeHistoryWindow
         var canvas = _root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.sortingOrder = 10010;
         var scaler = _root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f,1080f); scaler.matchWidthOrHeight = .5f;
-        var shield = Box("ModalPointerShield",_root.transform,Vector2.zero,Vector2.zero);
+        Transform monitorViewport = NativeUiViewport.Create(canvas);
+        var shield = Box("ModalPointerShield",monitorViewport,Vector2.zero,Vector2.zero);
         shield.anchorMin=Vector2.zero;shield.anchorMax=Vector2.one;shield.offsetMin=Vector2.zero;shield.offsetMax=Vector2.zero;
         shield.gameObject.AddComponent<Image>().color=new Color(0,0,0,.20f);
-        var panel = Box("HistoryPanel", _root.transform, new Vector2(0,0), new Vector2(760,690));
+        var panel = Box("HistoryPanel", monitorViewport, new Vector2(0,0), new Vector2(760,690));
         panel.gameObject.AddComponent<CanvasRenderer>(); panel.gameObject.AddComponent<Image>().color = new Color(.04f,.05f,.08f,.98f);
         Label(panel,"历史",new Vector2(-245,308),new Vector2(200,34),25);
         Button(panel,"关闭",new Vector2(325,308),new Vector2(80,34),()=>_close?.Invoke());

@@ -1,0 +1,17 @@
+{
+  "release_tag": "preview-20261103-rc3-fix2",
+  "version": "0.3.150.66-rc.3.fix.2",
+  "numeric_version": "0.3.150.66",
+  "package_id": "lilithbridge-preview-20261103-rc3-fix2",
+  "plugin_sha256": "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
+  "plugin_bytes": 2029056,
+  "installer_version": "0.1.3.0",
+  "installer_sha256": "1364ede294417e7ea942ed0e6ef74a2a9dfd698655fecd334590144bd8e1208a",
+  "handoff_sha256": "60d3fe1da02b81ce148b6a201a709009c65f1fae16552524f5a7906efcd385b4",
+  "manifest_sha256": "c39413cb2eb673b277be63aee56290e5baf89e4160d7e317cbf301e8c6322983",
+  "channel": "prerelease",
+  "binary_reused_without_rebuild": true,
+  "baseline_source_commit": "c68962d55524e21c26e2fa2a28144aa4ac1a8e13",
+  "known_issue": "History window may show only half; not fixed.",
+  "install_asset_url": "https://github.com/gtxpz2021/LilithBridge/releases/download/preview-20261103-rc3-fix2/LilithBridge-unified-installer-20261103-rc3-fix2.zip"
+}

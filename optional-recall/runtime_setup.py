@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -31,6 +32,13 @@ def save(path, data):
 
 
 def pins():
+    # Check immutable probe bytes before downloads or venv installation.
+    # The installer uses python -I, which excludes the script directory from
+    # sys.path. Load this sibling explicitly rather than importing by name.
+    spec = importlib.util.spec_from_file_location("_lilith_recall_verifier", HERE / "verify_runtime.py")
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    verifier.verify_fixture()
     if digest(HERE / "requirements-cpu-win-x64.candidate.lock.txt") != LOCK_HASH:
         raise RuntimeError("Requirements lock identity changed")
     if digest(HERE / "wheels.lock.json") != MANIFEST_HASH:

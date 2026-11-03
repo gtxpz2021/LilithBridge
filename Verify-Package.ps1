@@ -23,4 +23,10 @@ foreach ($file in $actualFiles) {
     $key=$file.FullName.Substring($root.Length+1).Replace('\','/').ToLowerInvariant()
     if (-not $seen.ContainsKey($key)) { throw 'Unexpected package file.' }
 }
-Write-Output ('Verified '+$seen.Count+' package files. This confirms manifest consistency, not publisher authenticity or game compatibility.')
+$fixture = Join-Path $root 'setup\optional-recall\probe-fixture'
+$identities = Get-Content -LiteralPath (Join-Path $fixture 'identity.json') -Raw | ConvertFrom-Json
+foreach ($name in @('semantic_worker.py','model-manifest.json')) {
+    $hash = (Get-FileHash -LiteralPath (Join-Path $fixture $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($hash -cne $identities.$name) { throw ('Worker fixture identity mismatch: '+$name) }
+}
+Write-Output ('Verified '+$seen.Count+' package files and worker fixture identities. This confirms manifest consistency, not publisher authenticity or game compatibility.')

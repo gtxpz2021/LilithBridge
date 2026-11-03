@@ -34,7 +34,7 @@ namespace LilithSetup
     public static class WizardCore
     {
         public const bool PreviewChannel = true;
-        public const int InstallerSchema = 2, SupportedConfigSchema = 1;
+        public const int InstallerSchema = 3, SupportedConfigSchema = 1;
         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
         {
             TrustedDownloads.UsePlatformTls();
@@ -141,6 +141,11 @@ namespace LilithSetup
                 cancel.ThrowIfCancellationRequested(); var installed = LoaderPreparation.ExecuteZip(preview.Plan);
                 SetupCore.Require(installed.State == "PendingFirstRun", "LBWIZ_LOADER_NOT_PREPARED"); host = HostCapabilities.Inspect(game, Path.Combine(manifestRoot, "payload/LilithBridge.dll"));
             }
+            if (options.Plugin || options.Loader)
+            {
+                bool changedConsole = ConsoleStartupSettings.Apply(game);
+                Say(report, "console", "done", changedConsole ? "已关闭启动日志控制台；其他加载器设置保持原样" : "启动日志控制台已关闭；文件日志设置保持原样", 19);
+            }
             Say(report, "loader", host.CanInstall ? "done" : "waiting", host.CanInstall ? "游戏运行文件检查通过" : "等待游戏完成首次初始化", 20);
             if (host.State == "PendingFirstRun" || host.State == "PendingRegeneration")
             { result.State = "WaitingForGame"; result.Message = "加载器已准备，尚未完成安装。请主动启动所选目录中的游戏，等待加载器完成准备后退出，再点“继续安装”。窗口可以保持打开。"; return result; }
@@ -159,7 +164,7 @@ namespace LilithSetup
             {
                 var spec = options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset;
                 string record = WizardProvisioning.PathIn(context.DataRoot, ".release-provenance-" + manifest.PluginSha256.Substring(0, 16) + ".json"), temp = record + ".tmp"; SetupCore.NoReparse(temp);
-                File.WriteAllText(temp, DataJson.Write(new Dictionary<string, object> { { "repository", "gtxpz2021/LilithBridge" }, { "release_id", options.Update == null ? 0 : options.Update.ReleaseId }, { "asset_id", options.Update == null ? 0 : options.Update.AssetId }, { "tag", options.Update == null ? "preview-20261029-r2" : options.Update.Tag }, { "asset_sha256", spec.Hash }, { "plugin_sha256", manifest.PluginSha256 }, { "installer_schema", 2 } }), new UTF8Encoding(false));
+                File.WriteAllText(temp, DataJson.Write(new Dictionary<string, object> { { "repository", "gtxpz2021/LilithBridge" }, { "release_id", options.Update == null ? 0 : options.Update.ReleaseId }, { "asset_id", options.Update == null ? 0 : options.Update.AssetId }, { "tag", options.Update == null ? "preview-20261029-r2" : options.Update.Tag }, { "asset_sha256", spec.Hash }, { "plugin_sha256", manifest.PluginSha256 }, { "installer_schema", InstallerSchema } }), new UTF8Encoding(false));
                 if (File.Exists(record)) File.Replace(temp, record, null); else File.Move(temp, record);
             }
             Say(report, "plugin", "done", "插件已就绪；已有配置与记忆仍使用原目录", 35);
@@ -238,6 +243,9 @@ namespace LilithSetup
             if (error is WebException) { var detail = NetworkDiagnostics.Error(error); if ((string)detail["category"] == "windows_schannel_credentials_unavailable") return "Windows HTTPS 当前运行上下文的安全凭证不可用（0x8009030E），下载尚未完成。可以运行包内无 Key 网络诊断入口一次核对，或选择离线包目录；已核验文件会复用。"; return "下载未完成。请检查网络、代理或证书状态后重试，也可选择离线包目录。已核验的下载会复用；安全校验保持启用。"; }
             if (error is UnauthorizedAccessException) return "当前目录没有写入权限。请使用可写的独立游戏目录，或检查系统给出的权限提示。";
             string code = SetupCore.SafeError(error);
+            if (code == "LBINSTALL_HOST_InteropGenerationDisabled") return "游戏接口缓存缺失或已过期，但加载器自动生成已关闭。请在 BepInEx/config/BepInEx.cfg 的 IL2CPP 设置中启用 UpdateInteropAssemblies，启动所选游戏完成生成并正常退出，再重新检查。现有设置、缓存和用户数据未删除。";
+            if (code == "LBINSTALL_HOST_NeedsInteropConfiguration") return "加载器的接口生成配置存在歧义或使用了未验证的 metadata/interop 路径。请保留原配置和缓存，核对标准生成路径后重新检查；本次未替换插件。";
+            if (code == "LBWIZ_CONSOLE_CONFIG_AMBIGUOUS" || code == "LBWIZ_CONSOLE_CONFIG_CHANGED") return "启动日志设置存在重复或已发生变化，已停止自动处理。请保留 BepInEx/config 下的配置与备份，再重新核对；现有游戏存档未修改。";
             if (code == "LBWIZ_RUNTIME_INSTALL_FAILED") return "召回环境未通过检查，配置尚未切换。可重试，或检查系统运行库状态；脱敏技术记录在产品专用环境目录或数据目录的 .setup-checks 中。";
             if (code == "LBSETUP_CONFIG_CHANGED_RECHECK") return "配置在操作期间发生变化，本次没有覆盖。点“重新读取”核对后再继续。";
             if (code == "LBSETUP_NEW_SERVICE_REQUIRES_OWN_KEY_OR_EXPLICIT_CLEAR") return "服务地址已经更换。请填写新服务对应的 Key；原服务的 Key 尚未修改，也不会自动带到新服务。";

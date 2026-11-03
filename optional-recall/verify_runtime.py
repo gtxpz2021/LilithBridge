@@ -20,6 +20,16 @@ def require(value, message):
         raise RuntimeError(message)
 
 
+def verify_fixture():
+    fixture = HERE / "probe-fixture"
+    identities = json.loads((fixture / "identity.json").read_text(encoding="utf-8"))
+    for name in ("semantic_worker.py", "model-manifest.json"):
+        actual = hashlib.sha256((fixture / name).read_bytes()).hexdigest()
+        require(actual == identities[name],
+                f"Worker fixture changed: {name}; expected {identities[name]}, got {actual}")
+    return fixture, identities
+
+
 def run_worker(command, data, root):
     result = subprocess.run(command, input=data, capture_output=True, encoding="utf-8", errors="strict",
                             cwd=root, timeout=90, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -31,6 +41,7 @@ def main():
     p.add_argument("--root", required=True, type=Path)
     p.add_argument("--manifest", required=True, type=Path)
     args = p.parse_args()
+    fixture, identities = verify_fixture()
     root = args.root.resolve()
     require(sys.prefix != sys.base_prefix, "Verification requires an isolated venv")
     require(Path(sys.prefix).resolve() == root / ".venv", "Unexpected venv")
@@ -50,10 +61,6 @@ def main():
     # A real CPU native operation catches DLL-load-only false confidence.
     require((torch.tensor([[1.0, 2.0]]) @ torch.tensor([[3.0], [4.0]])).item() == 11.0, "CPU tensor operation failed")
     import_seconds = time.perf_counter() - started
-    fixture = HERE / "probe-fixture"
-    identities = json.loads((fixture / "identity.json").read_text(encoding="utf-8"))
-    for name in ("semantic_worker.py", "model-manifest.json"):
-        require(hashlib.sha256((fixture / name).read_bytes()).hexdigest() == identities[name], "Worker fixture changed")
     work = root / "probes" / uuid.uuid4().hex
     work.mkdir(parents=True)
     worker = fixture / "semantic_worker.py"

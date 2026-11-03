@@ -1,11 +1,11 @@
 # 源码与发行字节
 
-产品源码在 `src/LilithBridge/`，安装器源码在 `tools/installer-source/`。自行构建须通过合法游戏安装与 BepInEx 取得引用依赖，不在仓库或安装包内分发游戏 DLL、生成的 interop、原作素材或模型权重。
+产品源码在 src/LilithBridge/，安装器在 tools/installer-source/。自行构建须取得合法游戏/BepInEx 引用，仓库和安装包不分发游戏 DLL、interop、素材或模型。
 
-产品冻结采用 .NET SDK 6.0.428，信息版本 0.3.150.64-rc.3，数值版 0.3.150.64；PublicBuild.props 保留确定性/路径映射。可用 LILITH_GAME_DIR 指向自身合法的游戏依赖目录。重新构建的字节可能随 SDK、引用和源文件换行等环境变化，应独立计算 SHA256；不能以源码提交代替实际二进制身份。本次发布直接使用已冻结验证的产品 DLL，没有因公开文档/包标识变动重编产品。
+产品采用 .NET SDK 6.0.428，信息版本 0.3.150.66-rc.3.fix.2，数值版 0.3.150.66；本次沿用已验证的冻结产品 DLL，SHA256 为 08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7，不因安装器守卫或公开文档重编产品。LILITH_GAME_DIR 指向合法依赖；重编字节须自行核对，不能只凭版本号或源码提交认定相同。
 
-安装器使用 Windows .NET Framework 4.8 编译器与 Mono.Cecil 0.11.4。依赖库需按随附 MIT 许可自行取得放入 tools/setup/Mono.Cecil.dll，再运行 Build-Installer.ps1；源码仓库不提交二进制。运行 dotnet 时设置 DOTNET_GENERATE_ASPNET_CERTIFICATE=false，不需创建或信任开发证书。
+安装器/交接程序 0.1.3.0，能力 schema=3，使用 Windows .NET Framework 4.8 编译器与 Mono.Cecil 0.11.4。按许可取得 Mono.Cecil.dll 放入 tools/setup，执行 Build-Installer.ps1。运行 dotnet 时设置 DOTNET_GENERATE_ASPNET_CERTIFICATE=false。
 
-公开安装包的 setup/payload/LilithBridge.dll、两份安装器和依赖清单均由 PACKAGE-FILES.json 标识。Start-Setup.cmd 从完整解压后的本地 payload 安装本版本；向导“项目更新”另按官方 release asset 的真实 URL、长度和 digest 核验下载。固定旧小包仍保留作历史下载诊断/无本地包的兼容回退入口，不冒充本次 RC3。不要仅复制安装器 EXE 后将其当作完整 RC3 安装包。
+冻结 worker 为 LF；冻结 requirements 与模型清单保留各自原字节，.gitattributes 禁止转换。不要对这些输入使用 whitespace=fix。已存在工作树应用补丁后须恢复冻结字节；新检出和发行包均包含正确字节。根目录与 setup 两份召回脚本应一致。
 
-游戏/环境开关和模型默认值不因本次发行改变；测试的临时 ignore_disable_switch=true 不进入生产包。公开源码不包含内部 Git 历史、私密证据或测试观察插件。
+本标签安装 ZIP 的 PACKAGE-FILES、PACKAGE-IDENTITY 与安装清单标识实际字节。CANDIDATE.json 为既有安全安装器交接协议提供 schema 能力，不扩展 Work 哈希能力表。安装器更新会要求支持 schema=3 的完整包。默认加载器/功能和模型选择不变；控制台默认关闭，文件日志保留。

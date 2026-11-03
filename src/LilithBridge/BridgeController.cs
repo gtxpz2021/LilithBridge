@@ -158,6 +158,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         _inputField.Destroy();
         _requestStatus.Destroy();
         _historyWindow.Destroy();
+        NativeUiViewport.Clear();
         ActionExecutor.Clear();
         NativeWindowPeekDirector.Clear();
         NativePoseGate.Clear();
@@ -177,6 +178,7 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void Update()
     {
+        NativeUiViewport.Tick();
         if (!_reportedFirstUpdate)
         {
             _reportedFirstUpdate = true;

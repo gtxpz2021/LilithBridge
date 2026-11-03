@@ -5,3 +5,6 @@ tools/setup/model-manifest.json -text
 # Pinned installer inputs retain their verified release bytes.
 optional/semantic-worker/semantic_worker.py -text
 optional-recall/wheels.lock.json -text
+optional-recall/requirements-cpu-win-x64.candidate.lock.txt -text whitespace=cr-at-eol
+optional-recall/probe-fixture/semantic_worker.py -text
+optional-recall/probe-fixture/model-manifest.json -text whitespace=cr-at-eol

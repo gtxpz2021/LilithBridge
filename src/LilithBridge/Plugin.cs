@@ -7,7 +7,7 @@ using HarmonyLib;
 
 namespace LilithBridge;
 
-[BepInPlugin("local.lilith.native", "Lilith Native Bridge", "0.3.150.64")]
+[BepInPlugin("local.lilith.native", "Lilith Native Bridge", "0.3.150.66")]
 [BepInProcess("Lilith.exe")]
 public sealed class Plugin : BasePlugin
 {
@@ -20,10 +20,11 @@ public sealed class Plugin : BasePlugin
     public override void Load()
     {
         PluginLog = Log;
+        ConsoleLifetimeSafety.Detach();
         if (_loaded) return;
         if (_harmony != null || _ownedHost != null)
             throw new InvalidOperationException("Previous LilithBridge cleanup is incomplete");
-        Log.LogInfo("Lilith Native Bridge 0.3.150.64-rc.3 loading");
+        Log.LogInfo("Lilith Native Bridge 0.3.150.66-rc.3.fix.2 loading");
         _harmony = new Harmony("local.lilith.native");
         try
         {
@@ -36,6 +37,7 @@ public sealed class Plugin : BasePlugin
             bool cleaned = CleanupOwnedState();
             Log.LogError("LilithBridge initialization failed: " + error.GetType().Name
                 + "; own cleanup complete=" + cleaned);
+            ConsoleLifetimeSafety.ShowError("LilithBridge 启动失败，聊天功能暂不可用。请退出游戏后重新运行安装器；若仍失败，请保留日志以便排查。", error.GetType().Name);
             throw;
         }
     }
