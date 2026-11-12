@@ -40,4 +40,4 @@ Python 与依赖使用本机用户目录下 LilithBridge 自己的短路径，�
 
 停写保证仅适用于所选 Lilith.exe、安装器已确定的数据根，且没有其他宿主并发写入的情况。EXE 独占句柄不是数据根锁；多个游戏副本共享数据根、其他宿主写入，或启动器另设环境变量而使用不同数据根，均不在此保证内。操作前须确认相关宿主已停止，并核对实际数据根及一致备份；无法确认时保留文件，不继续替换。
 
-已确认的使用范围及在线下载等限制见[当前验证范围](../CANDIDATE-VALIDATION.md)。下载遇到问题时，可运行安装包根目录的 `Network-Diagnostic.cmd`，完成一次无 Key 自检。
+当前版本说明见[本版更新](../RELEASE-NOTES.zh-CN.md)。下载遇到问题时，可在解压后的安装目录运行 `setup\LilithBridge-Installer.exe --network-diagnostic`，完成一次无 Key 自检。
