@@ -2,7 +2,7 @@
 
 LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》（The NOexistenceN of Lilith）](https://store.steampowered.com/app/4643090/?l=schinese)的非官方 MOD。它连接游戏中的角色、语言模型与本地记忆，让今天的交流有机会接上过去。
 
-这篇说明不要求你安装游戏。想先知道它在做什么，读“快速了解”即可；想看程序如何实现，再顺着后面的过程和源码导航读下去。[安装步骤另在玩家指南](docs/PLAYER-GUIDE.md)，不用先读懂这些原理。
+这篇说明不要求你安装游戏。想先知道它在做什么，读“快速了解”即可；想看程序如何实现，再顺着后面的过程和源码导航读下去。[当前安装步骤](NORMAL-USE.zh-CN.md)，不用先读懂这些原理。
 
 ## 快速了解
 
@@ -158,7 +158,7 @@ BepInEx 加载插件后，[`Plugin.cs`](src/LilithBridge/Plugin.cs) 注册与游
 
 所以，游戏版本号变化本身不是判定不兼容的全部依据。如果所需接口仍然存在，插件代码可能无需修改；若接口、生成文件或运行行为发生变化，就需要处理具体差异。接口检查能发现一部分问题，但无法证明所有动作和时序都保持原样，也不会自动修补未知接口。
 
-安装与升级的具体操作以[玩家指南](docs/PLAYER-GUIDE.md)和对应发布说明为准；它们与这里讲的记忆、对话原理是两回事。
+安装与升级的具体操作以[安装与正常使用](NORMAL-USE.zh-CN.md)和对应发布说明为准；它们与这里讲的记忆、对话原理是两回事。
 
 ## 当前范围与局限
 
@@ -188,4 +188,4 @@ BepInEx 加载插件后，[`Plugin.cs`](src/LilithBridge/Plugin.cs) 注册与游
 
 表中 C# 文件位于 [`src/LilithBridge/`](src/LilithBridge/)。`BridgeController` 和 `MemoryStore` 分散在多个 `partial` 文件中，共同组成相同的类；文件名后缀帮助定位职责，并不表示它们是可以单独运行的程序。
 
-[回到首页](README.md) · [安装与使用](docs/PLAYER-GUIDE.md) · [可选召回依赖](docs/DEPENDENCIES.md#可选本地召回)
+[回到首页](README.md) · [安装与使用](NORMAL-USE.zh-CN.md) · [可选召回依赖](docs/DEPENDENCIES.md#可选本地召回)
