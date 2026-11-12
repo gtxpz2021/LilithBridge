@@ -1,6 +1,6 @@
 # 依赖与本地召回
 
-正常安装使用一体化向导，不需要手动运行环境脚本或填写 Python、worker、模型路径。[最短步骤](../QUICK-START.md)与[向导说明](INSTALLER-WIZARD.md)解释当前状态和下一步。
+正常安装使用一体化向导，不需要手动运行环境脚本或填写 Python、worker、模型路径。[安装与正常使用](../NORMAL-USE.zh-CN.md)与[向导说明](INSTALLER-WIZARD.md)解释当前状态和下一步。
 
 ## 游戏与加载环境
 
