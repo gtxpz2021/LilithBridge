@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace LilithBridge;
 
-internal static class ActionExecutor
+internal static partial class ActionExecutor
 {
     private static readonly Regex NumericVoice = new(@"^\d+$", RegexOptions.Compiled);
     private static readonly HashSet<LilithActionType> LieSafeActions = new()
@@ -530,15 +530,16 @@ internal static class ActionExecutor
                 && controller != null)
             {
                 LilithActionType waitingAction = PickWaitingAction(state);
-                controller.PlayLilithAction(waitingAction, true);
+                if (!TryBeginAmbientWaiting(controller, waitingAction))
+                { _nextWaitingAt = Time.unscaledTime + 0.5f; return; }
                 RecordNativeAction(waitingAction);
                 _waitingActive = true;
                 NativeEventLog.Trace("action.waiting_start", "mod", "lilith", waitingAction.ToString());
             }
             else if (!_waitingRequested && _waitingActive && controller != null)
             {
-                controller.PlayLilithAction(LilithActionType.Idle, true);
                 _waitingActive = false;
+                EndAmbientWaiting(controller);
                 NativeEventLog.Trace("action.waiting_end", "mod", "lilith", "Idle");
             }
         }
@@ -554,12 +555,6 @@ internal static class ActionExecutor
         if (state == null)
             return LilithActionType.Think;
         double roll = WaitingRng.NextDouble();
-        if (state.Emotions.Tension > 0.62 && roll < 0.48)
-            return LilithActionType.RubEyes;
-        if (state.Emotions.Warmth > 0.64
-            && state.Emotions.Closeness > 0.54
-            && roll < 0.35)
-            return LilithActionType.TiltHead;
         if (state.Mood == MoodKind.Shy && roll < 0.35)
             return LilithActionType.Blink;
         return LilithActionType.Think;

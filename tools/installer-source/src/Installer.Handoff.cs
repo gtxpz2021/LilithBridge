@@ -67,7 +67,9 @@ namespace LilithSetup
                 foreach (string entry in Directory.EnumerateFileSystemEntries(dir)) { SetupCore.NoReparse(entry); SetupCore.Require(++count <= 3000, "LBWIZ_HANDOFF_PACKAGE_TOO_MANY_FILES"); if (Directory.Exists(entry)) queue.Enqueue(entry); else SetupCore.Require(allowed.Contains(entry), "LBWIZ_HANDOFF_UNLISTED_PACKAGE_FILE"); }
             }
             SetupCore.Require(allowed.Contains(Inside(root, "setup/LilithBridge-Installer.exe")) && allowed.Contains(Inside(root, "setup/install-manifest.json")) && allowed.Contains(Inside(root, "CANDIDATE.json")), "LBWIZ_HANDOFF_REQUIRED_ROLE_MISSING");
-            return Read(Inside(root, "CANDIDATE.json"), 65536);
+           
+            var candidate = Read(Inside(root, "CANDIDATE.json"), 65536);
+            return candidate;
         }
         static string ExtractVerified(string archive, DownloadSpec spec, string cache)
         {
@@ -91,6 +93,12 @@ namespace LilithSetup
             }
             VerifyPackage(stage, archive, spec.Hash); Directory.Move(stage, target); return target;
         }
+        // Existing protocol and declared capability checks, shared for offline verification.
+        internal static void RequireCapabilities(Dictionary<string, object> package, int minimum, int config)
+        {
+            SetupCore.Require(minimum >= 1 && minimum <= 1000 && config >= 1 && config <= 1000, "LBWIZ_HANDOFF_PROTOCOL_UNSUPPORTED");
+            SetupCore.Require(package.ContainsKey("handoff_protocol") && Convert.ToInt32(package["handoff_protocol"]) == Protocol && package.ContainsKey("installer_schema") && Convert.ToInt32(package["installer_schema"]) >= minimum && package.ContainsKey("supported_config_schema") && Convert.ToInt32(package["supported_config_schema"]) >= config, "LBWIZ_HANDOFF_PROTOCOL_UNSUPPORTED");
+        }
         public static string Prepare(string archive, DownloadSpec spec, WizardOptions options)
         {
             SetupCore.Require(options.Confirm, "LBWIZ_CONFIRM_SELECTION_FIRST"); string cache = SetupCore.SafePath(options.CacheRoot, null); SetupCore.NoReparse(cache); Directory.CreateDirectory(cache);
@@ -99,8 +107,7 @@ namespace LilithSetup
             string cached = Inside(cache, spec.Name); if (!SetupCore.Same(cached, archive)) { if (File.Exists(cached) && !TrustedDownloads.Matches(cached, spec)) File.Move(cached, cached + ".invalid-" + Guid.NewGuid().ToString("N")); WizardProvisioning.CopyVerified(archive, cached, spec.Hash); }
             string root = ExtractVerified(cached, spec, cache); var package = VerifyPackage(root, cached, spec.Hash); var install = Read(Inside(root, "setup/install-manifest.json"), 65536);
             int minimum = install.ContainsKey("min_installer_schema") ? Convert.ToInt32(install["min_installer_schema"]) : 1, config = install.ContainsKey("config_schema") ? Convert.ToInt32(install["config_schema"]) : 1;
-            SetupCore.Require(minimum >= 1 && minimum <= 1000 && config >= 1 && config <= 1000, "LBWIZ_HANDOFF_PROTOCOL_UNSUPPORTED");
-            SetupCore.Require(package.ContainsKey("handoff_protocol") && Convert.ToInt32(package["handoff_protocol"]) == Protocol && package.ContainsKey("installer_schema") && Convert.ToInt32(package["installer_schema"]) >= minimum && package.ContainsKey("supported_config_schema") && Convert.ToInt32(package["supported_config_schema"]) >= config, "LBWIZ_HANDOFF_PROTOCOL_UNSUPPORTED");
+            RequireCapabilities(package, minimum, config);
             // A downloaded manifest cannot choose a program, URL, command or system destination.
             string next = Inside(root, "setup/LilithBridge-Installer.exe");
             string folder = Inside(cache, "handoffs/" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);

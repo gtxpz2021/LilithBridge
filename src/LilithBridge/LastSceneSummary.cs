@@ -28,17 +28,13 @@ internal sealed class LastSceneSummary
     public string TopicText => SchemaVersion >= 3 ? RecentTopic : UnfinishedTopic;
     public string BoundaryHint { get; set; } = "";
     public string EmotionalResidue { get; set; } = "";
-    // Only this exact structured slot was emitted by the retired synthetic
-    // vitality channel. Historical dialogue and all other residue stay intact.
-    [JsonIgnore]
-    private string CurrentEmotionalResidue => EmotionalResidue == "有一点没精神" ? "" : EmotionalResidue;
+    // Legacy payload only: never a source of content, selection or behavior.
     public string Source { get; set; } = "";
 
     public bool HasContent =>
         !string.IsNullOrWhiteSpace(NotableEvent)
         || !string.IsNullOrWhiteSpace(TopicText)
-        || !string.IsNullOrWhiteSpace(BoundaryHint)
-        || !string.IsNullOrWhiteSpace(CurrentEmotionalResidue);
+        || !string.IsNullOrWhiteSpace(BoundaryHint);
 
     public bool IsExpired(DateTimeOffset now)
     {
@@ -53,6 +49,6 @@ internal sealed class LastSceneSummary
         Timestamp = Timestamp, NotableEvent = NotableEvent, UnfinishedTopic = UnfinishedTopic,
         RecentTopic = RecentTopic, UserText = UserText, AssistantText = AssistantText,
         AssistantTimestamp = AssistantTimestamp, BoundaryHint = BoundaryHint,
-        EmotionalResidue = CurrentEmotionalResidue, Source = Source
+        EmotionalResidue = EmotionalResidue, Source = Source
     };
 }

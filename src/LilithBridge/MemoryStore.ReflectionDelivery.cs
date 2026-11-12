@@ -13,8 +13,11 @@ internal sealed partial class MemoryStore
     // generated text is never duplicated here. One latest receipt per user.
     private sealed record ReflectionDeliveryReceipt(int Version, string UserId, string RequestId,
         string SessionId, string Outcome, bool Complete, string LastShownEventId, int ShownChunks = 0,
-        long InteractionOrder = 0);
+        long InteractionOrder = 0, string GeneratedPublicKey = "");
     private Dictionary<string, ReflectionDeliveryReceipt>? _reflectionDeliveries;
+    private long _reflectionMaterialGeneration;
+    internal long ReflectionMaterialGeneration => System.Threading.Interlocked.Read(ref _reflectionMaterialGeneration);
+    private void ReflectionMaterialChanged() => System.Threading.Interlocked.Increment(ref _reflectionMaterialGeneration);
     private string ReflectionDeliveryPath => Path.Combine(_root, "v4-reflection-delivery-v1.json");
     private Dictionary<string, ReflectionDeliveryReceipt> ReflectionDeliveries()
     {
@@ -78,6 +81,7 @@ internal sealed partial class MemoryStore
         ReflectionDeliveries()[userId] = receipt with { Outcome = outcome, Complete = complete && shownChunks > 0,
             LastShownEventId = lastShownEventId, ShownChunks = shownChunks };
         SaveReflectionDeliveries();
+        ReflectionMaterialChanged();
     }
     private bool ReflectionDeliverySettled(MemoryTurn user, HashSet<string>? archivedIds = null)
     {

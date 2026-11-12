@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 
 namespace LilithBridge;
 
-internal sealed class BridgeConfig
+internal sealed partial class BridgeConfig
 {
     private const string DefaultPersonaPrompt = LilithPersona.DefaultPrompt;
 
@@ -13,10 +13,15 @@ internal sealed class BridgeConfig
     // attached to the publishing ConfigStore owner shared by refreshed snapshots.
     internal B1CapabilityOwner? B1CapabilityOwner { get; set; }
     internal long B1CapabilityGeneration { get; set; }
+    internal long B1ReadOnlyCapabilityGeneration { get; set; }
+    internal long B1SharedReadOnlyCapabilityGeneration { get; set; }
+    internal long B1ReflectionCapabilityGeneration { get; set; }
+    // Explicit opt-in in the existing JSON configuration; no new UI control.
+    public bool B1ReflectionEnabled { get; set; } = false;
 
     public string ApiKey { get; set; } = "";
     public string BaseUrl { get; set; } = "https://api.deepseek.com";
-    public string Model { get; set; } = "deepseek-v4-flash-vision-exp";
+    public string Model { get; set; } = DeepSeekModels.Flash;
     public string PersonaPrompt { get; set; } = DefaultPersonaPrompt;
     public string PersonaFile { get; set; } = "";
     public bool PreviousStoryEnabled { get; set; } = true;
@@ -24,15 +29,9 @@ internal sealed class BridgeConfig
     public string PreviousStoryFile { get; set; } = "";
     public int PreviousStoryMaxChars { get; set; } = 4200;
     public int PreviousStoryRecallMaxChars { get; set; } = 6000;
-    /// <summary>
-    /// Experiment, default off. When on, the chapter-level story digest is only
-    /// supplied on turns that look story-relevant; ordinary conversation gets the
-    /// compact identity core instead, and details come back through her own
-    /// <c>&lt;story:recall&gt;</c> request or the archive's keyword recall. The
-    /// boundaries (branches are not merged, the work's protagonist is not the
-    /// current player) are kept in both forms.
-    /// </summary>
-    public bool StoryArchiveOnDemand { get; set; } = false;
+    // Targeted private references only. No whole-archive fallback; consent is opt-in.
+    public bool StoryArchiveOnDemand { get; set; } = true;
+    public bool StoryDataConsent { get; set; } = false;
     public bool SharedActivityEnabled { get; set; } = false;
     public bool ThinkingEnabled { get; set; } = false;
     public string DialogueThinkingMode { get; set; } = "off";
@@ -41,6 +40,9 @@ internal sealed class BridgeConfig
     // Offline candidate switches. No migration or UI choice; legacy remains the default.
     public bool DialogueSourceEnvelopeEnabled { get; set; } = false;
     public bool DialogueNativeToolsEnabled { get; set; } = false;
+    public bool ExperimentalTemporaryExpressions { get; set; } = false;
+    public bool ExperimentalPublicStreamMessages { get; set; } = false;
+    public bool ExperimentalPublicFinalStream {get;set;} = false;
     // Optional review tool: "off" (no tool, no extra old reasoning), "request"
     // (only a turn explicitly authorized in the UI), "on_demand" (the model may choose).
     public string ReviewContextMode { get; set; } = ReviewContextModes.Off;
@@ -53,11 +55,17 @@ internal sealed class BridgeConfig
     public int ReviewThinkingMaxTokens { get; set; }
     // B1 is opt-in for isolated candidates; no legacy store migration.
     public bool B1ContinuityEnabled { get; set; } = false;
+    // Isolated candidate: explicit json keeps the unchanged baseline renderer.
+    public string B1MaterialPresentation { get; set; } = "natural";
+    // Independent optional material in an already eligible proactive MAIN.
+    // No trigger, dialogue owner or retention authority is created by this flag.
+    public bool B1ProactiveReadOnlyEnabled { get; set; } = false;
+    public bool B1SharedActivityReadOnlyEnabled { get; set; } = false;
     // Temporary experiment, default off. When true, the main dialogue prompt asks
     // the model to think in Lilith's first person instead of describing herself
     // from an outside/narrator perspective. Read once at startup.
     public bool ExperimentFirstPersonReasoning { get; set; } = false;
-    public bool VisionEnabled { get; set; } = true;
+    public bool VisionEnabled { get; set; } = false;
     public string VisionScope { get; set; } = "on_request";
     public bool SaveFrames { get; set; } = true;
     public int VisionMaxWidth { get; set; } = 1280;
@@ -76,21 +84,21 @@ internal sealed class BridgeConfig
     public int RequestTimeoutSeconds { get; set; } = 90;
     public int ConversationMaxMessages { get; set; } = 48;
     /// <summary>
-    /// Experiment, default off. Joins consecutive displayed bubbles of one
+    /// Message-boundary candidate default. Joins consecutive displayed bubbles of one
     /// model reply into a single assistant message in the request projection
     /// only; stored records, ids and the experience archive are unchanged.
     /// </summary>
-    public bool HistoryGroupReplies { get; set; } = false;
+    public bool HistoryGroupReplies { get; set; } = true;
     /// <summary>
-    /// Experiment, default off and only meaningful together with
+    /// Message-boundary candidate default, meaningful together with
     /// <see cref="HistoryGroupReplies"/>. When on, ConversationMaxMessages is
     /// spent as a message budget (one slot per reply) instead of a raw record
     /// count, so the request may include more real records that the store
     /// still holds. Off keeps the original record-count meaning.
     /// </summary>
-    public bool HistoryWindowInMessages { get; set; } = false;
+    public bool HistoryWindowInMessages { get; set; } = true;
     public bool AppAwarenessEnabled { get; set; } = true;
-    public bool MetaAutoVision { get; set; } = true;
+    public bool MetaAutoVision { get; set; } = false;
     public bool AutoActionEnabled { get; set; } = true;
     public bool ProactiveEnabled { get; set; } = true;
     public int ProactiveCooldownSeconds { get; set; } = 600;
@@ -110,7 +118,7 @@ internal sealed class BridgeConfig
     public int RandomProactiveIntervalSeconds { get; set; } = 1200;
     public bool LongTermMemoryEnabled { get; set; } = true;
     public bool AutonomousMemoryEnabled { get; set; } = true;
-    public bool MemoryUserWriteEnabled { get; set; } = false;
+    public bool MemoryUserWriteEnabled { get; set; } = true;
     public bool AutonomousMemoryExtractEveryTurn { get; set; } = true;
     public int AutonomousMemoryMaxEntries { get; set; } = 32;
     public int AutonomousMemoryMaxLength { get; set; } = 120;
@@ -118,8 +126,10 @@ internal sealed class BridgeConfig
     public double AutonomousMemoryDecayPerDay { get; set; } = 0.03;
     public bool PerspectiveProjectionEnabled { get; set; } = true;
     public bool PersonaDecisionEnabled { get; set; } = true;
-    public bool EmotionalContinuityEnabled { get; set; } = true;
-    public bool EmotionalRhythmEnabled { get; set; } = true;
+    // Legacy config keys remain readable for compatibility; neither controls
+    // any generation, projection or behavior in the retired-affect candidate.
+    public bool EmotionalContinuityEnabled { get; set; } = false;
+    public bool EmotionalRhythmEnabled { get; set; } = false;
     public bool MicroGesturesEnabled { get; set; } = true;
     public int MicroGestureCooldownSeconds { get; set; } = 22;
     public bool CoherenceGuardEnabled { get; set; } = true;
@@ -154,8 +164,8 @@ internal sealed class BridgeConfig
     public bool TestInputScriptEnabled { get; set; } = false;
     public string TestInputScriptFile { get; set; } = "";
     public float TestInputDelaySeconds { get; set; } = 5f;
-    public string AuxModel { get; set; } = "deepseek-v4-flash";
-    public string ReflectionModel { get; set; } = "deepseek-v4-flash";
+    public string AuxModel { get; set; } = DeepSeekModels.Flash;
+    public string ReflectionModel { get; set; } = DeepSeekModels.Flash;
     public int AuxMaxTokens { get; set; } = 180;
     public int ReflectionMaxTokens { get; set; } = 512;
     public bool ActionCapabilityEnabled { get; set; } = true;
@@ -163,6 +173,9 @@ internal sealed class BridgeConfig
     public int ActionSequenceMaxSteps { get; set; } = 8;
     public int ActionSequenceMaxTotalMs { get; set; } = 20000;
     public bool MemoryCompressionEnabled { get; set; } = true;
+    // Raw archive is authoritative. Auxiliary extracts never replace history.
+    // Old compression_enabled=true is not consent to lossy replacement.
+    public string HistoryCompactionMode { get; set; } = "retain_raw";
     public int MemoryCompressionThreshold { get; set; } = 120;
     public int MemoryCompressionKeep { get; set; } = 24;
     public bool MemoryDreamsEnabled { get; set; } = true;
@@ -211,6 +224,13 @@ internal sealed class BridgeConfig
     public int DesktopArrangeProposalInspectionIntervalSeconds { get; set; } = 3600;
     public bool DebugProactive { get; set; }
     public string DataDirectory { get; set; } = "";
+    public bool ContextRelevanceEnabled { get; set; } = false;
+    // Isolated first-packet candidate. Independent of C4; never adds a judge call.
+    public bool InitialExperienceEnabled { get; set; } = false;
+    public int InitialExperienceMaxUtf8Bytes { get; set; } = 262144;
+    // Inspection source packet ceiling; existing final-wire gate still measures actual provider bytes.
+    public int ContextRelevanceMaxUtf8Bytes { get; set; } = 262144;
+    public int ContextRelevanceTimeoutSeconds { get; set; } = 30;
     public bool SemanticRecallEnabled { get; set; } = false;
     public string SemanticPythonPath { get; set; } = "semantic-runtime/.venv/Scripts/python.exe";
     public string SemanticWorkerScript { get; set; } = "semantic-runtime/semantic_worker.py";
@@ -224,6 +244,12 @@ internal sealed class BridgeConfig
     public const int SemanticDefaultBudgetMs = 20000;
     public int SemanticQueryTimeoutMs { get; set; } = SemanticDefaultBudgetMs;
     public bool PromptDumpEnabled { get; set; } = false;
+    // Explicit local final-wire observation; off/manifest never persist plaintext.
+    // Independent of old provider response/thought dumps. No headers or credentials.
+    public string FinalOutboundObservationMode { get; set; } = "off";
+    // Optional application resource guard, disabled by default. This is not a
+    // tokenizer/model-window claim and never clips messages to fit a limit.
+    public int FinalOutboundMaxUtf8Bytes { get; set; } = 0;
     public int PreparationTimingTurns { get; set; } = 0;
     public bool ResponseObservationEnabled { get; set; } = false;
     /// <summary>
@@ -289,8 +315,19 @@ internal sealed class B1CapabilityOwner
     private readonly object _gate = new();
     private long _generation;
     private bool _enabled;
+    private long _readOnlyGeneration;
+    private bool _readOnlyEnabled;
+    private long _sharedReadOnlyGeneration;
+    private bool _sharedReadOnlyEnabled;
+    private long _reflectionGeneration;
+    private bool _reflectionEnabled;
+    private string _reflectionRoot = "";
+    private bool _reflectionStorageBlocked;
+    internal static bool ReflectionEnabled(BridgeConfig config) => Enabled(config) && config.ReflectionEnabled && config.B1ReflectionEnabled;
+    internal static bool SharedReadOnlyEnabled(BridgeConfig config) => Enabled(config) && config.SharedActivityEnabled && config.B1SharedActivityReadOnlyEnabled;
     internal static bool Enabled(BridgeConfig config) => config.B1ContinuityEnabled
         && config.LongTermMemoryEnabled && config.MemoryDerivedWriteEnabled && config.ExperienceArchiveEnabled;
+    internal static bool ReadOnlyEnabled(BridgeConfig config) => Enabled(config) && config.B1ProactiveReadOnlyEnabled;
     internal long Publish(BridgeConfig config)
     {
         lock (_gate)
@@ -298,23 +335,59 @@ internal sealed class B1CapabilityOwner
             bool enabled = Enabled(config);
             if (_enabled && !enabled) _generation++;
             _enabled = enabled;
+            bool readOnlyEnabled = ReadOnlyEnabled(config);
+            if (_readOnlyEnabled && !readOnlyEnabled) _readOnlyGeneration++;
+            _readOnlyEnabled = readOnlyEnabled;
+            config.B1ReadOnlyCapabilityGeneration = _readOnlyGeneration;
+            bool sharedEnabled = SharedReadOnlyEnabled(config);
+            if (_sharedReadOnlyEnabled && !sharedEnabled) _sharedReadOnlyGeneration++;
+            _sharedReadOnlyEnabled = sharedEnabled;
+            config.B1SharedReadOnlyCapabilityGeneration = _sharedReadOnlyGeneration;
+            bool reflectionEnabled = ReflectionEnabled(config);
+            _reflectionRoot = config.DataDirectory;
+            // A paused accepted journal must not regain authority after an
+            // observed disable/re-enable, even when no live controller owner exists.
+            if (!reflectionEnabled || _reflectionStorageBlocked)
+                _reflectionStorageBlocked = !MemoryStore.InvalidatePersistedB1Reflection(_reflectionRoot, "capability_revoked");
+            if (_reflectionEnabled && !reflectionEnabled) _reflectionGeneration++;
+            _reflectionEnabled = reflectionEnabled && !_reflectionStorageBlocked;
+            config.B1ReflectionCapabilityGeneration = _reflectionGeneration;
             return _generation;
         }
     }
     internal void Revoke()
     {
-        lock (_gate) { _enabled = false; _generation++; }
+        lock (_gate)
+        {
+            _enabled = false; _generation++;
+            _readOnlyEnabled = false; _readOnlyGeneration++;
+            _sharedReadOnlyEnabled = false; _sharedReadOnlyGeneration++;
+            _reflectionEnabled = false; _reflectionGeneration++;
+            _reflectionStorageBlocked = !MemoryStore.InvalidatePersistedB1Reflection(_reflectionRoot, "capability_owner_revoked");
+        }
     }
     internal bool Permits(long generation)
     {
         lock (_gate) return _enabled && generation == _generation;
+    }
+    internal bool ReadOnlyPermits(long generation)
+    {
+        lock (_gate) return _enabled && _readOnlyEnabled && generation == _readOnlyGeneration;
+    }
+    internal bool ReflectionPermits(long generation)
+    {
+        lock (_gate) return _enabled && _reflectionEnabled && generation == _reflectionGeneration;
+    }
+    internal bool SharedReadOnlyPermits(long generation)
+    {
+        lock (_gate) return _enabled && _sharedReadOnlyEnabled && generation == _sharedReadOnlyGeneration;
     }
     // A completed Refresh cannot race past the final derived transaction check.
     // This gate never encloses an HTTP call or changes generation parameters.
     internal T WithBoundary<T>(Func<T> action) { lock (_gate) return action(); }
 }
 
-internal static class ConfigStore
+internal static partial class ConfigStore
 {
     private static readonly object LoadLock = new();
     private static BridgeConfig? _cached;
@@ -326,6 +399,7 @@ internal static class ConfigStore
 
     private static BridgeConfig Publish(BridgeConfig config)
     {
+        RequestSendPermissions.Publish(config);
         string root = Path.GetFullPath(config.DataDirectory);
         if (!string.Equals(root, _b1CapabilityRoot, StringComparison.OrdinalIgnoreCase))
         {
@@ -412,6 +486,8 @@ internal static class ConfigStore
             if (!File.Exists(path)) return config;
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
             JsonElement root = doc.RootElement;
+            ReadOpenAISelection(config, root);
+            ReadChatGPTSelection(config, root);
             string? activeProvider = ReadString(root, "active_provider");
             if (!string.IsNullOrWhiteSpace(activeProvider)
                 && root.TryGetProperty("provider_profiles", out JsonElement profiles)
@@ -429,6 +505,12 @@ internal static class ConfigStore
             if (root.TryGetProperty("dialogue", out JsonElement dialogue) && dialogue.ValueKind == JsonValueKind.Object)
             {
                 config.DialogueThinkingMode = DialogueGeneration.Normalize(ReadString(dialogue, "thinking_mode"));
+                config.ExperimentalTemporaryExpressions = ReadBoolean(dialogue, "temporary_expressions_trial", false);
+                config.ExperimentalPublicStreamMessages = ReadBoolean(dialogue, "public_stream_messages_trial", false);
+                config.ExperimentalPublicFinalStream = ReadBoolean(dialogue,"public_final_stream_trial",false);
+                config.InitialExperienceEnabled = ReadBoolean(dialogue, "initial_experience_enabled", false);
+                if(dialogue.TryGetProperty("initial_experience_max_utf8_bytes",out var initialBudget)&&initialBudget.TryGetInt32(out int ib))
+                    config.InitialExperienceMaxUtf8Bytes=Math.Clamp(ib,4096,1048576);
                 if (dialogue.TryGetProperty("auto_thinking", out var automatic)
                     && automatic.ValueKind is JsonValueKind.True or JsonValueKind.False)
                     config.DialogueAutoThinkingEnabled = automatic.GetBoolean();
@@ -447,7 +529,13 @@ internal static class ConfigStore
             if (root.TryGetProperty("session_read_methods", out var methodConfig) && methodConfig.ValueKind == JsonValueKind.Object)
                 config.SessionReadMethodsEnabled = ReadBoolean(methodConfig, "enabled", false);
             if (root.TryGetProperty("b1", out JsonElement b1) && b1.ValueKind == JsonValueKind.Object)
+            {
                 config.B1ContinuityEnabled = ReadBoolean(b1, "enabled", false);
+                config.B1MaterialPresentation = ReadString(b1, "material_presentation") ?? config.B1MaterialPresentation;
+                config.B1ProactiveReadOnlyEnabled = ReadBoolean(b1, "proactive_read_only_enabled", false);
+                config.B1SharedActivityReadOnlyEnabled = ReadBoolean(b1, "shared_activity_read_only_enabled", false);
+                config.B1ReflectionEnabled = ReadBoolean(b1, "reflection_reconsideration_enabled", false);
+            }
             if (root.TryGetProperty("review_context", out JsonElement reviewContext)
                 && reviewContext.ValueKind == JsonValueKind.Object)
             {
@@ -508,6 +596,15 @@ internal static class ConfigStore
             {
                 if(promptTelemetry.TryGetProperty("preparation_timing_turns",out var timingTurns)&&timingTurns.ValueKind==JsonValueKind.Number&&timingTurns.TryGetInt32(out int parsedTimingTurns))
                     config.PreparationTimingTurns=Math.Clamp(parsedTimingTurns,0,5);
+                if (promptTelemetry.TryGetProperty("final_outbound", out var finalOutbound)
+                    && finalOutbound.ValueKind == JsonValueKind.Object)
+                {
+                    string mode = (ReadString(finalOutbound, "mode") ?? "off").Trim().ToLowerInvariant();
+                    config.FinalOutboundObservationMode = mode is "manifest" or "body" ? mode : "off";
+                    if (finalOutbound.TryGetProperty("max_utf8_bytes", out var finalLimit)
+                        && finalLimit.ValueKind == JsonValueKind.Number && finalLimit.TryGetInt32(out int limit))
+                        config.FinalOutboundMaxUtf8Bytes = limit <= 0 ? 0 : Math.Max(limit, 16384);
+                }
                 config.PromptDumpEnabled =
                     ReadBoolean(promptTelemetry, "prompt_dump_enabled", false);
                 config.ResponseObservationEnabled =
@@ -546,6 +643,11 @@ internal static class ConfigStore
             if (root.TryGetProperty("semantic_recall", out JsonElement semantic) && semantic.ValueKind == JsonValueKind.Object)
             {
                 config.SemanticRecallEnabled=ReadBoolean(semantic,"enabled",false);
+                config.ContextRelevanceEnabled=ReadBoolean(semantic,"context_relevance_enabled",false);
+                if(semantic.TryGetProperty("context_relevance_timeout_seconds",out var relevanceTimeout)&&relevanceTimeout.TryGetInt32(out int rt))
+                    config.ContextRelevanceTimeoutSeconds=Math.Clamp(rt,1,180);
+                if(semantic.TryGetProperty("context_relevance_max_utf8_bytes",out var relevanceBudget)&&relevanceBudget.TryGetInt32(out int rb))
+                    config.ContextRelevanceMaxUtf8Bytes=Math.Clamp(rb,16384,1048576);
                 foreach(string name in new[]{"python_path","worker_script","model_path","index_directory"})
                     if(semantic.TryGetProperty(name,out var pathValue)&&pathValue.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(pathValue.GetString()))
                     {
@@ -650,6 +752,8 @@ internal static class ConfigStore
                 }
                 config.MemoryCompressionEnabled =
                     ReadBoolean(memoryRoot, "compression_enabled", config.MemoryCompressionEnabled);
+                string historyMode = (ReadString(memoryRoot, "history_compaction_mode") ?? "retain_raw").Trim().ToLowerInvariant();
+                config.HistoryCompactionMode = historyMode == "auxiliary_extracts" ? historyMode : "retain_raw";
                 if (memoryRoot.TryGetProperty("compression_threshold", out JsonElement compressionThreshold)
                     && compressionThreshold.TryGetInt32(out int parsedCompressionThreshold))
                 {
@@ -992,6 +1096,7 @@ internal static class ConfigStore
                     ReadBoolean(story, "auto_recall_enabled", config.PreviousStoryAutoRecallEnabled);
                 config.StoryArchiveOnDemand =
                     ReadBoolean(story, "on_demand", config.StoryArchiveOnDemand);
+                config.StoryDataConsent = ReadBoolean(story, "allow_model_data", false);
                 config.PreviousStoryFile =
                     ReadString(story, "file") ?? config.PreviousStoryFile;
                 if (story.TryGetProperty("max_chars", out JsonElement storyMaxChars)
@@ -1024,6 +1129,9 @@ internal static class ConfigStore
         {
             // Fall back to defaults; the plugin should not fail because of config.
         }
+        RequestSendPermissions.CaptureProviderIdentity(config);
+        ApplyOpenAISelection(config);
+        ApplyChatGPTSelection(config);
         return config;
     }
 

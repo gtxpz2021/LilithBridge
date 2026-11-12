@@ -30,7 +30,7 @@ internal sealed partial class BridgeController
         string key=string.Join("|",_memory.SemanticDataRoot,_config.SemanticPythonPath,_config.SemanticWorkerScript,_config.SemanticModelPath,_config.SemanticIndexDirectory);
         if(!_config.SemanticRecallEnabled||key!=_semanticWorkerKey)
         {
-            if(_semanticWorker!=null){CancelReflectionPreparation("semantic_configuration_changed");if(_activeDialogue?.SemanticMaterial!=null)CancelPendingDialogue();_semanticWorker.Dispose();_semanticWorker=null;_memory.SemanticDiscovery=null;}
+            if(_semanticWorker!=null){InterruptSharedActivity();CancelReflectionPreparation("semantic_configuration_changed");if(_activeDialogue?.SemanticMaterial!=null)CancelPendingDialogue();_semanticWorker.Dispose();_semanticWorker=null;_memory.SemanticDiscovery=null;_memory.SemanticIndexCurrent=null;}
             _semanticWorkerKey=key;
             _semanticCreationAttempted=false;
         }
@@ -50,6 +50,11 @@ internal sealed partial class BridgeController
                 }
                 _semanticWorker=new(_config,_memory.SemanticDataRoot,SemanticWorkerTestMode);
                 _semanticWorker.Start(snapshot);_memory.SemanticDiscovery=_semanticWorker.DiscoverAsync;
+                var installed = _semanticWorker;
+                _memory.SemanticIndexCurrent = index => !_semanticDestroyed && _config.SemanticRecallEnabled
+                    && ReferenceEquals(installed, _semanticWorker) && installed.Ready
+                    && key == string.Join("|", _memory.SemanticDataRoot, _config.SemanticPythonPath, _config.SemanticWorkerScript, _config.SemanticModelPath, _config.SemanticIndexDirectory)
+                    && index.StartsWith(installed.Epoch + ":", StringComparison.Ordinal);
             }
             catch(Exception error){_semanticLastStatus="unavailable:"+error.GetType().Name;}
         }
@@ -57,7 +62,7 @@ internal sealed partial class BridgeController
         if(status!=_semanticLastStatus){_semanticLastStatus=status;NativeEventLog.Trace("semantic.state","mod","system","local semantic worker state",status);}
     }
     private void StopSemanticRuntime()
-    {CancelReflectionPreparation("shutdown");_semanticDestroyed=true;_memory.SemanticDiscovery=null;_memory.ReadMethods.Sync("",false);_semanticWorker?.Dispose();}
+    {InterruptSharedActivity();CancelReflectionPreparation("shutdown");_semanticDestroyed=true;_memory.SemanticDiscovery=null;_memory.SemanticIndexCurrent=null;_memory.ReadMethods.Sync("",false);_semanticWorker?.Dispose();}
 
     // Called before any request scope is opened. No using/Unity/MemoryStore
     // mutable object is carried into the worker task.
@@ -162,7 +167,7 @@ internal sealed partial class BridgeController
                             ||owner.B1CanWrite&&(owner.B1Packet==null||_memory.B1PacketPermitted(owner.B1Packet,query));
                         materialCurrent=_memory.SemanticMaterialCurrent(owner,query,current);
                     }
-                    if(materialCurrent&&b1Current){completion.TrySetResult(current);return;}
+                    if(materialCurrent&&b1Current){completion.TrySetResult(state.ApplyRecallSupplements(current,owner));return;}
                     // One completed refresh for this boundary, never a loop that
                     // retries until a moving source happens to pass.
                     if(state.RebasedAtBoundary(owner.HttpAttempts))throw new SemanticMaterialException("material_changed_after_one_refresh");
@@ -170,7 +175,7 @@ internal sealed partial class BridgeController
                     if(!_memory.SemanticMaterialCurrent(owner,query,fresh)||!_memory.SemanticProtocolPermitted(owner,query))
                         throw new SemanticMaterialException("material_changed_during_refresh");
                     if(owner.B1Participates)owner.DisableB1("materials_rebased");
-                    state.Accept(fresh,owner,"materials_rebased");completion.TrySetResult(fresh);
+                    state.Accept(fresh,owner,"materials_rebased");completion.TrySetResult(state.ApplyRecallSupplements(fresh,owner));
                 }
                 catch(OperationCanceledException){completion.TrySetCanceled(token.IsCancellationRequested?token:new CancellationToken(true));}
                 catch(Exception error){completion.TrySetException(error);}
@@ -188,7 +193,10 @@ internal sealed partial class BridgeController
         using var memoCapture=new NativeMemoCapture(enabled:config.MemoWriteEnabled&&config.MemoAnnotationEnabled);
         string context=ContextBuilder.Build(_memory,_sessionState,config,list=>recalled.AddRange(list),environment:SemanticEnvironmentForTests,
             allowReflectionChatProjection:true,recallQueryOverride:query,imageAttached:owner.Frame is {DataUrl.Length:>0},playerDirected:true,
-            requestHistory:history,includeVisionStatus:false,semanticRecall:owner.SemanticMaterial!.Result,semanticTrace:trace);
+            requestHistory:history,includeVisionStatus:false,semanticRecall:owner.SemanticMaterial!.Result,semanticTrace:trace,
+            sourceEnvelopeForRequest:owner.SourceEnvelope,onSceneBodyReferences:owner.BindSceneBodyReferences,
+            onContextBodySources:owner.BindContextSourceBodies,
+            onGeneratedReplyMaterial:material=>owner.BindGeneratedReplyMaterial(_memory,material,query,config));
         owner.MemoAnnotationTarget=memoCapture.Target;
         context+=Environment.NewLine+_sessionState.VisualSupply.Describe(_memory.GetRequestHistorySelection(config,history));
         if(!string.IsNullOrWhiteSpace(extra))context+=Environment.NewLine+"[程序自动观察] "+extra;

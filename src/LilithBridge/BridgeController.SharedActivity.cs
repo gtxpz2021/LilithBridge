@@ -16,7 +16,7 @@ internal sealed partial class BridgeController
     private bool SharedActivityNativeBusy => HasActiveNativeStoryForProactive() || _sessionState.PlayerOptionsShowing
         || NativeStateInspector.IsSleeping || _lastDrag || _leftDragging || ActionDirector.NativeBusy(_sessionState);
     private bool SharedActivityIdle => !_listening && !_inputField.IsOpen && !_historyWindow.IsOpen
-        && !_sharedWindow.IsEditing && !_requestPending && !_storyRecallInProgress && !_memoryRecallInProgress
+        && !_b1SelectionWindow.IsOpen && !_sharedWindow.IsEditing && !_requestPending && !_storyRecallInProgress && !_memoryRecallInProgress
         && !_annotationInProgress && !_noteSupplementInProgress && !_reflectionInProgress && !_dayTaskInProgress
         && System.Threading.Volatile.Read(ref _sharedActivityAuxRequests) == 0
         && !_aiSpeechActive && _queuedReply == null && !NativeBubblePresenter.HasPendingReply && !SharedActivityNativeBusy;
@@ -24,7 +24,7 @@ internal sealed partial class BridgeController
         new SharedActivityStore(Path.Combine(DataPaths.Root(), "shared-activity")));
     private void OpenSharedActivity()
     {
-        if (!_config.SharedActivityEnabled || SharedActivityNativeBusy) return;
+        if (!_config.SharedActivityEnabled || SharedActivityNativeBusy || _b1SelectionWindow.IsOpen) return;
         try
         {
             SharedRuntime.SetEnabled(true);
@@ -79,7 +79,8 @@ internal sealed partial class BridgeController
             var attempt = _sharedWaitingAttempt; var response = _sharedWaitingResponse!;
             _sharedWaitingAttempt = null; _sharedWaitingResponse = null;
             if (response.Raw == null) _sharedActivity.Fail(attempt, response.Error);
-            else _sharedActivity.Commit(attempt, response.Raw, DateTimeOffset.UtcNow, Time.unscaledTime);
+            else _sharedActivity.Commit(attempt, response.Raw, DateTimeOffset.UtcNow, Time.unscaledTime,
+                response.Understanding == null ? null : response.Understanding.Permitted, response.SelectionSnapshot);
             _sharedWindow.Render();
         }
         var next = _sharedActivity.TryBegin(Time.unscaledTime, _conversationGeneration,
@@ -88,7 +89,7 @@ internal sealed partial class BridgeController
         BridgeConfig config = _config;
         Task.Run(async () =>
         {
-            var response = await _client.SendSharedActivityAsync(config, _sharedActivity, next).ConfigureAwait(false);
+            var response = await _client.SendSharedActivityAsync(config, _sharedActivity, next, _memory).ConfigureAwait(false);
             _mainThread.Enqueue(() =>
             {
                 if (!_sharedActivity.IsCurrent(next)) return;

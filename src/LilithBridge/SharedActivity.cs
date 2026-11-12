@@ -39,7 +39,11 @@ internal sealed class SharedActivityDocument
 
 internal sealed record SharedAttempt(string Id, string Session, long Generation, SharedObjectSnapshot Snapshot,
     long ViewVersion, int ArtifactVersion, string Mode, SharedPast[] Past, CancellationToken Token,
-    SharedArtifact? Artifact = null, SharedFocus? Focus = null);
+    SharedArtifact? Artifact = null, SharedFocus? Focus = null)
+{
+    // Semantic preparation budget starts at the real opportunity, not a retry.
+    internal DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+}
 
 // Every source adapter must independently validate original read/mention/scope permissions.
 // The first UI adapter only creates explicit standalone text; imported sources fail closed by default.
@@ -196,11 +200,31 @@ internal sealed class SharedActivityRuntime
     public bool IsCurrent(SharedAttempt a) { lock (_gate) return ValidLocked(a); }
     // Dispatch begins under the same gate used by withdrawal. There is no validate/dispatch gap.
     public bool TryDispatch(SharedAttempt a, Func<bool> dispatch) { lock (_gate) return ValidLocked(a) && dispatch(); }
-    public bool Commit(SharedAttempt attempt, string raw, DateTimeOffset now, double clock)
+    public bool Commit(SharedAttempt attempt, string raw, DateTimeOffset now, double clock,
+        Func<bool>? understandingPermitted = null, B1SelectionSnapshot? selectionSnapshot = null)
+    {
+        // Shared gate precedes the memory/control gate, matching request dispatch.
+        lock (_gate)
+        {
+            bool Apply() => CommitCore(attempt, raw, now, clock, understandingPermitted);
+            if (selectionSnapshot == null) return Apply();
+            bool committed = false;
+            bool current = selectionSnapshot.Store.TryUseB1SelectionSnapshot(selectionSnapshot,
+                () => { committed = Apply(); return true; });
+            if (!current) { _status = "selection_changed"; CancelLocked(); }
+            return current && committed;
+        }
+    }
+
+    private bool CommitCore(SharedAttempt attempt, string raw, DateTimeOffset now, double clock, Func<bool>? understandingPermitted)
     {
         lock (_gate)
         {
             if (!ValidLocked(attempt) || _doc.SettledAttempts.Contains(attempt.Id)) return false;
+            // Shared gate precedes memory checks, matching dispatch. This does not
+            // create a persistent dependency or change later withdrawal policy.
+            if (understandingPermitted?.Invoke() == false)
+            { _status = "未执行：参考理解已失效"; CancelLocked(); return false; }
             if (!SharedActivityProtocol.TryParse(raw, attempt, out var choice, out var error))
             { _status = "未执行：" + error; CancelLocked(); return false; }
             if (choice!.Operation != null && ((_doc.Artifact?.Version ?? 0) != attempt.ArtifactVersion
@@ -228,7 +252,13 @@ internal sealed class SharedActivityRuntime
     {
         lock (_gate) { if (!_open || _doc.ViewVersion != viewVersion || _doc.Receipts.Count == 0) return;
             var next = Clone(_doc); var last = next.Receipts[^1];
-            if (last.DisplayedAt != null) return; next.Receipts[^1] = last with { DisplayedAt = now };
+            // A view of a replacement, an undo, or a scheduling-only choice is
+            // not evidence that the prior composite result appeared.
+            if (last.DisplayedAt != null || last.Outcome != "committed"
+                || last.RequestedEffect.Decision != "participate" || _doc.Object == null
+                || last.Snapshot.ObjectId != _doc.Object.ObjectId || last.Snapshot.Revision != _doc.Object.Revision
+                || last.CommittedArtifactVersion != (_doc.Artifact?.Version ?? 0)) return;
+            next.Receipts[^1] = last with { DisplayedAt = now };
             if (Save(next)) _doc = next; }
     }
     private bool Save(SharedActivityDocument next) { if (_store.TrySave(next)) return true; _status = "保存失败，未提交"; return false; }

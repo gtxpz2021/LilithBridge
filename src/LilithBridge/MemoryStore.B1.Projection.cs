@@ -17,31 +17,77 @@ internal sealed partial class MemoryStore
       "可能", "需要", "不能", "可以", "已经", "看到", "看见", "如果", "但是", "因为", "所以", "目前", "现在",
       "仍然", "是否", "不是", "并不", "不足", "认为", "说明", "证据", "线索", "情况", "问题", "状态", "记录" };
     private B1Packet CaptureB1View(DialogueRequest request, string query, IEnumerable<MemoryTurn> footprint)
+        => CaptureB1View(request.Id, request.UserEventId, request.SemanticMaterial?.Result, query, footprint);
+
+    // The ordinary dialogue wrapper supplies the same three scalar values. The
+    // read-only caller has no current input, owner, result slot or write contract.
+    private B1Packet CaptureB1View(string requestId, string userEventId, SemanticRecallResult? semantic,
+        string query, IEnumerable<MemoryTurn> footprint, bool proactiveReadOnly = false, BridgeConfig? config = null, bool includeHistoricalProposals = true, B1ReadQueryPurpose readQueryPurpose = B1ReadQueryPurpose.HistoricalQuery)
     {
         lock (_experienceLock)
         {
-            using var mention = BeginMentionRequest(query);
-            using var native = BeginNativeDialogueRequest(query, true);
+            // Only the host shared-object reader treats quotations as document content.
+            // Identifiers, relevance, source qualification and full raw query stay unchanged.
+            bool MatchScope(B1Entry entry) => SemanticB1QueryScope(query, entry,
+                requireLiteralQuotes: !proactiveReadOnly || readQueryPurpose != B1ReadQueryPurpose.SharedObjectContent);
+            using var mention = BeginMentionRequest(query, !proactiveReadOnly);
+            using var native = BeginNativeDialogueRequest(query, !proactiveReadOnly, config);
             BeginB1Read();
-            var doc = LoadB1();
+            var doc = proactiveReadOnly ? ReadB1Storage(initializeMissing: false) : LoadB1();
             var supplied = footprint.Where(t => t.EventId.Length > 0).GroupBy(t => t.EventId).Select(g => g.First()).ToList();
-            var permissions = supplied.Select(t => new B1Ref(B1Kind(t), t.EventId, B1Hash(t.Text), "permission")).ToList();
-            if (doc == null) return new() { Id = request.Id + "/b1", UserEventId = request.UserEventId,
+            var permissions = proactiveReadOnly ? new List<B1Ref>()
+                : supplied.Select(t => new B1Ref(B1Kind(t), t.EventId, B1Hash(t.Text), "permission")).ToList();
+            if (doc == null) return new() { ReadQueryPurpose = readQueryPurpose, Id = requestId + "/b1", UserEventId = userEventId,
                 Availability = "unavailable", Diagnostic = B1StorageStatus, Footprint = permissions };
             // Exact supply is known; a deictic object is not. Recency and
             // invitation wording never manufacture semantic object bindings.
             var focus = new List<B1Ref>();
-            const string focusStatus = "model_declared_about_required";
+            string focusStatus = proactiveReadOnly ? "historical_material_only_not_current_interest"
+                : "model_declared_about_required";
             var materials = new List<B1Material>();
             var omitted = new List<B1Omission>();
             var priority = new Dictionary<string, int>(StringComparer.Ordinal);
-            var publicGroups = new Dictionary<string, string>(StringComparer.Ordinal);
+            void RegisterReplyRuns(MemoryTurn root, IReadOnlyList<MemoryTurn> qualified)
+            {
+                if (root.SessionId.Length == 0) return;
+                // Reuse the proven request/chunk/session/origin projection, then
+                // require adjacent archive sequence numbers as well. A gap,
+                // unknown identity, or filtered record never becomes a whole reply.
+                var rootRef = new B1Ref("utterance", root.EventId, B1Hash(root.Text), "history");
+                var sameExchange = qualified.Where(t => t.SessionId == root.SessionId && t.SourceEventId == root.EventId).ToList();
+                foreach (var projected in HistoryProjection.Build(sameExchange, int.MaxValue, true, false).Turns)
+                {
+                    var run = new List<MemoryTurn>();
+                    void Publish()
+                    {
+                        if (run.Count < 2) return;
+                        var first = new B1Ref("utterance", run[0].EventId, B1Hash(run[0].Text), "history");
+                        foreach (var fragment in run)
+                        {
+                            string key = "utterance:" + fragment.EventId;
+                            int at = materials.FindIndex(m => m.Ref.Key == key);
+                            if (at < 0) continue;
+                            materials[at] = materials[at] with { ReplyRunFirst = first, ReplyRoot = rootRef };
+                        }
+                    }
+                    foreach (var fragment in projected.Records)
+                    {
+                        if (run.Count > 0 && fragment.Sequence != run[^1].Sequence + 1)
+                        { Publish(); run.Clear(); }
+                        run.Add(fragment);
+                    }
+                    Publish();
+                }
+            }
             var readingRoots = new List<B1Ref>();
             bool Add(B1Ref reference, string role = "context", bool quiet = false, B1Ref? discovery = null, int? order = null)
             {
                 if (reference.Kind == "b1" && B1ManagementState(doc, reference.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted")
                 { if (!quiet) omitted.Add(new(reference, "managed_not_for_automatic_supply")); return false; }
+                if (proactiveReadOnly) reference = reference with { Purpose = "history" };
                 var resolved = ResolveB1(reference, doc, new());
+                if (proactiveReadOnly && resolved.Found && !B1ReadOnlyMaterialAllowed(resolved.Material!))
+                    resolved = new(false, "permission_denied");
                 if (!resolved.Found && reference.Purpose == "current")
                     resolved = ResolveB1(reference with { Purpose = "history" }, doc, new());
                 if (!resolved.Found) { if (!quiet) omitted.Add(new(reference, resolved.Reason)); return false; }
@@ -79,20 +125,21 @@ internal sealed partial class MemoryStore
                     materials[at] = materials[at] with { Relation = recorded ? "user_reported_source_correction"
                         : exact ? "literal_full_source_correction" : "possible_later_wording_unbound",
                         Target = exact ? "utterance:" + oldEvent : "",
-                        DependencyRole=exact ? "later_user_correction" : "later_user_wording_candidate" };
+                        DependencyRole=exact ? "later_user_correction" : "later_user_wording_candidate",
+                        ReadOnlyCorrectionRoot = proactiveReadOnly ? oldEvent : "" };
                 }
                 if(changes.Count>4&&!omitted.Any(o=>o.Ref.Version==changes[4]))
                     omitted.Add(new(new("utterance",changes[4],"","history"),"older_related_changes_not_expanded;count="+(changes.Count-4)));
             }
-            Add(new("utterance", request.UserEventId, ""), "input", true);
+            if (!proactiveReadOnly) Add(new("utterance", userEventId, ""), "input", true);
             // Reserve user roots before assistant bubble fragments. A long reply
             // cannot crowd the actual scene description out of the choice set.
-            var recentRoots = supplied.Where(t => t.EventId != request.UserEventId && t.Role == "user"
+            var recentRoots = supplied.Where(t => t.EventId != userEventId && t.Role == "user"
                 && t.Origin == "user" && t.DeliveryState == "received").TakeLast(2).ToList();
-            var semantic=request.SemanticMaterial?.Result;
-            var rawDiscovery = GetB1ExperienceDiscovery(query, request.UserEventId, 2,semantic);
+            var rawDiscovery = proactiveReadOnly && string.IsNullOrWhiteSpace(query)
+                ? Array.Empty<MemoryTurn>() : GetB1ExperienceDiscovery(query, userEventId, 2, semantic);
             if (rawDiscovery.Count == 0)
-                rawDiscovery = B1ShownDiscoveryFallback(query, request.UserEventId, supplied);
+                rawDiscovery = B1ShownDiscoveryFallback(query, userEventId, supplied);
             // Recent chat is already present in the host messages. On an actual
             // archive recall, reserve this finite view for complete old exchanges
             // before duplicating current-session roots and bubble fragments.
@@ -115,31 +162,66 @@ internal sealed partial class MemoryStore
                     int overlap = terms.Count(tokens.Contains), objectOverlap = terms.Count(objects.Contains);
                     double textScore = overlap / (double)Math.Max(1, Math.Min(terms.Count, tokens.Count));
                     double objectScore = objectOverlap / (double)Math.Max(1, Math.Min(terms.Count, objects.Count));
+                    var meaning = _b1MeaningSearchIndex[e.Version];
+                    int meaningOverlap = terms.Count(meaning.Contains);
+                    double meaningScore = meaningOverlap / (double)Math.Max(1, Math.Min(terms.Count, meaning.Count));
+                    // Conditions describe a thought, not a proved current situation.
+                    // Use the existing relevance floor and exact query constraints;
+                    // do not lower old body scores or expand footprint-source hints.
+                    bool meaningDiscovered = e.Conditions.Length > 0
+                        && meaningScore >= MemorySemantics.MinRecallSimilarity
+                        && (meaningOverlap >= MemorySemantics.MinRecallOverlap || meaningScore >= 0.5)
+                        && MatchScope(e);
                     bool corroborated = terms.Any(t => t.Length >= 2 && !B1WeakSearchTokens.Contains(t)
                         && tokens.Contains(t) && objects.Contains(t));
                     var hint = _b1DiscoveryIndex[e.Version]
                         .Select(h => (h.Ref, Overlap:terms.Count(t => h.Tokens.Contains(t) && B1DiscoveryContent(t))))
                         .OrderByDescending(h => h.Overlap).FirstOrDefault();
                     bool discovered = hint.Overlap > 0;
-                    return (Entry:e, Score:Math.Max(Math.Max(textScore, objectScore), corroborated || discovered ? MemorySemantics.MinRecallSimilarity : 0),
-                        Overlap:Math.Max(overlap, objectOverlap), Corroborated:corroborated || discovered,
+                    return (Entry:e, Score:Math.Max(Math.Max(Math.Max(textScore, objectScore),
+                            corroborated || discovered ? MemorySemantics.MinRecallSimilarity : 0), meaningDiscovered ? meaningScore : 0),
+                        Overlap:Math.Max(Math.Max(overlap, objectOverlap), meaningDiscovered ? meaningOverlap : 0), Corroborated:corroborated || discovered,
                         Discovery:discovered ? hint.Ref : null); })
                 .Where(x => x.Score >= MemorySemantics.MinRecallSimilarity
                     && (x.Corroborated || x.Overlap >= MemorySemantics.MinRecallOverlap || x.Score >= 0.5)).OrderByDescending(x => x.Score)
                 .ThenByDescending(x => doc.Current.GetValueOrDefault(x.Entry.LogicalId) == x.Entry.Version)
                 .ThenByDescending(x => x.Entry.At).ToList();
-            var typed=SemanticResultMatches(query,semantic,SemanticDomain.B1)&&semantic!.QueryId==request.Id
+            var typed=SemanticResultMatches(query,semantic,SemanticDomain.B1)&&semantic!.QueryId==requestId
                 ? semantic.Candidates.Where(c=>c.Kind=="b1").OrderByDescending(c=>c.Score)
                     .Select(c=>doc.Entries.FirstOrDefault(e=>e.Version==c.EventId
-                        && c.Version==e.Revision.ToString()&&c.TextHash==SemanticTextHash(e.Text+" "+e.Scope)
+                        && c.Version==e.Revision.ToString()&&c.TextHash==SemanticTextHash(B1DiscoveryText(e))
                         && B1ManagementState(doc,e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")
-                        && SemanticB1QueryScope(query,e)))
+                        && MatchScope(e)))
                     .Where(e=>e!=null).Cast<B1Entry>()
                     .Select(e=>(Entry:e,Score:0d,Overlap:0,Corroborated:false,Discovery:(B1Ref?)null)).ToList()
                 : ranked.Take(0).ToList();
             // Separate ranks, bounded union by immutable version identity. Typed
             // hits enter before lexical rejection; ResolveB1 still owns bodies.
-            ranked=ranked.Take(1).Concat(typed.Take(8)).Concat(ranked.Skip(1))
+            string relatedSeed = "";
+            if (proactiveReadOnly)
+            {
+                // The query lane keeps the ordinary lexical rank and exact query
+                // constraints. Eligibility is resolved under the actual false
+                // player-directed permission scope, never an empty-query scope.
+                // Keep the existing one-family supply budget. Separate ranks compete
+                // before permission filtering; vector scores never become lexical scores.
+                var related = ranked.Take(1).Concat(typed.Take(8)).Concat(ranked.Skip(1))
+                    .DistinctBy(c => c.Entry.Version).Where(c => MatchScope(c.Entry))
+                    .Where(c => { var r = ResolveB1(new("b1", c.Entry.Version, "", "history"), doc, new());
+                        return r.Found && B1ReadOnlyMaterialAllowed(r.Material!); }).Take(1).ToList();
+                relatedSeed = related.FirstOrDefault().Entry?.Version ?? "";
+                // One historical idea/question lane, not inferred current desire.
+                // Hash ordering is request-local and has no durable exposure state.
+                var proposals = doc.Entries.Where(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
+                        && e.Nature is "inference" or "hypothesis" or "question"
+                        && B1ManagementState(doc, e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted"))
+                    .OrderBy(e => B1Hash(requestId + "\n" + e.Version), StringComparer.Ordinal)
+                    .ThenBy(e => e.Version, StringComparer.Ordinal)
+                    .Select(e => (Entry:e, Score:0d, Overlap:0, Corroborated:false, Discovery:(B1Ref?)null));
+                ranked = related.Concat(includeHistoricalProposals ? proposals : proposals.Take(0))
+                    .DistinctBy(c => c.Entry.Version).Take(24).ToList();
+            }
+            else ranked=ranked.Take(1).Concat(typed.Take(8)).Concat(ranked.Skip(1))
                 .DistinctBy(x=>x.Entry.Version).Take(24).ToList();
             PreparationTiming.Current?.Value("semantic_b1_candidates",typed.Count);
             PreparationTiming.Current?.Value("semantic_b1_rejected",Math.Max(0,(semantic?.Candidates.Count(c=>c.Kind=="b1")??0)-typed.Count));
@@ -150,6 +232,9 @@ internal sealed partial class MemoryStore
                 if (selectedFamily.Contains(seed.Version)) continue;
                 var seedResolution = ResolveB1(new("b1", seed.Version, "", "history"), doc, new());
                 if (!seedResolution.Found) { omitted.Add(new(new("b1", seed.Version, ""), seedResolution.Reason)); continue; }
+                if (proactiveReadOnly && !B1ReadOnlyMaterialAllowed(seedResolution.Material!)) continue;
+                string familyRole = !proactiveReadOnly ? "context"
+                    : seed.Version == relatedSeed ? "opportunity_related_history" : "historical_proposal";
                 anyFound = true;
                 // Directional links are an index over existing immutable events.
                 // Read selection never summarizes or invents a new historical event.
@@ -182,9 +267,9 @@ internal sealed partial class MemoryStore
                     Add(candidate.Discovery with { Purpose = "history" }, "original_utterance_candidate");
                     AddCorrections(candidate.Discovery.Version);
                 }
-                foreach (var e in selected) Add(new("b1", e.Version, ""), discovery: candidate.Discovery);
+                foreach (var e in selected) Add(new("b1", e.Version, ""), familyRole, discovery: candidate.Discovery);
                 foreach (var e in selected.Take(3))
-                    if (e.Target.StartsWith("b1:", StringComparison.Ordinal)) Add(new("b1", e.Target[3..], "", "history"), quiet: true);
+                    if (e.Target.StartsWith("b1:", StringComparison.Ordinal)) Add(new("b1", e.Target[3..], "", "history"), familyRole, quiet: true);
                 var sourceOwners = selected.Concat(selected.Take(3).Where(e => e.Target.StartsWith("b1:", StringComparison.Ordinal))
                         .Select(e => FindB1(doc, e.Target[3..])).Where(e => e != null).Cast<B1Entry>())
                     .GroupBy(e => e.Version).Select(g => g.First());
@@ -205,9 +290,9 @@ internal sealed partial class MemoryStore
                 }
                 foreach (var e in events.Where(e => !materials.Any(m => m.Ref.Kind == "b1" && m.Ref.Version == e.Version)))
                     omitted.Add(new(new("b1", e.Version, "", "history"), "history_not_expanded"));
-                if (++families >= 2) break;
+                if (++families >= (proactiveReadOnly && relatedSeed.Length == 0 ? 1 : 2)) break;
             }
-            var lateWords = B1LateRelatedWords(readingRoots, query, request.UserEventId, doc);
+            var lateWords = B1LateRelatedWords(readingRoots, query, userEventId, doc);
             foreach (var later in lateWords)
             {
                 var reference = new B1Ref("utterance", later.Turn.EventId, B1Hash(later.Turn.Text), "history");
@@ -221,10 +306,12 @@ internal sealed partial class MemoryStore
                 var group = B1OriginalPublicReply(original)
                     .Where(t => !queryRestricted || B1QueryAllowsWord(t, query))
                     .Where(t => !materials.Any(m => m.Ref.Key == "utterance:" + t.EventId)).ToList();
+                var qualified = new List<MemoryTurn>();
                 foreach (var fragment in group)
                     if (Add(new("utterance", fragment.EventId, B1Hash(fragment.Text), "history"), role,
                         discovery: new("utterance", original.EventId, B1Hash(original.Text), "history")))
-                        publicGroups["utterance:" + fragment.EventId] = "utterance:" + original.EventId;
+                        qualified.Add(fragment);
+                RegisterReplyRuns(original, qualified);
             }
             foreach (var later in lateWords) AddPublicReply(later.Turn, "late_public_reply", true);
             // Historical public replies are separate immutable display records,
@@ -245,8 +332,9 @@ internal sealed partial class MemoryStore
                 {
                     string key = B1Kind(fragment) + ":" + fragment.EventId;
                     if (priority.TryGetValue(key, out int rank) && rank == 60)
-                    { priority[key] = 90; publicGroups[key] = "utterance:" + root.EventId; }
+                    { priority[key] = 90; }
                 }
+                RegisterReplyRuns(root, reply.Where(t => materials.Any(m => m.Ref.Key == B1Kind(t) + ":" + t.EventId)).ToList());
             }
             foreach (var neighbor in B1RelatedExchangeWords(permittedDiscovery))
                 Add(new("utterance", neighbor.EventId, B1Hash(neighbor.Text), "history"), "related_exchange_user_wording_unbound");
@@ -256,55 +344,24 @@ internal sealed partial class MemoryStore
             // supplied and never enter the final permission footprint by search.
             var plan = materials.Select((material, index) => (material, index))
                 .OrderBy(x => priority[x.material.Ref.Key]).ThenBy(x => x.index).Select(x => x.material).ToList();
-            materials.Clear(); var visited = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var item in plan)
-            {
-                if (!visited.Add(item.Ref.Key)) continue;
-                var unit = publicGroups.TryGetValue(item.Ref.Key, out string? group)
-                    ? plan.Where(m => publicGroups.GetValueOrDefault(m.Ref.Key) == group).ToList() : new() { item };
-                foreach (var m in unit) visited.Add(m.Ref.Key);
-                if (group != null && !materials.Any(m => m.Ref.Key == group))
-                {
-                    omitted.Add(new(new("utterance", group["utterance:".Length..], "", "history"), "public_reply_source_not_supplied"));
-                    continue;
-                }
-                if (materials.Count + unit.Count > B1Continuity.MaxMaterials
-                    || materials.Sum(m => m.Text.Length) + unit.Sum(m => m.Text.Length) > B1Continuity.MaxPacketChars)
-                {
-                    omitted.Add(new(group == null ? item.Ref : new("utterance", group["utterance:".Length..], "", "history"),
-                        group == null ? "body_budget" : "historical_public_reply_group_not_expanded"));
-                    continue;
-                }
-                materials.AddRange(unit);
-            }
-            permissions.AddRange(materials.Select(m => m.Ref with { Purpose = "permission" }));
-            var packet = new B1Packet { Id = request.Id + "/b1", UserEventId = request.UserEventId, Materials = materials,
+            materials.Clear();
+            var packet = new B1Packet { ReadQueryPurpose = readQueryPurpose, Id = requestId + "/b1", UserEventId = userEventId, Materials = materials,
                 SemanticAnchors = focus, FocusStatus = focusStatus, Footprint = permissions.Distinct().ToList(),
                 Omissions = omitted.Distinct().ToList(), SearchCandidates = ranked.Count,
-                SuppliedChars = materials.Sum(m => m.Text.Length), SearchMode = "lexical_and_typed_entry_with_related_current_view",
+                SuppliedChars = materials.Sum(m => m.Text.Length), SearchMode = proactiveReadOnly
+                    ? "opportunity_related_history_and_request_local_historical_proposal"
+                    : "lexical_and_typed_entry_with_related_current_view",
                 Diagnostic = ranked.Count == 0 ? permittedDiscovery.Count > 0 ? "source_view_selected" : "not_found"
                     : anyFound ? "view_selected" : "qualification_restricted" };
             if(packet.Diagnostic=="not_found"&&semantic!=null&&(semantic.Unavailable.Length>0||!semantic.IndexComplete))
                 packet.Diagnostic="discovery_incomplete";
-            B1Continuity.AssignShortRefs(packet);
-            // Byte budget counts the actual outgoing semantic projection.
-            while (Encoding.UTF8.GetByteCount(B1Continuity.Render(packet)) > B1Continuity.MaxPacketUtf8Bytes && materials.Count > 0)
-            {
-                var removed = materials[^1];
-                if (publicGroups.TryGetValue(removed.Ref.Key, out string? group))
-                {
-                    foreach (var member in materials.Where(m => publicGroups.GetValueOrDefault(m.Ref.Key) == group).ToList())
-                    { materials.Remove(member); packet.Omissions.Add(new(member.Ref, "utf8_budget")); }
-                }
-                else { materials.RemoveAt(materials.Count - 1); packet.Omissions.Add(new(removed.Ref, "utf8_budget")); }
-                B1Continuity.AssignShortRefs(packet);
-            }
-            packet.SuppliedChars = materials.Sum(m => m.Text.Length);
+            B1ProjectionBudget.Select(packet, plan, proactiveReadOnly);
             PreparationTiming.Current?.Value("semantic_b1_supplied",materials.Count(m=>m.Ref.Kind=="b1"));
-            if (packet.Omissions.Any(o => o.Reason is "body_budget" or "utf8_budget" or "historical_public_reply_group_not_expanded")) packet.Diagnostic = "view_partial_budget";
             packet.Footprint.Clear();
-            packet.Footprint.AddRange(supplied.Select(t => new B1Ref(B1Kind(t), t.EventId, B1Hash(t.Text), "permission"))
+            packet.Footprint.AddRange((proactiveReadOnly ? Enumerable.Empty<B1Ref>()
+                    : supplied.Select(t => new B1Ref(B1Kind(t), t.EventId, B1Hash(t.Text), "permission")))
                 .Concat(materials.Select(m => m.Ref with { Purpose = "permission" })).Distinct());
+            B1ProjectionBudget.Trace(packet);
             return packet;
         }
     }

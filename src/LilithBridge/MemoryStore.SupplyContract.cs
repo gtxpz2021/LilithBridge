@@ -26,14 +26,15 @@ internal sealed partial class MemoryStore
         && !turn.SourceEventIds.Contains(c.SourceEventId)
         && c.SourceEventIds.Any(id => id != c.SourceEventId && turn.SourceEventIds.Contains(id)));
 
-    internal MaterialSupplyAssessment AssessMaterialSupply(MemoryTurn turn)
+    internal MaterialSupplyAssessment AssessMaterialSupply(MemoryTurn turn) => AssessMaterialSupply(turn, null);
+    private MaterialSupplyAssessment AssessMaterialSupply(MemoryTurn turn, Func<MemoryTurn, bool>? isCurrent)
     {
         bool derived = turn.Kind.StartsWith("reflection.", StringComparison.Ordinal)
             || turn.Kind is DayConsolidationKind or DayDreamKind;
         string reason = !IsMentionAllowed(turn) ? "mention_restricted"
             : !IsActiveLifecycle(turn) ? "lifecycle_" + turn.LifecycleState
             : derived && HasUnincorporatedCorrection(turn) ? "source_corrected"
-            : derived && !IsCurrentInterpretationBasis(turn) ? "basis_retired"
+            : derived && !(isCurrent ?? CreateCurrentBasisEvaluator())(turn) ? "basis_retired"
             : !derived && turn.DeliveryState is not ("received" or "delivered") ? "delivery_unconfirmed"
             : "current";
         return new(turn.EventId, turn.Kind, turn.Origin, turn.Revision, turn.LifecycleState,
@@ -53,12 +54,18 @@ internal sealed partial class MemoryStore
     private Func<MemoryTurn, bool> CreateCurrentBasisEvaluator(HashSet<string>? rawIds = null,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
     {
-        var raw = rawIds ?? ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        // Boolean source membership borrows the store's immutable archive
+        // index. A caller-supplied set remains authoritative; no turn escapes.
+        var archive = rawIds == null ? GetExperienceValidationView() : null;
+        var denied = archive == null ? null : SuppressedExperienceIds();
+        bool requireUnique = _b1BorrowedArchive != null;
+        bool RawContains(string id) => rawIds != null ? rawIds.Contains(id)
+            : !denied!.Contains(id) && (requireUnique ? archive!.TryGetUnique(id, out _) : archive!.ContainsId(id));
         var notes = ReflectionNoteView(restoredNotes).GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var days = _dreams.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var visiting = new HashSet<string>(StringComparer.Ordinal);
         var memo = new Dictionary<string, bool>(StringComparer.Ordinal);
-        var materialPermitted = CreateMaterialPermissionEvaluator();
+        var materialPermitted = CreateMaterialPermissionEvaluator(borrowArchive:_b1BorrowedArchive!=null);
         bool Visit(MemoryTurn t)
         {
             // A day product is current only under the rule its own consumer applies:
@@ -70,7 +77,7 @@ internal sealed partial class MemoryStore
             if ((t.Kind is DayConsolidationKind or DayDreamKind)
                 && !IsDayArtifactCurrent(t, materialPermitted, restoredNotes)) return false;
             if (!(IsActiveLifecycle(t) || IsSettledLifecycle(t)) || HasUnincorporatedCorrection(t)
-                || !IsMentionAllowed(t) || t.SourceEventIds.Length == 0 || !t.SourceEventIds.All(raw.Contains)) return false;
+                || !IsMentionAllowed(t) || t.SourceEventIds.Length == 0 || !t.SourceEventIds.All(RawContains)) return false;
             if (memo.TryGetValue(t.EventId, out bool known)) return known;
             if (!visiting.Add(t.EventId)) return false;
             bool current = t.SourceNoteIds.All(id => notes.TryGetValue(id, out var n) && Visit(n))
@@ -88,10 +95,13 @@ internal sealed partial class MemoryStore
     // withdrawal (suppress/delete) and purged records are, and the consequence follows
     // recorded material identities, so a withdrawn footprint cannot be re-read through a
     // record that itself only saw it as context.
-    private Func<DaySourceDependency, bool> CreateMaterialPermissionEvaluator()
+    private Func<DaySourceDependency, bool> CreateMaterialPermissionEvaluator(bool borrowArchive = false)
     {
         var suppressed = SuppressedExperienceIds();
-        var raw = ReadExperiences(true).ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        var archive=GetExperienceValidationView();
+        // The old detached ToDictionary rejected ANY duplicate archive id,
+        // even if the requested dependency was unrelated. Keep that boundary.
+        if(archive.HasAmbiguousEventIds)throw new ArgumentException("Ambiguous experience event ids");
         var notes = _reflectionNotes.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var lessons = _reflectionLessons.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var readings = _relationshipReadings.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
@@ -106,7 +116,7 @@ internal sealed partial class MemoryStore
             if (!visiting.Add(key)) return false;
             bool permitted;
             if (kind == "utterance")
-                permitted = raw.ContainsKey(id) && !suppressed.Contains(id);
+                permitted = archive.TryGetUnique(id,out _) && !suppressed.Contains(id);
             else if (kind == "note")
                 permitted = notes.TryGetValue(id, out var note) && note != null
                     && DerivedPermitted(note, suppressed, Material, recurseFootprint: false);
@@ -155,7 +165,7 @@ internal sealed partial class MemoryStore
     {
         var captured = new HashSet<DaySourceDependency>();
         footprint = captured;
-        var raw = ReadExperiences().Where(t => IsMentionAllowed(t) && IsNativeSupplyAllowed(t))
+        var raw = GetExperienceValidationTurns().Where(t => IsMentionAllowed(t) && IsNativeSupplyAllowed(t))
             .ToDictionary(t => t.EventId, StringComparer.Ordinal);
         var records = _reflectionNotes.Select(t => (Kind: "note", Turn: t))
             .Concat(_reflectionLessons.Select(t => (Kind: "lesson", Turn: t)))
@@ -232,7 +242,7 @@ internal sealed partial class MemoryStore
 
     private IReadOnlyList<MemoryTurn> CaptureRevisionTargets(IEnumerable<MemoryTurn> relevantMaterial)
     {
-        var raw = ReadExperiences().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var raw = GetExperienceValidationTurns().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         var isCurrent = CreateCurrentBasisEvaluator(raw);
         var permitted = CreateRecordPermissionEvaluator();
         var relevant = relevantMaterial.SelectMany(t => t.SourceEventIds.Append(t.EventId)).ToHashSet(StringComparer.Ordinal);
@@ -291,7 +301,7 @@ internal sealed partial class MemoryStore
                 .Any(t => t.EventId == target) ? "lesson" : "reading";
             required.Add((kind, target));
         }
-        var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        var raw = GetExperienceValidationTurns().ToDictionary(t => t.EventId, StringComparer.Ordinal);
         foreach (var key in required.Distinct())
         {
             var pool = key.Kind switch

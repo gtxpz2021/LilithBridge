@@ -11,6 +11,7 @@ internal sealed partial class BridgeController
     [HideFromIl2Cpp]
     internal bool TryBeginQueuedReplyDisplay()
     {
+        if (CancelDeliveryForSleep() || AiDeliveryEditing || TemporaryOutputBlocksFinal) return false;
         ApiResult? reply = _queuedReply;
         if (reply == null)
             return false;
@@ -20,10 +21,18 @@ internal sealed partial class BridgeController
         if (!NativeLinkageAllows(reply)) return false;
         if (reply.MemoResultFinal && !_memory.PaperSourcesPermitted(reply.PaperSources))
         { CancelPendingDialogue(); return false; }
+        if(reply.FinalPublicDraft?.Selected==true&&reply.FinalPublicDraft.ReadyChunks>0
+            &&reply.FinalPublicDraft.FinalPlan(MemoryStore.Clean(reply.Text))==null)
+        {CancelQueuedReply("local_final_text_differs_from_streamed_prefix","public_prefix_changed");return false;}
         if (reply.MemoWriteOutcome == null)
         {
-            try { reply.MemoWriteOutcome = NativeMemoWriter.Apply(reply, _config); }
-            catch { reply.MemoWriteOutcome = new NativeMemoWriteOutcome(0, 0) { Known = false }; }
+            bool current = reply.TryUseSelection(() =>
+            {
+                try { reply.MemoWriteOutcome = NativeMemoWriter.Apply(reply, _config); }
+                catch { reply.MemoWriteOutcome = new NativeMemoWriteOutcome(0, 0) { Known = false }; }
+                return true;
+            });
+            if (!current) { CancelPendingDialogue(reason: "selection_changed"); return false; }
         }
         if (TryStartMemoResultContinuation(reply)) return false;
         reply.MemoWriteOutcome.ApplyToReply(reply);

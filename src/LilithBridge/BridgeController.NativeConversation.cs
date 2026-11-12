@@ -34,6 +34,7 @@ internal sealed partial class BridgeController
     private void ValidPlayerSubmission()
     {
         _conversationGeneration++;
+        InvalidateB1ReflectionForInput();
         InterruptSharedActivity();
         _nativeConversation.Submitted();
         // Submission precedes SubmitRequest/BeginDialogueRequest in the same frame.
@@ -42,6 +43,7 @@ internal sealed partial class BridgeController
     internal void BeforeExplicitNativeChoice()
     {
         _conversationGeneration++;
+        InvalidateB1ReflectionForInput();
         InterruptSharedActivity();
         CancelNativeLinkage("explicit_native_choice");
         CancelPendingDialogue();

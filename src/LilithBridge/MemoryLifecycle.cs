@@ -22,6 +22,7 @@ internal sealed class MemoryPatch
 
 internal sealed class ReflectionResult
 {
+    [System.Text.Json.Serialization.JsonIgnore] internal B1SelectionSnapshot? SelectionSnapshot { get; set; }
     public ReflectionNoteProposal? Note { get; set; }
     public ReflectionLessonProposal? Lesson { get; set; }
     public RelationshipReadingProposal? Relationship { get; set; }

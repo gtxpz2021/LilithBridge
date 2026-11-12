@@ -95,6 +95,7 @@ internal sealed partial class MemoryStore
                 file.Write(bytes, 0, bytes.Length);
                 file.Flush(true);
                 _experienceCache?.Add(turn.Copy());
+                InvalidateExperienceValidationView();
                 _experienceRecordedTimes[turn.EventId] = turn.Timestamp;
                 _experienceExplicitDialogueMetadata.Add(turn.EventId);
                 return true;
@@ -161,65 +162,65 @@ internal sealed partial class MemoryStore
 
     private List<MemoryTurn> ReadExperiences(bool includeSuppressed = false, bool logErrors = true)
     {
-        var result = new List<MemoryTurn>();
-        if (!_experienceArchiveEnabled || !Directory.Exists(ExperienceDirectory))
-            return result;
         lock (_experienceLock)
         {
-            if (_experienceCache != null)
+            if (!_experienceArchiveEnabled || !Directory.Exists(ExperienceDirectory)) return new();
+            if (_experienceCache == null) LoadExperienceCache(logErrors);
+            var view = GetExperienceValidationView();
+            HashSet<string>? denied = includeSuppressed ? null : SuppressedExperienceIds();
+            return view.Turns.Where(t => denied == null || !denied.Contains(t.EventId)).Select(t => t.Copy()).ToList();
+        }
+    }
+
+    // Caller holds _experienceLock. Cache records are owned by this store and
+    // are never returned by a public reader without Copy().
+    private void LoadExperienceCache(bool logErrors = true)
+    {
+        var result = new List<MemoryTurn>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        _experienceMalformedRecords = 0;
+        _experienceReadFailures = 0;
+        _experienceRecordedTimes.Clear();
+        _experienceExplicitDialogueMetadata.Clear();
+        foreach (string path in Directory.EnumerateFiles(ExperienceDirectory, "session-*.jsonl").OrderBy(p => p, StringComparer.Ordinal))
+        {
+            try
             {
-                HashSet<string> denied = SuppressedExperienceIds();
-                return _experienceCache.Where(t => includeSuppressed || !denied.Contains(t.EventId))
-                    .OrderBy(t => t.Timestamp).ThenBy(t => t.SessionId,StringComparer.Ordinal).ThenBy(t => t.Sequence)
-                    .Select(t => t.Copy()).ToList();
-            }
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            _experienceMalformedRecords = 0;
-            _experienceReadFailures = 0;
-            _experienceRecordedTimes.Clear();
-            _experienceExplicitDialogueMetadata.Clear();
-            foreach (string path in Directory.EnumerateFiles(ExperienceDirectory, "session-*.jsonl").OrderBy(p => p, StringComparer.Ordinal))
-            {
-                try
+                foreach (string line in File.ReadLines(path))
                 {
-                    foreach (string line in File.ReadLines(path))
+                    try
                     {
-                        try
-                        {
-                            using var source = JsonDocument.Parse(line);
-                            MemoryTurn? turn = source.RootElement.Deserialize<MemoryTurn>();
-                            if (turn != null && (turn.SourceEventIds == null || turn.SourceNoteIds == null
-                                || turn.SourceDayIds == null || turn.SourceDependencies == null || turn.ContextDependencies == null || turn.DayCoveredEventIds == null))
-                            { _experienceMalformedRecords++; continue; }
-                            if (turn == null || turn.SchemaVersion != 1 || string.IsNullOrEmpty(turn.EventId)
-                                || turn.DeliveryState is not ("received" or "delivered")
-                                || !seen.Add(turn.EventId))
-                                continue;
-                            result.Add(turn);
-                            if (new[] { "Role", "Origin", "Kind", "DeliveryState" }.All(key =>
-                                source.RootElement.TryGetProperty(key, out var field) && field.ValueKind == JsonValueKind.String))
-                                _experienceExplicitDialogueMetadata.Add(turn.EventId);
-                            _experienceRecordedTimes[turn.EventId] = source.RootElement.TryGetProperty("Timestamp", out var time)
-                                && time.ValueKind == JsonValueKind.String && time.TryGetDateTimeOffset(out var recorded) ? recorded : null;
-                        }
-                        catch (JsonException)
-                        {
-                            _experienceMalformedRecords++;
-                            // An incomplete/corrupt record cannot become evidence.
-                        }
+                        using var source = JsonDocument.Parse(line);
+                        MemoryTurn? turn = source.RootElement.Deserialize<MemoryTurn>();
+                        if (turn != null && (turn.SourceEventIds == null || turn.SourceNoteIds == null
+                            || turn.SourceDayIds == null || turn.SourceDependencies == null || turn.ContextDependencies == null || turn.DayCoveredEventIds == null))
+                        { _experienceMalformedRecords++; continue; }
+                        if (turn == null || turn.SchemaVersion != 1 || string.IsNullOrEmpty(turn.EventId)
+                            || turn.DeliveryState is not ("received" or "delivered")
+                            || !seen.Add(turn.EventId))
+                            continue;
+                        result.Add(turn);
+                        if (new[] { "Role", "Origin", "Kind", "DeliveryState" }.All(key =>
+                            source.RootElement.TryGetProperty(key, out var field) && field.ValueKind == JsonValueKind.String))
+                            _experienceExplicitDialogueMetadata.Add(turn.EventId);
+                        _experienceRecordedTimes[turn.EventId] = source.RootElement.TryGetProperty("Timestamp", out var time)
+                            && time.ValueKind == JsonValueKind.String && time.TryGetDateTimeOffset(out var recorded) ? recorded : null;
+                    }
+                    catch (JsonException)
+                    {
+                        _experienceMalformedRecords++;
+                        // An incomplete/corrupt record cannot become evidence.
                     }
                 }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                {
-                    _experienceReadFailures++;
-                    if (logErrors) NativeEventLog.Trace("experience.read_error", "mod", "system", "experience read failed", error.Message);
-                }
             }
-            _experienceCache = result.Select(t => t.Copy()).ToList();
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                _experienceReadFailures++;
+                if (logErrors) NativeEventLog.Trace("experience.read_error", "mod", "system", "experience read failed", error.Message);
+            }
         }
-        HashSet<string> suppressed = SuppressedExperienceIds();
-        return result.Where(t => includeSuppressed || !suppressed.Contains(t.EventId))
-            .OrderBy(t => t.Timestamp).ThenBy(t => t.SessionId, StringComparer.Ordinal).ThenBy(t => t.Sequence).ToList();
+        _experienceCache = result;
+        InvalidateExperienceValidationView();
     }
 
     public bool VerifyUserEvidence(string eventId, string quote)
@@ -236,101 +237,137 @@ internal sealed partial class MemoryStore
         if (max <= 0 || MemorySemantics.DeclinesArchiveRecall(_nativeDialoguePolicy.Value?.Query ?? query))
             return Array.Empty<MemoryTurn>();
         var excluded = new HashSet<string>(excludedIds ?? Array.Empty<string>(), StringComparer.Ordinal);
-        string requestedSpeaker = requestedRole.Length > 0 ? requestedRole : MemorySemantics.RequestedHistorySpeaker(query);
-        List<MemoryTurn> available = ReadExperiences()
-            .Where(t => IsMentionAllowed(t) && IsNativeSupplyAllowed(t) && !excluded.Contains(t.EventId) && (!previousSession || t.SessionId != _sessionId)
-                && (requestedSpeaker.Length == 0 || t.Role == requestedSpeaker))
-            .ToList();
+        var relativeRecall = scoringQueryOverride == null ? MemorySemantics.ParseSpeechRelativeRecall(query) : null;
+        string requestedSpeaker = requestedRole.Length > 0 ? requestedRole : relativeRecall?.Speaker ?? MemorySemantics.RequestedHistorySpeaker(query);
+        var catalog = GetExperienceLogicalCatalog();
         // The explicit override is for bounded offline scoring comparisons only.
         // Original query and every eligibility filter above remain authoritative.
         ExperienceRecallQuery? recallQuery = scoringQueryOverride == null ? MemorySemantics.ParseExperienceRecallQuery(query) : null;
         string contentQuery = MemorySemantics.ExperienceContentQuery(query);
         bool contentView = scoringQueryOverride == null && contentQuery != (query ?? "");
-        string scoringQuery = scoringQueryOverride ?? recallQuery?.ScoringQuery ?? (contentView ? contentQuery : MemorySemantics.ExperienceScoringQuery(query));
+        string scoringQuery = scoringQueryOverride ?? relativeRecall?.AnchorText ?? recallQuery?.ScoringQuery ?? (contentView ? contentQuery : MemorySemantics.ExperienceScoringQuery(query));
         // The same scope owns anchors, adjacency and linked expansion. Applying
         // it after every eligibility filter cannot grant a withdrawn source.
-        if (recallQuery != null) available = available.Where(recallQuery.Allows).ToList();
         string[] identifiers = MemorySemantics.RecallIdentifiers(query);
-        if (identifiers.Length > 0) available = available.Where(t => identifiers.All(id => MemorySemantics.ContainsRecallIdentifier(t.Text,id))).ToList();
-        bool countSpeech = System.Text.RegularExpressions.Regex.IsMatch(MemorySemantics.MaskRecallQuotes(query ?? ""), "几次|多少次|次数|每次|全部原话");
         string[] literalQuotes = UtteranceAttribution.LiteralQuotes(query);
+        var available = catalog.Units.Where(u => !u.SourceSpans.All(t => excluded.Contains(t.EventId))
+            && (!previousSession || u.SessionId != _sessionId)
+            && (relativeRecall != null || requestedSpeaker.Length == 0 || u.Role == requestedSpeaker)
+            && LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: false)).ToList();
+        var discoverable = available.Where(u => (requestedSpeaker.Length == 0 || u.Role == requestedSpeaker) && LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: true)
+            && identifiers.All(id => u.Runs.Any(run => MemorySemantics.ContainsRecallIdentifier(run.Text, id)))
+            && literalQuotes.All(u.ContainsExact)).ToList();
         // Reuse tokens only within this candidate pass. Ranking and the ordinary
         // relevance floor use the same overlap; no source permission is cached.
         var scoringTokens = MemorySemantics.MatchingTokens(scoringQuery);
         bool emptyScoringQuery = string.IsNullOrWhiteSpace(scoringQuery);
-        var candidates = available.Select(t =>
+        // Corpus rarity distinguishes a described utterance from many broad
+        // topic echoes. This affects only speech-reference ranking; the ordinary
+        // eligibility/recall floor remains unchanged and is not a truth test.
+        var documentFrequency = relativeRecall == null ? new Dictionary<string,int>() : available
+            .SelectMany(u=>u.MatchingTokens.Distinct()).GroupBy(x=>x,StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g=>g.Key,g=>g.Count(),StringComparer.OrdinalIgnoreCase);
+        double RelativeWeight(string word) => Math.Pow(Math.Log((available.Count+1d)/(documentFrequency.GetValueOrDefault(word)+1d)),2);
+        var candidates = discoverable.Select(unit =>
             {
                 int overlap = 0;
-                double score = 0d;
+                double score = 0d, relativeScore=0d;
                 // Empty tokens still follow the blank/punctuation, quote and
                 // scope rules below; only unnecessary body tokenization stops.
                 if (scoringTokens.Count > 0)
                 {
-                    var tokens = ExperienceBodyTokens(t.Text);
+                    var tokens = unit.MatchingTokens;
                     overlap = tokens.Count(scoringTokens.Contains);
+                    if(relativeRecall!=null)relativeScore=tokens.Where(scoringTokens.Contains).Sum(RelativeWeight);
                     if (tokens.Count > 0)
                         score = overlap / (double)Math.Max(1, Math.Min(tokens.Count, scoringTokens.Count));
                 }
                 bool relevant = emptyScoringQuery || score >= MemorySemantics.MinRecallSimilarity
                     && (overlap >= MemorySemantics.MinRecallOverlap || score >= 0.5);
-                return new { Turn = t, Score = score, Relevant = relevant,
-                    QuoteMatch = UtteranceAttribution.QuoteMatch(t.Text, literalQuotes) };
+                return new { Unit = unit, Score = score, RelativeScore=relativeScore, Relevant = relevant,
+                    QuoteMatch = literalQuotes.Where(unit.ContainsExact).Select(q => q.Length).DefaultIfEmpty(0).Max() };
             })
-            .Where(item => (recallQuery != null ? recallQuery.MatchesContent(item.Turn.Text) || item.Relevant
-                : contentView ? MemorySemantics.IsContentRecallMatch(scoringQuery, item.Turn.Text)
-                : item.Relevant) || IsExplicitMentionRecall(item.Turn) || item.QuoteMatch > 0)
+            .Where(item => (recallQuery != null ? recallQuery.MatchesContent(item.Unit.Text) || item.Relevant
+                : contentView ? MemorySemantics.IsContentRecallMatch(scoringQuery, item.Unit.Text)
+                : item.Relevant) || _mentionReadPolicy.Value?.Rules.Any(r => r.RecallAllowed) == true
+                    && item.Unit.Members.Any(IsExplicitMentionRecall) || item.QuoteMatch > 0)
             // A broad question about a correction can have several verbatim
             // copies in the archive. Their lexical score must not consume all
             // anchors ahead of an eligible original correction declaration.
             // This is source-form preference, not a judgment that it is true;
             // questions and assistant history remain available and expandable.
             .OrderByDescending(item => item.QuoteMatch)
-            .ThenByDescending(item => recallQuery != null ? recallQuery.SourcePreference(item.Turn.Text) : contentView && MemorySemantics.IsCorrectionDeclaration(item.Turn.Text) ? 2 : 0)
-            .ThenByDescending(item => item.Score).ThenByDescending(item => item.Turn.Timestamp)
-            // Identical repeated questions must not occupy all anchor slots.
-            .GroupBy(item => (Text: countSpeech ? item.Turn.EventId : item.Turn.Text, item.Turn.Role)).Select(g => g.First())
-            .Select(item => item.Turn).ToList();
-        int anchorBudget = Math.Max(1, max / 3);
-        var ranked = new List<MemoryTurn>();
+            .ThenByDescending(item => relativeRecall != null ? (MemorySemantics.ParseSpeechRelativeRecall(item.Unit.Text)==null ? 1 : 0) : recallQuery != null ? recallQuery.SourcePreference(item.Unit.Text) : contentView && MemorySemantics.IsCorrectionDeclaration(item.Unit.Text) ? 2 : 0)
+            .ThenByDescending(item => relativeRecall!=null?item.RelativeScore:0d)
+            .ThenByDescending(item => item.Score).ThenByDescending(item => item.Unit.Timestamp)
+            // Independent user submissions retain independent identities even
+            // when their wording is identical (including clarifications/retries).
+            .Select(item => item.Unit).DistinctBy(unit => unit.Key).ToList();
+        // A speech-relative lookup reserves its capacity for one located
+        // occurrence and its surrounding exchanges. Alternatives remain readable;
+        // this lexical choice is never a proof of uniqueness or factual support.
+        int anchorBudget = relativeRecall != null ? 1 : Math.Max(1, max / 3);
+        var ranked = new List<LogicalDialogueUnit>();
         if (recallQuery?.CompareVersions == true && anchorBudget >= 2)
         {
             // Reserve one source of each explicit version form before echoes
             // compete for slots. These are wording cues, not certified versions.
-            MemoryTurn? earlier = candidates.FirstOrDefault(t => System.Text.RegularExpressions.Regex.IsMatch(t.Text, "原始|最初|更正前|改正前|原来"));
-            MemoryTurn? changed = candidates.FirstOrDefault(t => MemorySemantics.IsCorrectionDeclaration(t.Text));
+            LogicalDialogueUnit? earlier = candidates.FirstOrDefault(t => System.Text.RegularExpressions.Regex.IsMatch(t.Text, "原始|最初|更正前|改正前|原来"));
+            LogicalDialogueUnit? changed = candidates.FirstOrDefault(t => MemorySemantics.IsCorrectionDeclaration(t.Text));
             if (earlier != null) ranked.Add(earlier);
-            if (changed != null && ranked.All(t => t.EventId != changed.EventId)) ranked.Add(changed);
+            if (changed != null && ranked.All(t => t.Key != changed.Key)) ranked.Add(changed);
         }
-        ranked = ranked.Concat(candidates).GroupBy(t => t.EventId).Select(g => g.First()).Take(anchorBudget).ToList();
+        ranked = ranked.Concat(candidates).DistinctBy(t => t.Key).Take(anchorBudget).ToList();
         // Isolated RFC experiment only: the driver owns the decision. MemoryStore
         // validates eligibility and retains ownership of expansion/cap semantics.
         if (acceptedBridgeAnchorId != null)
         {
-            MemoryTurn anchor = available.Single(t => t.EventId == acceptedBridgeAnchorId);
+            LogicalDialogueUnit anchor = available.Single(t => t.Members.Any(m => m.EventId == acceptedBridgeAnchorId));
             if (max != 9 || MemorySemantics.IsRelevantRecall(query, anchor.Text))
                 throw new InvalidOperationException("Bridge rescue requires one gate-rejected eligible anchor with the frozen max=9");
             ranked = ranked.Take(2).Append(anchor).ToList();
         }
-        onAnchorSelection?.Invoke(ranked.Select(t => t.Copy()).ToList());
+        onAnchorSelection?.Invoke(ranked.SelectMany(t => t.Members).ToList());
         // A source-free question does not authorize unrelated recent records.
         // Reserve every ranked anchor before allocating adjacency/link budget.
         var ordered = ranked.ToList();
-        var selected = new HashSet<string>(ranked.Select(t => t.EventId), StringComparer.Ordinal);
-        foreach (MemoryTurn anchor in ranked)
+        var selected = new HashSet<string>(ranked.Select(t => t.Key), StringComparer.Ordinal);
+        foreach (LogicalDialogueUnit anchor in ranked)
         {
-            foreach (MemoryTurn adjacent in available.Where(t => t.SessionId == anchor.SessionId
-                         && Math.Abs(t.Sequence - anchor.Sequence) <= 1))
-                if (ordered.Count < max && selected.Add(adjacent.EventId)) ordered.Add(adjacent);
-            foreach (MemoryTurn current in _autonomous.Where(t => IsActiveLifecycle(t) && t.SourceEventIds.Contains(anchor.EventId)))
+            var sameSession = available.Where(t => t.SessionId == anchor.SessionId).OrderBy(t => t.FirstSequence).ToList();
+            int at = sameSession.FindIndex(t => t.Key == anchor.Key);
+            foreach (int index in new[] { at - 1, at + 1 })
+                if (index >= 0 && index < sameSession.Count && ordered.Count < max && selected.Add(sameSession[index].Key))
+                    ordered.Add(sameSession[index]);
+            var anchorIds = anchor.Members.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+            foreach (MemoryTurn current in _autonomous.Where(t => IsActiveLifecycle(t) && t.SourceEventIds.Any(anchorIds.Contains)))
                 foreach (string id in current.SourceEventIds)
-                    if (ordered.Count < max && available.FirstOrDefault(t => t.EventId == id) is { } linked && selected.Add(id)) ordered.Add(linked);
+                    if (ordered.Count < max && available.FirstOrDefault(t => t.Members.Any(m => m.EventId == id)) is { } linked && selected.Add(linked.Key)) ordered.Add(linked);
         }
         // Existing anchors and their expansion keep priority; unused slots take
         // the remaining eligible lexical candidates in their original order.
-        foreach (MemoryTurn candidate in candidates)
-            if (ordered.Count < max && selected.Add(candidate.EventId)) ordered.Add(candidate);
-        onDirectSelection?.Invoke(candidates.Where(t => selected.Contains(t.EventId)).Select(t => t.Copy()).ToArray());
-        return ordered.OrderBy(t => t.Timestamp).ThenBy(t => t.SessionId,StringComparer.Ordinal).ThenBy(t => t.Sequence).Select(WithNaturalMemoryContext).ToList();
+        foreach (LogicalDialogueUnit candidate in candidates)
+            if (ordered.Count < max && selected.Add(candidate.Key)) ordered.Add(candidate);
+        var direct = candidates.Where(t => selected.Contains(t.Key)).SelectMany(t => t.Members).ToArray();
+        onDirectSelection?.Invoke(direct);
+        return new LogicalDialogueSelection(ordered.OrderBy(t => t.Timestamp)
+            .ThenBy(t => t.SessionId,StringComparer.Ordinal).ThenBy(t => t.FirstSequence),
+            direct.Select(t => t.EventId), WithNaturalMemoryContext);
+    }
+
+    // Matching words choose a message; they never trim the other clauses of
+    // that message. Actual permission and explicit source/speaker restrictions
+    // remain separate from discovery. Time selects an owned message by an
+    // actual member timestamp; every member keeps its own original timestamp.
+    private static bool LogicalUnitScopeAllowed(LogicalDialogueUnit unit, ExperienceRecallQuery? scope, bool discoveryTerms)
+    {
+        if (scope == null) return true;
+        if (scope.UnresolvedTime || scope.ExcludedSubjects.Any(unit.ContainsExact)) return false;
+        var temporal = new ExperienceRecallQuery { From = scope.From, Until = scope.Until,
+            FromMinute = scope.FromMinute, UntilMinute = scope.UntilMinute, UnresolvedTime = scope.UnresolvedTime };
+        if (!unit.Members.Any(temporal.AllowsSourceScope)) return false;
+        return !discoveryTerms || (scope.Subject.Length == 0 || unit.ContainsExact(scope.Subject))
+            && scope.Quotes.All(unit.ContainsExact) && scope.Titles.All(unit.ContainsExact);
     }
 
     /// <summary>
@@ -418,18 +455,6 @@ internal sealed partial class MemoryStore
 
     public static string BuildExperienceContext(IReadOnlyList<MemoryTurn> turns)
     {
-        if (turns.Count == 0)
-            return "";
-        var builder = new StringBuilder("[找回的原始发言片段]\n");
-        builder.AppendLine("这些记录说明谁在何时说过原文；说过的内容仍可能是玩笑、猜测或后来被纠正的理解。"
-            + "本轮找回不等于刚刚发生；原文的‘现在/刚才’属于原发言时点，本轮的‘刚才/上次/那晚’结合原记录时间与紧邻交流判断。");
-        foreach (MemoryTurn turn in turns)
-        {
-            string speaker = turn.Role == "user" ? "玩家" : "莉莉丝";
-            if (turn.NaturalMemoryReadContext.Length > 0) builder.AppendLine(turn.NaturalMemoryReadContext);
-            builder.AppendLine(turn.Timestamp.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")
-                + " [" + turn.EventId + "] " + speaker + "（" + turn.Origin + "）: " + UtteranceAttribution.Describe(turn.Role, turn.Text) + turn.Text);
-        }
-        return builder.ToString();
+        return RenderExperienceBodyView(turns).Block;
     }
 }

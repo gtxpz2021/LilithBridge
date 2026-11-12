@@ -111,6 +111,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     private void Awake()
     {
         Instance = this;
+        _client.BindSelectionStore(_memory);
         try
         {
             DontDestroyOnLoad(gameObject);
@@ -145,6 +146,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     }
 
     private readonly NativeRequestStatus _requestStatus = new();
+    private readonly NativeSaveStatus _saveStatus = new();
 
     private void OnDestroy()
     {
@@ -157,7 +159,9 @@ internal sealed partial class BridgeController : MonoBehaviour
         _activeDialogue?.Dispose();
         _inputField.Destroy();
         _requestStatus.Destroy();
+        _saveStatus.Destroy();
         _historyWindow.Destroy();
+        _b1SelectionWindow.Destroy();
         NativeUiViewport.Clear();
         ActionExecutor.Clear();
         NativeWindowPeekDirector.Clear();
@@ -178,7 +182,6 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void Update()
     {
-        NativeUiViewport.Tick();
         if (!_reportedFirstUpdate)
         {
             _reportedFirstUpdate = true;
@@ -217,14 +220,20 @@ internal sealed partial class BridgeController : MonoBehaviour
         TryScheduleReflection();
         TryConsolidateDream();
         TickSharedActivity();
+        _b1SelectionWindow.Tick();
         ObservePreparationBeforeDrain();
         DrainMain();
         _requestStatus.Tick(transform, _inputField.StyleText, _activeDialogue,
-            _requestPending && !_listening && !_historyWindow.IsOpen
+            _requestPending && !_historyWindow.IsOpen && !_b1SelectionWindow.IsOpen
+            && !_sharedWindow.OwnsKeyboard && !_inputField.UiConsumesKeyboard
             && !_sessionState.PlayerOptionsShowing && !NativeStateInspector.IsSleeping
-            && NativeInput.IsGameForeground());
+            && NativeInput.IsGameForeground(), _listening ? _inputField : null);
+        _saveStatus.Tick(transform, _inputField.StyleText, _memory, NativeInput.IsGameForeground());
+        NativeUiViewport.Tick();
+        _inputField.TickMonitorLease();
         TickScreenCapture();
         ValidateReviewHandoffBoundary();
+        TickTemporaryWork();
         UpdateVitalState();
         ActionExecutor.SetWaiting(_listening || _requestPending, _sessionState);
         MicroReactionDirector.Tick(_sessionState, Time.unscaledTime, _config);
@@ -237,10 +246,15 @@ internal sealed partial class BridgeController : MonoBehaviour
             || NativeInput.IsKeyDown(KeyCode.KeypadEnter);
         bool escapeDown = NativeInput.IsKeyDown(KeyCode.Escape);
         bool gameHasInputFocus = DialogueUiFocus.AllowsKeyboard(NativeInput.IsGameForeground(),Application.isFocused,
-            IsOverlayActive(),_historyWindow.IsOpen || _sharedWindow.IsOpen || _inputField.IsOpen);
+            IsOverlayActive(),_b1SelectionWindow.IsOpen || _historyWindow.IsOpen || _sharedWindow.IsOpen || _inputField.IsOpen);
         bool enter = ReadEnterKey(enterDown, gameHasInputFocus);
         bool escape = escapeDown && !_escapeDown && gameHasInputFocus;
         _escapeDown = escapeDown;
+        if (_b1SelectionWindow.IsOpen)
+        {
+            if (escape && Input.compositionString.Length == 0) CloseB1Selection();
+            return; // Selection owns keyboard; Enter never applies or sends chat.
+        }
         if (_sharedWindow.OwnsKeyboard)
         {
             if (escape && Input.compositionString.Length == 0) CloseSharedActivity();
@@ -678,6 +692,7 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void OnNativeDialogueEnd()
     {
+        if (FinishTemporaryBubble()) return;
         bool wasAiSpeech = _aiSpeechActive;
         NativeWindowPeekDirector.SuppressFor(60f);
         NativeEventLog.Trace("window_peek.protect", "mod", "system",
@@ -903,10 +918,6 @@ internal sealed partial class BridgeController : MonoBehaviour
         _sessionState.MomentWaitingForPlayer = _sessionState.NativeDialogueActive
             || _sessionState.PlayerOptionsShowing
             || _sessionState.BusyOrAwaitingResponse;
-        _sessionState.Emotions.Tick(
-            DateTimeOffset.UtcNow,
-            _sessionState.TimePhase,
-            _sessionState.Native.IsSleep);
     }
 
     private void MaybeSavePersonaState()
@@ -914,7 +925,8 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (!_systemReady || Time.unscaledTime < _nextPersonaSave)
             return;
         _nextPersonaSave = Time.unscaledTime + 30f;
-        _memory.SavePersonaState(_sessionState);
+        try { _memory.SavePersonaState(_sessionState); }
+        catch { /* MemoryStore records the stable reason; keep this frame alive. */ }
     }
 
     private void MaybeSaveLastSceneSummary()
@@ -924,7 +936,10 @@ internal sealed partial class BridgeController : MonoBehaviour
         _nextSceneSummarySave = Time.unscaledTime + 30f;
         LastSceneSummary? summary = _sessionState.CreateLastSceneSummary();
         if (summary != null)
-            _memory.SaveLastSceneSummary(summary);
+        {
+            try { _memory.SaveLastSceneSummary(summary); }
+            catch { /* Preserve the 30-second retry cadence and visible failure. */ }
+        }
     }
 
     private static bool HasAny(string text, params string[] terms)
@@ -1470,6 +1485,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     private bool CanShowReplyNow()
     {
         return _queuedReply != null
+            && !TemporaryOutputBlocksFinal
             && !_listening
             && !SharedActivityUiBusy
             && !_requestPending
@@ -1482,9 +1498,11 @@ internal sealed partial class BridgeController : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
-    internal bool CanResumeAiDelivery() => !_listening && !SharedActivityUiBusy && !_requestPending && !_storyRecallInProgress
-        && !HasActiveNativeStoryForProactive() && !NativeStateInspector.IsSleeping
-        && !ActionDirector.NativeBusy(_sessionState);
+    internal bool AiDeliveryEditing => _listening || SharedActivityUiBusy;
+
+    [HideFromIl2Cpp]
+    internal bool CanResumeAiDelivery() => !AiDeliveryEditing && !_requestPending && !_storyRecallInProgress
+        && !NativeStateInspector.IsSleeping;
 
     private void TracePlaybackDeferred()
     {
@@ -1543,7 +1561,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
     }
 
-    internal bool BlocksNativePointerInput => NativeUiInputGate.PointerClaimed || _historyWindow.IsOpen || _sharedWindow.BlocksPointer(Input.mousePosition)
+    internal bool BlocksNativePointerInput => NativeUiInputGate.PointerClaimed || _b1SelectionWindow.IsOpen || _historyWindow.IsOpen || _sharedWindow.BlocksPointer(Input.mousePosition)
         || _inputField.IsMenuOpen || _inputField.ContainsPointer(Input.mousePosition);
 
 
@@ -1562,20 +1580,21 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void OpenInput()
     {
-        if (_listening)
+        if (_listening || _b1SelectionWindow.IsOpen)
             return;
         // Every input session starts unauthorized; the visible control arms only
         // this session and the next submitted input consumes it.
         _reviewAuthorization.Reset();
         NativeStateInspector.TrySummonIfHidden("chat");
-        if (!_inputField.Show(transform, _config, OnInputSubmitted, CancelInput, SelectThinkingMode, OpenDialogueHistory, AuthorizeReviewTurn, OpenSharedActivity))
+        if (!_inputField.Show(transform, _config, OnInputSubmitted, CancelInput, SelectThinkingMode, OpenDialogueHistory, AuthorizeReviewTurn, OpenSharedActivity, OpenB1Selection))
         {
             NativeEventLog.Trace("input.open_failed", "mod", "system",
                 "native-style TMP input could not be created");
             return;
         }
-        CancelAiSpeech("input_open");
+        // Editing pauses the unseen tail; only a formal submission cancels it.
         _listening = true;
+        NativeBubblePresenter.PauseForEditing();
         _ignoreEnterUntil = Time.unscaledTime + 0.35f;
         NativeInput.BringGameToForeground();
         try
@@ -1595,7 +1614,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         _reviewAuthorization.Reset();
         _listening = false;
         _inputField.Hide();
-        CancelPendingDialogue();
+        // Closing an unsubmitted draft preserves the original request identity.
         ActionExecutor.Clear();
         try
         {
@@ -1612,7 +1631,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     {
         try
         {
-            _config = ConfigStore.SetDialogueThinkingMode(mode);
+            _config = DialogueProviderOptions.SaveEffort(mode);
             _inputField.RefreshThinkingMode(_config, "");
         }
         catch (Exception error)
@@ -1646,6 +1665,7 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void TickTestInput()
     {
+        if (_b1SelectionWindow.IsOpen) return; // Local version review never advances scripted chat.
         if (!_config.TestInputScriptEnabled || !_systemReady)
             return;
         if (!_testInputLoaded)
@@ -1655,7 +1675,9 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
         if (_testInputQueue.Count == 0)
             return;
-        if (_requestPending || _storyRecallInProgress || _memoryRecallInProgress)
+        if (!ScriptedDialogueInput.CanAdvance(_requestPending, _storyRecallInProgress || _memoryRecallInProgress,
+            _queuedReply != null, _aiSpeechActive || NativeBubblePresenter.HasPendingReply, TemporaryOutputBlocksFinal,
+            _config.ExperimentalTemporaryExpressions, _activeDialogue?.WorkPrototype != null))
             return;
         if (Time.unscaledTime - _lastTestInputSentAt < _config.TestInputDelaySeconds)
             return;
@@ -1701,8 +1723,12 @@ internal sealed partial class BridgeController : MonoBehaviour
     [HideFromIl2Cpp]
     private void OnApiResult(ApiResult result)
     {
+        CaptureReceivedPublicReply(result);
+        // A quiet receipt is terminal for this result object.
+        if (result.DeliveryOutcome is "quiet" or "delivery_unknown") return;
         result.DialogueRequest?.PreparationTrace?.Finish("api_result");
         if (!IsCurrentDialogue(result.DialogueRequest) || !NativeLinkageAllows(result)) return;
+        if (CancelDeliveryForSleep(receivingResult: true)) return;
         if (result.NativeLinkage != null && (result.Error.Length > 0
             || result.Response.Outcome != "accepted"
             || string.IsNullOrWhiteSpace(result.Text) && !result.ExplicitEmptyText))
@@ -1713,6 +1739,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             return; // Never manufacture a local in-character reply to this event.
         }
         NativeBubblePresenter.ObserveGenerated(result);
+        FinishTemporaryGeneration(result);
         RecordVisualSupply(result);
         _requestPending = false;
         if (result.Response.Outcome == "cancelled")
@@ -1817,7 +1844,7 @@ internal sealed partial class BridgeController : MonoBehaviour
                 "touch event semantic mismatch detected", "mismatch=" + mismatch);
             if (_config.TouchEventRepairEnabled)
             {
-                BridgeConfig requestConfig = _config;
+                BridgeConfig requestConfig = result.DialogueRequest?.RequestConfig??_config;
                 string originalReply = result.Text;
                 string repairRecallQuery = _sessionState.LastUserText;
                 IReadOnlyList<MemoryTurn>? repairRecallUsed = null;
@@ -1872,6 +1899,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     [HideFromIl2Cpp]
     private void OnRepairResult(ApiResult result, bool repaired, string mismatch)
     {
+        CaptureReceivedPublicReply(result);
         if (!IsCurrentDialogue(result.DialogueRequest) || !NativeLinkageAllows(result)) return;
         if (result.NativeLinkage != null && (result.Error.Length > 0
             || result.Response.Outcome != "accepted"
@@ -1914,8 +1942,9 @@ internal sealed partial class BridgeController : MonoBehaviour
         result.CopyResponseFrom(requestResult);
         if (result.ReflectionRequested)
         {
-            _reflectionWindow.MarkModelRequested();
+            _memory.MarkReflectionRequested(_reflectionWindow, result);
             _memory.SaveReflectionWindow(_reflectionWindow.DurableSnapshot);
+            _memory.TraceReflectionIntentRequest(result, _reflectionWindow.ModelRequestVersion);
             NativeEventLog.Trace("memory.reflection.requested", "lilith", "lilith",
                 "she asked for a quiet look back",
                 result.ReflectionRequestReason.Length > 0
@@ -1940,9 +1969,16 @@ internal sealed partial class BridgeController : MonoBehaviour
                 _memory.GetRequestHistorySelection(_config, finalRequestHistory);
             IReadOnlyList<MemoryTurn> experiences = _memory.GetExperienceCandidates(query,9,suppliedHistory.Select(t => t.EventId),
                 requestedRole:MemorySemantics.RequestedHistorySpeaker(_currentUserText));
+            LegacyRecallDecision recallDecision = LegacyRecallFollowUp.Decide(result, candidates, experiences);
+            if (!recallDecision.NeedsGeneration)
+                NativeEventLog.Trace("memory.recall.skipped", "mod", "system",
+                    "legacy recall has no additional material; accepted reply preserved",
+                    "reason=" + recallDecision.Reason + ";entries=" + candidates.Count
+                    + ";experiences=" + experiences.Count);
+            else
             {
                 ApiResult originalResult = result;
-                BridgeConfig requestConfig = _config;
+                BridgeConfig requestConfig = originalResult.DialogueRequest?.RequestConfig??_config;
                 string userText = _currentUserText;
                 string recallFollowUpQuery = _sessionState.LastUserText;
                 IReadOnlyList<MemoryTurn>? recallFollowUpUsed = null;
@@ -1959,10 +1995,16 @@ internal sealed partial class BridgeController : MonoBehaviour
                 var suppliedIds = new HashSet<string>((recallFollowUpUsed ?? Array.Empty<MemoryTurn>()).Select(t => t.EventId));
                 var extraFacts = candidates.Where(t => t.EventId.Length == 0 || !suppliedIds.Contains(t.EventId)).ToList();
                 var extraExperiences = experiences.Where(t => !suppliedIds.Contains(t.EventId)).ToList();
-                expandedContext += Environment.NewLine + MemorySemantics.BuildRecallContext(extraFacts)
+                string supplementContext = MemorySemantics.BuildRecallContext(extraFacts)
                     + Environment.NewLine + MemoryStore.BuildExperienceContext(extraExperiences);
                 if (candidates.Count == 0 && experiences.Count == 0)
-                    expandedContext += "\n[本次检索结果] 没有找到与本次检索词相关的额外记录；这不证明事情从未发生。请根据已有记录回答，不要承诺稍后再查。";
+                    supplementContext += "\n[本次检索结果] 没有找到与本次检索词相关的额外记录；这不证明事情从未发生。请根据已有记录回答，不要承诺稍后再查。";
+                expandedContext += Environment.NewLine+supplementContext;
+                var extraSources=extraFacts.Concat(extraExperiences).Select(t=>t.Copy()).ToArray();
+                var supplementSources=_memory.CapturePaperSources(extraSources,Array.Empty<LilithSceneEvent>(),userText,!_proactiveRequest);
+                var supplement=new RecallSupplement("memory_recall",supplementContext,extraSources,supplementSources,
+                    ()=>_memory.RecallSupplementPermitted(supplementSources));
+                if(!TryBindRecallSupplement(originalResult,supplement))return;
                 recallFollowUpUsed = (recallFollowUpUsed ?? Array.Empty<MemoryTurn>()).Concat(extraFacts).Concat(extraExperiences).ToList();
                 _memoryRecallInProgress = true;
                 _requestPending = true;
@@ -1982,7 +2024,7 @@ internal sealed partial class BridgeController : MonoBehaviour
                     {
                         ApiResult recalled = await SendRecallFollowUpAsync(requestConfig, userText,
                             expandedContext, finalRequestHistory, originalResult, paperSources, memoTarget,
-                            "memory_recall").ConfigureAwait(false);
+                            "memory_recall",supplement).ConfigureAwait(false);
                         recalled.MemoryRecalls.Clear();
                         _mainThread.Enqueue(() =>
                         {
@@ -2006,17 +2048,18 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
         if (!_storyRecallInProgress
             && result.StoryRecalls.Count > 0
-            && _config.PreviousStoryEnabled)
+            && !_proactiveRequest
+            && PreviousStoryArchive.CanSupply(_config))
         {
             string query = result.StoryRecalls[0];
             using var mentionStoryScope = _memory.BeginMentionRequest(_currentUserText, !_proactiveRequest);
             using var nativeStoryScope = _memory.BeginNativeDialogueRequest(_currentUserText, !_proactiveRequest, _config, CaptureNativeDialogueAuthorization());
             ApiResult originalResult = result;
             result.StoryRecalls.Clear();
-            StoryRecallResult recall = PreviousStoryArchive.Recall(query, _config);
+            StoryRecallResult recall = PreviousStoryArchive.Recall(query, _config, _currentUserText);
             if (recall.Found)
             {
-                BridgeConfig requestConfig = _config;
+                BridgeConfig requestConfig = originalResult.DialogueRequest?.RequestConfig??_config;
                 string userText = _currentUserText;
                 string storyRecallQuery = _sessionState.LastUserText;
                 IReadOnlyList<MemoryTurn>? storyRecallUsed = null;
@@ -2045,13 +2088,18 @@ internal sealed partial class BridgeController : MonoBehaviour
                 NativeMemoTarget? memoTarget = memoCapture.Target;
                 PaperSourceSnapshot paperSources = _memory.CapturePaperSources(
                     paperCapture.Sources.Concat(_memory.GetRequestHistorySelection(requestConfig, finalRequestHistory)).Concat(storyRecallUsed ?? Array.Empty<MemoryTurn>()), _sessionState.RecentEvents, userText, !_proactiveRequest);
+                var storyCheck=PreviousStoryArchive.CaptureSupplyPermission(_config,recall.Content);
+                var supplement=new RecallSupplement("story_recall",recall.Content,Array.Empty<MemoryTurn>(),
+                    _memory.CapturePaperSources(Array.Empty<MemoryTurn>(),Array.Empty<LilithSceneEvent>(),userText,true),
+                    ()=>storyCheck?.Invoke()==true);
+                if(!TryBindRecallSupplement(originalResult,supplement))return;
                 Task.Run(async () =>
                 {
                     try
                     {
                         ApiResult recalled = await SendRecallFollowUpAsync(requestConfig, userText,
                             expandedContext, finalRequestHistory, originalResult, paperSources, memoTarget,
-                            "story_recall").ConfigureAwait(false);
+                            "story_recall",supplement).ConfigureAwait(false);
                         recalled.StoryRecalls.Clear();
                         _mainThread.Enqueue(() =>
                         {
@@ -2118,9 +2166,13 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
         if (result.NativeLinkage == null)
         {
-            HandleDesktopArrangeIntent(result);
-            HandleReplyPaper(result);
-            ApplyAutonomousMemory(result);
+            if (!result.TryUseSelection(() =>
+            {
+                HandleDesktopArrangeIntent(result);
+                HandleReplyPaper(result);
+                ApplyAutonomousMemory(result);
+                return true;
+            })) return;
         } // Native-event controls settle only after the first actual display.
         _proactiveRequest = false;
         QueueGeneratedReply(result);
@@ -2139,7 +2191,11 @@ internal sealed partial class BridgeController : MonoBehaviour
         ApiResult fallbackResult,
         string query)
     {
-        if (!IsCurrentDialogue(fallbackResult.DialogueRequest) || !NativeLinkageAllows(fallbackResult)) return;
+        CaptureReceivedPublicReply(recalledResult);
+        if (!IsCurrentDialogue(fallbackResult.DialogueRequest)) return;
+        if(recalledResult!=null&&TransportFailurePresentation.HandlesReplyFailure(recalledResult))
+        {NativeBubblePresenter.CancelUndispatched(fallbackResult,"cancelled","recall_failed");recalledResult.CopyRequestFrom(fallbackResult);_storyRecallInProgress=false;_requestPending=false;OnApiResult(recalledResult);return;}
+        if(!NativeLinkageAllows(fallbackResult))return;
         if (recalledResult != null)
         {
             NativeBubblePresenter.ObserveGenerated(recalledResult);
@@ -2171,7 +2227,11 @@ internal sealed partial class BridgeController : MonoBehaviour
         ApiResult fallbackResult,
         string query)
     {
-        if (!IsCurrentDialogue(fallbackResult.DialogueRequest) || !NativeLinkageAllows(fallbackResult)) return;
+        CaptureReceivedPublicReply(recalledResult);
+        if (!IsCurrentDialogue(fallbackResult.DialogueRequest)) return;
+        if(recalledResult!=null&&TransportFailurePresentation.HandlesReplyFailure(recalledResult))
+        {NativeBubblePresenter.CancelUndispatched(fallbackResult,"cancelled","recall_failed");recalledResult.CopyRequestFrom(fallbackResult);_memoryRecallInProgress=false;_requestPending=false;OnApiResult(recalledResult);return;}
+        if(!NativeLinkageAllows(fallbackResult))return;
         if (recalledResult != null)
         {
             NativeBubblePresenter.ObserveGenerated(recalledResult);
@@ -2517,17 +2577,20 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void TryScheduleReflection()
     {
+        RefreshReflectionCadence();
         TickReflectionContinuation();
         if (SharedActivityRunning || SharedActivityUiBusy) return;
         if (!_config.ReflectionEnabled || !_systemReady || !_reflectionWindow.InitializationSucceeded)
             return;
+        if(!_client.CanStartOpenAIBackground(_config,"reflection"))return;
         // Foreground preparation gets its short critical segment first; drafts,
         // network wait and ordinary display do not invalidate a source window.
         if (_reflectionInProgress || !ReflectionMayPrepare())
             return;
 
         bool testTrigger = _config.ReflectionTestTrigger && !_lastReflectionTestTrigger;
-        if (!testTrigger && (Time.unscaledTime < _nextReflectionAt || Time.unscaledTime < _nextReflectionPreparationAt))
+        if (!testTrigger && (ReflectionClock() < _nextReflectionPreparationAt
+            || ReflectionClock() < _nextReflectionAt && !_reflectionDialogueMayBypassCooldown))
             return;
         if (NativeStateInspector.IsNativeQuietForMod())
             return;
@@ -2537,25 +2600,44 @@ internal sealed partial class BridgeController : MonoBehaviour
             : double.PositiveInfinity;
         if (_reflectionWindow.Snapshot.Work is { } recovery)
         {
+            // Frozen work keeps its original cooldown/retry route. A newly
+            // delivered dialogue cannot turn it into a second fresh request.
+            if (!testTrigger && ReflectionClock() < _nextReflectionAt) return;
+            _reflectionDialogueMayBypassCooldown = false;
             if (idleSeconds < _config.ReflectionMinIdleSeconds || !ReflectionMayApply(recovery.Result)) return;
             if (recovery.Result != null)
             {
-                _nextReflectionAt = Time.unscaledTime + EffectiveReflectionGapSeconds();
-                _memory.ResumeReflectionWork(_reflectionWindow, out string recoveryReason, out _);
+                _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
+                _memory.ResumeReflectionWork(_reflectionWindow, out string recoveryReason, out ReflectionChainOutcome? recoveryChains);
+                CompleteResumedReflectionCadence(recovery.Request.RequestId, recoveryReason, recoveryChains, localRecovery: true);
                 NativeEventLog.Trace("memory.reflection.recovered", "mod", "system", "reflection recovery checked without model call",
                     "work=" + recovery.Request.RequestId + ";reason=" + recoveryReason + ";pending=" + (_reflectionWindow.Snapshot.Work != null));
             }
             else if (!string.IsNullOrWhiteSpace(_config.ApiKey) && !string.IsNullOrWhiteSpace(_config.ReflectionModel))
             {
+                if (!testTrigger && !_reflectionCadence.RetryDue(ReflectionClock(), recovery.Request.RequestId)) return;
                 if (!QueueReflectionPreparation(new(recovery.Window, false, MemoryStore.CountReflectionDialogueLines(recovery.Window)), recovery))
                     _memory.CancelReflectionWork(_reflectionWindow);
             }
             return;
         }
+        if (_memory.ReadB1ReflectionJournal()?.Work is {} b1Recovery)
+        {
+            if (!testTrigger && ReflectionClock() < _nextReflectionAt) return;
+            _reflectionDialogueMayBypassCooldown = false;
+            if (idleSeconds < _config.ReflectionMinIdleSeconds || !B1ReflectionMayApply()) return;
+            var recoveryWindow = _memory.B1ReflectionRecoveryWindow(b1Recovery);
+            QueueReflectionPreparation(new(recoveryWindow, false, MemoryStore.CountReflectionDialogueLines(recoveryWindow)));
+            return;
+        }
+        if (_memory.B1ReflectionOpportunityAlreadyUsed(_reflectionWindow)) return;
         if (string.IsNullOrWhiteSpace(_config.ApiKey) || string.IsNullOrWhiteSpace(_config.ReflectionModel)) return;
-        ReflectionHistorySelection selection = _memory.SelectPendingReflectionHistory(_reflectionWindow.Snapshot);
+        if (!testTrigger && !ReflectionProgressiveProbeDue()) return;
+        var selection = InspectReflectionCadence(testTrigger);
+        if (selection == null) return;
         IReadOnlyList<MemoryTurn> pendingWindow = selection.History;
         int newDialogueLines = MemoryStore.CountReflectionDialogueLines(pendingWindow);
+        bool currentDialogue = CurrentDialogueReflection(selection);
         // Choose the material after preserving the existing opportunity floor.
         // A smaller recent prefix may use a pause already earned by pending old
         // exchanges; it does not create another timer, request or concurrency slot.
@@ -2599,17 +2681,42 @@ internal sealed partial class BridgeController : MonoBehaviour
                 requestedByModel,
                 resumedOpportunity,
                 incompleteOpportunity,
-                budgetOpportunityLines))
+                budgetOpportunityLines,
+                currentDialogue))
             return;
+
+        if (!testTrigger && !currentDialogue && !requestedByModel && !_reflectionProgressiveCadence.Due(ReflectionClock()))
+        {
+            TraceReflectionScheduleWait("progressive_old_material", _reflectionProgressiveCadence.NextAt, selection);
+            return;
+        }
+        if (!testTrigger && !ReflectionOpportunityDue(currentDialogue, requestedByModel))
+        {
+            TraceReflectionScheduleWait("ordinary_cooldown", _nextReflectionAt, selection);
+            return;
+        }
 
         string latestInput = pendingWindow.LastOrDefault()?.EventId ?? "";
         if (latestInput.Length == 0)
             return;
         if (!testTrigger && !selection.Recent && latestInput == _reflectionWindow.InputId)
             return;
+        // Fair service changes only the material of this already admitted pass.
+        // Re-running the opportunity floor on a smaller old prefix would leave
+        // both lanes stuck; skipping the floor before selection would add calls.
+        // Preserve bounded old-material service when its lane is due. It must
+        // not take away a timely dialogue's opportunity during an old-lane wait.
+        if (testTrigger || _reflectionProgressiveCadence.Due(ReflectionClock()) && ReflectionClock() >= _nextReflectionAt)
+            selection = _memory.BalancePendingReflectionHistory(_reflectionWindow.Snapshot, selection);
+        pendingWindow = selection.History;
+        newDialogueLines = MemoryStore.CountReflectionDialogueLines(pendingWindow);
+        currentDialogue = CurrentDialogueReflection(selection);
+        resumedPending = _memory.HasResumedReflectionExchange(pendingWindow);
         if (!QueueReflectionPreparation(selection))
             return;
         _lastReflectionTestTrigger = testTrigger || _lastReflectionTestTrigger;
+        _lastReflectionScheduleWait = "";
+        _reflectionScheduleWaitProgressive = false;
         NativeEventLog.Trace("memory.reflection.start", "mod", "system",
             "Lilith started a quiet reflection",
             "entries=" + _memory.CountAutonomousMemoriesReadOnly()
@@ -2618,6 +2725,10 @@ internal sealed partial class BridgeController : MonoBehaviour
             + ";new_turns=" + newDialogueLines
             + ";source_fragments=" + pendingWindow.Count
             + ";selection_lane=" + (selection.Recent ? "recent" : "backlog")
+            + ";scheduling_reason=" + (requestedByModel ? "model_request" : currentDialogue ? "current_dialogue_pause" : "progressive_old_material")
+            + ";current_dialogue=" + currentDialogue
+            + ";progressive_step=" + _reflectionProgressiveCadence.Step
+            + ";progressive_remaining_seconds=" + _reflectionProgressiveCadence.Remaining(ReflectionClock()).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
             + ";resumed_pending=" + resumedPending
             + ";budget_limited=" + selection.BudgetLimited
             + ";available_new_turns=" + selection.AvailableDialogueLines);
@@ -2628,11 +2739,13 @@ internal sealed partial class BridgeController : MonoBehaviour
     {
         // True completion/failure earns the existing bounded cooldown. UI
         // activity and deferred steps never reset an already earned chance.
-        _nextReflectionAt = Time.unscaledTime + EffectiveReflectionGapSeconds();
+        _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
         _reflectionInProgress = false;
         if (result == null)
         {
             bool retained = _reflectionWindow.EndPass(null);
+            CompleteReflectionCadenceAttempt(false, true);
+            ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(snapshot, null, null, "no_usable_result", _reflectionWindow.Snapshot.Work != null));
             NativeEventLog.Trace("memory.reflection.empty", "mod", "system",
                 "reflection returned no usable result", "window_retained=" + retained);
             return;
@@ -2641,10 +2754,13 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (!_memory.SaveReflectionResponse(_reflectionWindow, snapshot, result))
         {
             _reflectionWindow.EndPass(null);
+            CompleteReflectionCadenceAttempt(false, true);
+            ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(snapshot, result, null, "response_save_failed", _reflectionWindow.Snapshot.Work != null));
             NativeEventLog.Trace("memory.reflection.response_save_failed", "mod", "system", "reflection work retained before artifact writes");
             return;
         }
         _memory.ResumeReflectionWork(_reflectionWindow, out string reason, out ReflectionChainOutcome? recoveredChains);
+        CompleteResumedReflectionCadence(snapshot.RequestId, reason, recoveredChains, localRecovery: false);
         if (recoveredChains == null) return;
         ReflectionChainOutcome chains = recoveredChains;
         bool saved = chains.NoteReason == "saved" || chains.NoteReason == "settled"
@@ -2706,7 +2822,7 @@ internal sealed partial class BridgeController : MonoBehaviour
                 DayTaskResult? result = await _client.RunDayTaskAsync(
                     requestConfig,
                     snapshot.Source,
-                    System.Threading.CancellationToken.None).ConfigureAwait(false);
+                    System.Threading.CancellationToken.None, snapshot.SelectionGeneration).ConfigureAwait(false);
                 _mainThread.Enqueue(() => OnDayTaskResult(result, snapshot));
             }
             catch (Exception error)

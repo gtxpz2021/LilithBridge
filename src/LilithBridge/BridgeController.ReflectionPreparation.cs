@@ -16,12 +16,13 @@ internal sealed partial class BridgeController
 
     // Waiting for an existing foreground HTTP or showing its reply is not a
     // source invalidation. Yield only the foreground's preparation segment.
-    private bool ReflectionMayPrepare() =>
+    internal Func<bool>? ReflectionPreparationReadyForTests;
+    private bool ReflectionMayPrepare() => ReflectionPreparationReadyForTests?.Invoke() ?? (
         !(_requestPending && (_activeDialogue == null || _activeDialogue.HttpAttempts == 0
             || _activeDialogue.WaitStatus.Text == RequestWaitStatus.Preparing))
         && !_annotationInProgress && !_noteSupplementInProgress
         && !SharedActivityRunning && !SharedActivityUiBusy
-        && !_sessionState.NativeDialogueActive && !_sessionState.PlayerOptionsShowing;
+        && !_sessionState.NativeDialogueActive && !_sessionState.PlayerOptionsShowing);
 
     private bool ReflectionMayApply(ReflectionResult? response)
     {
@@ -60,6 +61,13 @@ internal sealed partial class BridgeController
     private bool QueueReflectionPreparation(ReflectionHistorySelection selection, ReflectionWork? recovery = null)
     {
         if (_reflectionPreparation != null) return false;
+        if (recovery == null && _reflectionWindow.Snapshot.Work == null)
+        {
+            if (_memory.B1ReflectionOpportunityAlreadyUsed(_reflectionWindow)) return false;
+            // Timely normal dialogue may yield a completed pass's cooldown;
+            // this candidate does not extend that bypass to B1-only work.
+            if (ReflectionClock() >= _nextReflectionAt && TryQueueB1Reflection(selection)) return true;
+        }
         var total = Stopwatch.StartNew();
         var memory = _memory;
         var config = _config;
@@ -69,6 +77,19 @@ internal sealed partial class BridgeController
         if (owner == null) return false;
         long coveredFactActivity = memory.MeasureMemoryActivity();
         long coveredModelRequest = _reflectionWindow.ModelRequestVersion;
+        bool capturedModelRequest = _reflectionWindow.ModelRequested;
+        bool progressiveService = recovery == null
+            ? !capturedModelRequest && !CurrentDialogueReflection(selection)
+            : recovery.Request.RequestOriginContext == null && recovery.Request.PurposeContexts.Length == 0
+                && !(MemoryStore.CountReflectionDialogueLines(recovery.Window) >= 2
+                    && recovery.Window.Where(t => t.Role == "user").All(t => t.ReflectionExchangeComplete
+                        && t.SessionId == memory.ReviewSessionIdentity));
+        var capturedRequestOrigin = _reflectionWindow.Snapshot.RequestOrigin;
+        var capturedPurposes = _reflectionWindow.Snapshot.PendingIntents?.ToArray();
+        owner.IntentTrace = null; // Recovery keeps its existing durable work ID; original trace may be absent.
+        if (recovery == null) owner.IntentTrace = new(owner.Id, owner.Generation, coveredModelRequest,
+            _reflectionWindow.ModelRequested, "normal_reflection", selection.Recent ? "recent" : "backlog",
+            owner.Window.Select(t => t.EventId).ToArray());
         double windowMs = total.Elapsed.TotalMilliseconds - runtimeMs;
         _reflectionPreparation = owner; _reflectionInProgress = true;
         // Reuse the existing cancellable ready/index/query budget. This work is
@@ -105,8 +126,11 @@ internal sealed partial class BridgeController
                 { CancelReflectionPreparation("window_or_scope_changed"); return; }
                 double ownerQueueMs = total.Elapsed.TotalMilliseconds - workerMs;
                 var finalTiming = Stopwatch.StartNew();
-                var snapshot = recovery?.Request ?? memory.CaptureReflectionRequest(owner.Window, owner.SemanticResult, owner);
+                var snapshot = recovery?.Request ?? memory.CaptureReflectionRequest(owner.Window, owner.SemanticResult, owner, capturedPurposes);
                 if (snapshot == null) { CancelReflectionPreparation("window_no_longer_available"); return; }
+                if (recovery == null)
+                    snapshot = capturedPurposes is { Length: > 0 } ? memory.BindReflectionPurposes(snapshot, capturedPurposes)
+                        : memory.BindReflectionRequestOrigin(snapshot, capturedRequestOrigin, coveredModelRequest, capturedModelRequest);
                 NativeEventLog.Trace("memory.reflection.prepared", "mod", "system", "reflection materials prepared without consuming the window",
                     "owner=" + owner.Id + ";status=" + owner.SemanticStatus + ";budget_ms=" + budget
                     + ";runtime_tick_ms=" + runtimeMs.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
@@ -135,7 +159,12 @@ internal sealed partial class BridgeController
                                 if (!memory.BeginReflectionWork(_reflectionWindow, snapshot, selection))
                                 { _reflectionWindow.EndPass(null); return false; }
                                 owner.Staged = true;
-                                _nextReflectionAt = UnityEngine.Time.unscaledTime + EffectiveReflectionGapSeconds();
+                                RefreshReflectionCadence();
+                                _reflectionCadence.Started(snapshot.RequestId);
+                                _reflectionProgressiveCadence.Started(snapshot.RequestId, progressiveService);
+                                _reflectionDialogueMayBypassCooldown = false;
+                                _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
+                                ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Dispatch(snapshot, owner.IntentTrace));
                                 sent = send(); return true;
                             }, recovering: recovery != null);
                             if (!allowed && recovery != null) memory.CancelReflectionWork(_reflectionWindow);
@@ -167,7 +196,7 @@ internal sealed partial class BridgeController
                         }
                         else
                         {
-                            _nextReflectionPreparationAt = UnityEngine.Time.unscaledTime + ReflectionPreparationRetrySeconds;
+                            _nextReflectionPreparationAt = ReflectionClock() + ReflectionPreparationRetrySeconds;
                             NativeEventLog.Trace("memory.reflection.not_sent", "mod", "system", "reflection window remains unconsumed", "owner=" + owner.Id);
                         }
                         _reflectionPreparation = null; _reflectionInProgress = false;
@@ -182,6 +211,7 @@ internal sealed partial class BridgeController
     private bool CurrentReflectionPreparation(ReflectionPreparation owner, MemoryStore memory) =>
         ReferenceEquals(owner, _reflectionPreparation) && ReferenceEquals(memory, _memory) && !owner.Token.IsCancellationRequested
         && !_semanticDestroyed && _config.ReflectionEnabled
+        && (_b1ReflectionOwner == null || CurrentB1Reflection(owner, memory))
         && memory.SemanticDataRoot == owner.DataRoot && memory.ReviewSessionIdentity == owner.SessionId;
 
     private void CancelReflectionPreparation(string reason)
@@ -189,9 +219,17 @@ internal sealed partial class BridgeController
         var owner = _reflectionPreparation;
         if (owner == null) return;
         _reflectionPreparation = null; _reflectionContinuation = null; owner.Cancel(); _reflectionInProgress = false;
-        if (owner.Staged) _nextReflectionAt = UnityEngine.Time.unscaledTime + EffectiveReflectionGapSeconds();
-        else _nextReflectionPreparationAt = UnityEngine.Time.unscaledTime + ReflectionPreparationRetrySeconds;
+        CancelB1Reflection(reason);
+        if (owner.Staged)
+        {
+            _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
+            _reflectionDialogueMayBypassCooldown = false;
+        }
+        else _nextReflectionPreparationAt = ReflectionClock() + ReflectionPreparationRetrySeconds;
         if (owner.Staged) _reflectionWindow.EndPass(null);
+        ReflectionIntentTrace.Emit(() => new { stage = "preparation_cancelled", capture = owner.IntentTrace,
+            preparation_id = owner.Id, staged = owner.Staged, reason,
+            coverage = "no_semantic_resolution_claim;existing_window_retention_unchanged" });
         NativeEventLog.Trace("memory.reflection.preparation_cancelled", "mod", "system", "reflection window retained",
             "owner=" + owner.Id + ";reason=" + reason + ";staged=" + owner.Staged);
         owner.Dispose();

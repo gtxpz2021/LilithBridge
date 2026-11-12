@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "file": "first-game.collection.jsonl",
+  "bytes": 1794674,
+  "sha256": "6f43c95bfc9d4713474b7bc182aff9934a262ea7595419198fd0b0ca7ede622f",
+  "work": "The NOexistenceN of you AND me",
+  "rows": 2076,
+  "scripts": 18,
+  "source_zip": {
+    "file": "Lilith_Original_Corpus_20260826.zip",
+    "sha256": "781e3035998a6576e76a245abf1ba199b7b58d325080434b7a12326f38eefa03",
+    "total_entries": 97,
+    "entire_zip_distributed": false
+  },
+  "source_entry": {
+    "path": "origins/first_game_all.jsonl",
+    "bytes": 975285,
+    "sha256": "e66d27058cd1850e80094df921b152bbf58bd88c3432c6f0066f8975fd34dba2"
+  },
+  "preparation": {
+    "source_record_preserved_rows": 2076,
+    "source_record_differences": 0,
+    "curated_alias_rows": 12,
+    "command_rows": 17,
+    "attribution_verified": false,
+    "branch_path_known": false,
+    "script_order_is_execution_graph": false,
+    "cleaned_localization_and_inferred_roles": true
+  },
+  "rights": {
+    "project_mit_applies_to_original_text": false,
+    "rights_holder_redistribution_permission_evidence": "not_established in existing preparation manifest",
+    "public_release_performed": false
+  },
+  "install": {
+    "target": "<confirmed-data-root>/private-story/first-game.collection.jsonl",
+    "write_policy": "absent only; existing byte-identical or different files preserved",
+    "existing_story_selection_and_grants": "default preserve prior nonempty selection/explicit disable; explicit switch may merge only story; explicit model-use grants story domain only",
+    "new_or_empty_selection": "explicit wizard selection configures actual corpus path, local enabled and on_demand in protected commit"
+  },
+  "excluded": "second game, old persona prompts, extraction/generation scripts, whole source zip, user conversation/configuration/credentials"
+}

@@ -4,8 +4,8 @@ using System.Windows.Forms;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-[assembly: AssemblyTitle("LilithBridge RC3 Fix2 Installer")]
-[assembly: AssemblyVersion("0.1.3.0")]
+[assembly: AssemblyTitle("LilithBridge Selector Generated Save Cache Supply Input History and Receipt Integration Research Installer")]
+[assembly: AssemblyVersion("0.1.4.13")]
 [assembly: ComVisible(false)]
 [assembly: TargetFramework(".NETFramework,Version=v4.8")]
 namespace LilithSetup

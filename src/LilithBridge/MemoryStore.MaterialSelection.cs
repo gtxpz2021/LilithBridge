@@ -71,6 +71,8 @@ internal sealed partial class MemoryStore
     /// re-deriving it from the query.
     /// </summary>
     internal RelationshipMaterialSelection SelectRequestRelationshipMaterial(string? query)
+        =>SelectRequestRelationshipMaterialCore(query,true);
+    private RelationshipMaterialSelection SelectRequestRelationshipMaterialCore(string? query,bool trace)
     {
         string text = query ?? "";
         IReadOnlyList<MemoryTurn> candidates = FilterMentionSupply(GetRelationshipReadings(24));
@@ -98,7 +100,7 @@ internal sealed partial class MemoryStore
         string reason = selected == null
             ? "no_current_relevant_material"
             : explicitRelationship ? "relationship_question" : "topic_or_source_match";
-        NativeEventLog.Trace("material.selection", "mod", "system", "relationship material selection",
+        if(trace)NativeEventLog.Trace("material.selection", "mod", "system", "relationship material selection",
             "candidate_count=" + candidates.Count + ";selected=" + (selected?.EventId ?? "none")
             + ";reason=" + reason + ";explicit_relationship_question=" + explicitRelationship);
         return new RelationshipMaterialSelection(selected, reason, text, RelationshipReadingSource);

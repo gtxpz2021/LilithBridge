@@ -28,6 +28,10 @@ namespace LilithSetup
         // product tree dbc40c7b147198696ec86d3adef0bc2574fe909a. Only result-state wording and
         // bigram string construction changed; persisted Work/recovery is unchanged.
         // Final byte evidence: docs/reviews/20261031-internal-rc3-freeze.md.
+        // Unified caf0be7e / 6148f5f9 / idle 1e701134 are NOT added: new reader
+        // requirements, pending intents and B1 control generation need a bound
+        // recovery matrix. Finish pending Work in the old version, keep backups,
+        // or stop for a reviewed migration. Never delete/clear the journal here.
         internal static bool SupportsWork(string imageHash)
         {
             return imageHash == "3a651d499e9ca80096d0428e4cf9d2b1d669154a5c8ef73a0c40b773f85093a4"
@@ -64,9 +68,77 @@ namespace LilithSetup
         { SetupCore.Require(value.Keys.All(k => keys.Contains(k, StringComparer.Ordinal)), "LBINSTALL_WORK_STATE_UNKNOWN"); }
         static bool Integer(object value)
         { return (value is int || value is long) && Convert.ToInt64(value) >= 0; }
-        static void Receipt(Dictionary<string, object> doc, bool target)
+        // Completed cursors only. This is deliberately separate from SupportsWork:
+        // reading a serial envelope is not proof of unfinished settlement recovery.
+        // .89 is included only for the reviewed no-Work cursor reader, not B1,
+        // generated-expression persistence, transfer journals or Work replay.
+        internal static bool SupportsCompletedReceipt(string imageHash)
         {
-            Known(doc, "InputId", "FactActivity", "ModelRequested", "RecentConsumed", "RecentInitialized", "Work");
+            return imageHash == "caf0be7e84531a1922cf5eb5c300f57434fcbd37286cb1540c4001aab2c80325"
+                || imageHash == "6148f5f9139d998cd26ddb877ff12c1b760d3395dbe21d04bb150cfaa4855a3a"
+                || imageHash == "1e7011343ce0e601224ce3bd794b61197fce03aa5576d20ff88b331cfcd0a249"
+                || imageHash == "c73a3973c4df32fff90a47d5e980637c2607c435e6fee348e21e54941428643b"
+                // UI-only history change; persisted readers and Work sources unchanged.
+                || imageHash == "f7c67ee6f305eda6758f546b6eac34d7a4a211095ead0d481fbd2342e32d4a30"
+                // Supply projection only: persisted readers/Work unchanged, bound source and controlled-data proof.
+                || imageHash == "4b53c5366d77ed61b827d69380d04cdb729a1d93cdf98848d07e2cf61ca60e80"
+                // Save-status presentation cache only; persistence unchanged.
+                || imageHash == "89c86d1fb43132d0ed46037ae6d15b0906979d7b6a30353c3d1257203e997c9e"
+                // Selected MAIN generated presentation only; persisted readers unchanged.
+                || imageHash == "9ce6835396b4fd97925cdbd0685399f4bcb6336977ca762137c2c4c80cbd697e"
+                // .103 and model-options variant: same persisted readers, exact bound images.
+                || imageHash == "83168a8fd166b87c56d0ebc3fa9a5cae0f045b2f07b5622e38cb180a3bc54dda"
+                || imageHash == "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7"
+                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff";
+        }
+        static void Serial(object value)
+        {
+            if (Integer(value)) return;
+            var serial = value as Dictionary<string, object>;
+            SetupCore.Require(serial != null, "LBINSTALL_WORK_STATE_UNKNOWN");
+            Known(serial, "reader", "value");
+            SetupCore.Require(serial.Count == 2 && Integer(DataJson.Get(serial, "value"))
+                && DataJson.Get(serial, "reader") is string, "LBINSTALL_WORK_STATE_UNKNOWN");
+            string reader = (string)serial["reader"];
+            SetupCore.Require(reader == "reflection-purpose-journal-v1"
+                || reader == "reflection-purpose-expression-journal-v1", "LBINSTALL_RECEIPT_READER_UNSUPPORTED");
+        }
+        static void Origin(object value)
+        {
+            if (value == null) return;
+            var origin = value as Dictionary<string, object>;
+            SetupCore.Require(origin != null, "LBINSTALL_WORK_STATE_UNKNOWN");
+            Known(origin, "SessionId", "UserEventId", "RequestId");
+            foreach (string key in new[] { "SessionId", "UserEventId", "RequestId" })
+            {
+                string text = DataJson.Get(origin, key) as string;
+                SetupCore.Require(!String.IsNullOrWhiteSpace(text) && text.Length <= 256, "LBINSTALL_WORK_STATE_UNKNOWN");
+            }
+        }
+        static void CompletedFields(Dictionary<string, object> doc, string imageHash)
+        {
+            string[] fields = { "ModelRequestSerial", "RequestOrigin", "PendingIntents", "ImportedTransfers", "RecentPassesSinceBacklog" };
+            if (!fields.Any(doc.ContainsKey)) return;
+            if (doc.ContainsKey("ModelRequestSerial")) Serial(doc["ModelRequestSerial"]);
+            Origin(DataJson.Get(doc, "RequestOrigin"));
+            if (doc.ContainsKey("RecentPassesSinceBacklog"))
+                SetupCore.Require(Integer(doc["RecentPassesSinceBacklog"])
+                    && Convert.ToInt64(doc["RecentPassesSinceBacklog"]) <= Int32.MaxValue, "LBINSTALL_WORK_STATE_UNKNOWN");
+            object pending = DataJson.Get(doc, "PendingIntents"), imported = DataJson.Get(doc, "ImportedTransfers");
+            var intents = pending as object[]; var transfers = imported as object[];
+            SetupCore.Require(pending == null || intents != null && intents.All(x => x is Dictionary<string, object>), "LBINSTALL_WORK_STATE_UNKNOWN");
+            SetupCore.Require(imported == null || transfers != null && transfers.All(x => x is string && !String.IsNullOrWhiteSpace((string)x)
+                && ((string)x).Length <= 256) && transfers.Distinct().Count() == transfers.Length, "LBINSTALL_WORK_STATE_UNKNOWN");
+            SetupCore.Require(SupportsCompletedReceipt(imageHash), "LBINSTALL_RECEIPT_TARGET_UNVERIFIED");
+            // These are durable requests/transfer state, not decorative optional
+            // fields. Never drop them or infer that Work==null means quiescent.
+            SetupCore.Require(intents == null || intents.Length == 0, "LBINSTALL_PENDING_INTENTS_REQUIRE_REVIEW");
+            SetupCore.Require(transfers == null || transfers.Length == 0, "LBINSTALL_IMPORTED_TRANSFERS_REQUIRE_REVIEW");
+        }
+        static void Receipt(Dictionary<string, object> doc, bool target, string imageHash)
+        {
+            Known(doc, "InputId", "FactActivity", "ModelRequested", "RecentConsumed", "RecentInitialized", "Work",
+                "ModelRequestSerial", "RequestOrigin", "PendingIntents", "ImportedTransfers", "RecentPassesSinceBacklog");
             SetupCore.Require(DataJson.Get(doc, "InputId") is string && Integer(DataJson.Get(doc, "FactActivity"))
                 && DataJson.Get(doc, "ModelRequested") is bool, "LBINSTALL_WORK_STATE_UNKNOWN");
             if (doc.ContainsKey("RecentInitialized")) SetupCore.Require(doc["RecentInitialized"] is bool, "LBINSTALL_WORK_STATE_UNKNOWN");
@@ -88,6 +160,7 @@ namespace LilithSetup
                 }
             }
             if (target) SetupCore.Require(DataJson.Get(doc, "Work") == null, "LBINSTALL_WORK_STATE_UNKNOWN");
+            CompletedFields(doc, imageHash);
         }
         static void Work(Dictionary<string, object> work)
         {
@@ -107,7 +180,7 @@ namespace LilithSetup
             }
             foreach (string k in new[] { "Dependencies", "RevisionTargets", "NoteHistory", "NoteHistoryPermissions" })
                 if (request.ContainsKey(k)) SetupCore.Require(request[k] is object[] && ((object[])request[k]).All(t => t is Dictionary<string, object>), "LBINSTALL_WORK_STATE_UNKNOWN");
-            Receipt(target, true);
+            Receipt(target, true, null);
             foreach (string k in new[] { "Result", "Progress" })
                 SetupCore.Require(DataJson.Get(work, k) == null || work[k] is Dictionary<string, object>, "LBINSTALL_WORK_STATE_UNKNOWN");
             var result = DataJson.Get(work, "Result") as Dictionary<string, object>;
@@ -148,7 +221,7 @@ namespace LilithSetup
                     SetupCore.Require(f.Length > 0 && f.Length <= 4194304, "LBINSTALL_WORK_STATE_UNKNOWN");
                     using (var copy = new MemoryStream()) { f.CopyTo(copy); bytes = copy.ToArray(); }
                 }
-                var doc = DataJson.Read(new UTF8Encoding(false, true).GetString(bytes)); Receipt(doc, false);
+                var doc = DataJson.Read(new UTF8Encoding(false, true).GetString(bytes)); Receipt(doc, false, imageHash);
                 object value = DataJson.Get(doc, "Work");
                 if (value != null)
                 {
@@ -160,7 +233,9 @@ namespace LilithSetup
             }
             catch (SetupException e)
             {
-                if (e.Message == "LBINSTALL_UNFINISHED_WORK_TARGET_UNVERIFIED") throw;
+                if (new[] { "LBINSTALL_UNFINISHED_WORK_TARGET_UNVERIFIED", "LBINSTALL_RECEIPT_TARGET_UNVERIFIED",
+                    "LBINSTALL_RECEIPT_READER_UNSUPPORTED", "LBINSTALL_PENDING_INTENTS_REQUIRE_REVIEW",
+                    "LBINSTALL_IMPORTED_TRANSFERS_REQUIRE_REVIEW" }.Contains(e.Message)) throw;
                 throw new SetupException("LBINSTALL_WORK_STATE_UNKNOWN");
             }
             catch { throw new SetupException("LBINSTALL_WORK_STATE_UNKNOWN"); }

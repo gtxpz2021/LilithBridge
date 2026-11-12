@@ -14,7 +14,7 @@ internal sealed partial class MemoryStore
             _reflectionCursors.Add(cursor);
             if (cursor.Snapshot.Work is { } existing) return existing.Request.RequestId == request.RequestId;
             var work = new ReflectionWork(request, selection.History.Select(t => t.Copy()).ToArray(),
-                cursor.Snapshot with { Work = null });
+                cursor.Snapshot with { Work = null, RequestOrigin = null, PendingIntents = null });
             if (!SaveReflectionWindow(cursor.DurableSnapshot with { Work = work })) return false;
             cursor.SetWork(work);
             return true;
@@ -39,7 +39,9 @@ internal sealed partial class MemoryStore
         if (!cursor.PassActive && cursor.Snapshot.Work is { } work)
             cursor.BeginPass(work.Target with { Work = work,
                 // A request arriving after the original capture remains pending.
-                ModelRequested = work.Target.ModelRequested || work.RequestedAgain });
+                ModelRequested = work.Target.ModelRequested || work.RequestedAgain,
+                RequestOrigin = cursor.Snapshot.RequestOrigin,
+                PendingIntents = cursor.Snapshot.PendingIntents?.Where(i => !work.Request.PurposeContexts.Any(c => c.Intent.Serial == i.Serial && c.Intent.TagIndex == i.TagIndex)).ToArray() });
     }
 
     // True means the persisted response was handled without another model call.
@@ -60,6 +62,8 @@ internal sealed partial class MemoryStore
             {
                 reason = "source_or_version_changed";
                 CancelReflectionWork(cursor);
+                string observedReason = reason;
+                ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(work.Request, result, null, observedReason, cursor.Snapshot.Work != null));
                 return true;
             }
             ApplyReflectionNote(result, work.Request, work.Progress, out reason, out var outcome);
@@ -67,7 +71,8 @@ internal sealed partial class MemoryStore
             string completion = ReflectionWindow.CompletionReason(reason, outcome);
             if (!ReflectionWindow.RetainsForRetry(completion))
             {
-                CompleteReflectionWindow(cursor, reason, outcome, out _);
+                CompleteReflectionWindow(cursor, reason, outcome, out string cursorReason);
+                ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(work.Request, result, outcome, cursorReason, cursor.Snapshot.Work != null));
                 return true;
             }
             bool saveFailed = outcome.NoteReason == "persistence_failed" || outcome.LessonReason == "persistence_failed"
@@ -78,6 +83,7 @@ internal sealed partial class MemoryStore
             var progress = work with { Progress = outcome, Result = saveFailed ? result : null };
             if (SaveReflectionWindow(cursor.DurableSnapshot with { Work = progress })) cursor.SetWork(progress);
             cursor.EndPass(null);
+            ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(work.Request, result, outcome, completion, cursor.Snapshot.Work != null));
             return true;
         }
     }

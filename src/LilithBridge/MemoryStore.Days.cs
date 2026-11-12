@@ -11,6 +11,7 @@ namespace LilithBridge;
 internal sealed record DaySourceDependency(string Kind, string EventId, string Fingerprint);
 internal sealed record DayTaskSnapshot(string RequestId, string Source, IReadOnlyList<MemoryTurn> Evidence)
 {
+    public long SelectionGeneration { get; init; }
     public IReadOnlyList<DaySourceDependency> Dependencies { get; init; } = Array.Empty<DaySourceDependency>();
     public IReadOnlyList<MemoryTurn> RebuildTargets { get; init; } = Array.Empty<MemoryTurn>();
 }
@@ -22,6 +23,7 @@ internal sealed class DayArtifactSupport
 }
 internal sealed class DayTaskResult
 {
+    [System.Text.Json.Serialization.JsonIgnore] internal B1SelectionSnapshot? SelectionSnapshot { get; set; }
     public string Consolidation { get; set; } = "";
     public string Dream { get; set; } = "";
     public DayArtifactSupport? ConsolidationSupport { get; set; }
@@ -60,6 +62,8 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         {
             if (!_longTermEnabled || !_experienceArchiveEnabled) return null;
+            long selectionGeneration = CurrentB1SelectionGeneration();
+            if (selectionGeneration < 0) return null;
             var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
             var reviewed = _dreams.Where(t => t.Kind == DayReceiptKind).SelectMany(t => t.SourceDayIds).ToHashSet(StringComparer.Ordinal);
             // A legacy mixed footprint is historical, not a semantic support map.
@@ -143,11 +147,20 @@ internal sealed partial class MemoryStore
                     status = "historical_unknown_support; target only, not current evidence" })
             });
             return new(Guid.NewGuid().ToString("N"), source, evidence.AsReadOnly())
-                { Dependencies = dependencies.AsReadOnly(), RebuildTargets = targets.AsReadOnly() };
+                { SelectionGeneration = selectionGeneration, Dependencies = dependencies.AsReadOnly(), RebuildTargets = targets.AsReadOnly() };
         }
     }
 
     public bool ApplyDayTask(DayTaskResult result, DayTaskSnapshot request, out string reason)
+    {
+        string localReason = "selection_changed"; bool saved = false;
+        if (result != null && (result.SelectionSnapshot == null || result.SelectionSnapshot.Generation == request.SelectionGeneration))
+            TryUseB1SelectionGeneration(request.SelectionGeneration, () =>
+            { saved = ApplyDayTaskCore(result, request, out localReason); return true; });
+        reason = localReason; return saved;
+    }
+
+    private bool ApplyDayTaskCore(DayTaskResult result, DayTaskSnapshot request, out string reason)
     {
         lock (_experienceLock)
         {
@@ -341,7 +354,7 @@ internal sealed partial class MemoryStore
         })))));
 
     private bool IsDayArtifactCurrent(MemoryTurn turn) =>
-        IsDayArtifactCurrent(turn, CreateMaterialPermissionEvaluator());
+        IsDayArtifactCurrent(turn, CreateMaterialPermissionEvaluator(borrowArchive:_b1BorrowedArchive!=null));
 
     // Current supply needs both: valid declared support (the ordinary currentness rules) and
     // a permission/existence view of what the request actually read. A footprint that was
@@ -362,8 +375,18 @@ internal sealed partial class MemoryStore
         Func<DaySourceDependency, bool>? materialPermitted = null,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
     {
-        materialPermitted ??= CreateMaterialPermissionEvaluator();
-        var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        bool borrowed = _b1BorrowedArchive != null;
+        var archive = GetExperienceValidationView();
+        materialPermitted ??= CreateMaterialPermissionEvaluator(borrowArchive:borrowed);
+        var denied = SuppressedExperienceIds();
+        if (!borrowed && archive.HasVisibleAmbiguity(denied)) throw new ArgumentException("Ambiguous experience event ids");
+        // Preserve the archive-only source domain. The B1 overlay is a
+        // resolver convenience, not a replacement for day provenance.
+        bool TryRaw(string id,out MemoryTurn source)
+        {
+            if(!denied.Contains(id)&&archive.TryGetUnique(id,out var found)){source=found;return true;}
+            source=null!;return false;
+        }
         var notes = ReflectionNoteView(restoredNotes).GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var days = _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind)
             .GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
@@ -373,9 +396,11 @@ internal sealed partial class MemoryStore
         bool Visit(DaySourceDependency dependency)
         {
             string key = dependency.Kind + ":" + dependency.EventId;
-            var index = dependency.Kind == "utterance" ? raw : dependency.Kind == "note" ? notes : days;
+            MemoryTurn? source;
+            bool found=dependency.Kind=="utterance"?TryRaw(dependency.EventId,out source)
+                :dependency.Kind=="note"?notes.TryGetValue(dependency.EventId,out source):days.TryGetValue(dependency.EventId,out source);
             if (dependency.Kind is not ("utterance" or "note" or "day")
-                || !index.TryGetValue(dependency.EventId, out MemoryTurn? source)
+                || !found || source==null
                 || DayDependency(dependency.Kind, source) != dependency) return false;
             if (resolved.Contains(key)) return true;
             if (!visiting.Add(key)) return false;
@@ -400,7 +425,7 @@ internal sealed partial class MemoryStore
                         && FootprintPermitted(source, materialPermitted)
                         && source.SourceDependencies.All(Visit);
                 if (valid)
-                    valid = source.SourceEventIds.All(id => raw.TryGetValue(id, out var t)
+                    valid = source.SourceEventIds.All(id => TryRaw(id, out var t)
                         && Visit(DayDependency("utterance", t)));
                 if (valid && dependency.Kind == "note")
                     valid = source.SourceDayIds.All(id => days.TryGetValue(id, out var t)

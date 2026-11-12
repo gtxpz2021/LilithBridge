@@ -1,0 +1,7 @@
+Package build: 0.1.4.13-normal-use-prep5
+Product version: 0.3.150.103-generated.validation.local.candidate.1
+Product SHA256: e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff
+Installer SHA256: b344bcebace3d5b1caccbbacf64f5a07ff2f93ba2d65b52c5583c5630242fafb
+Handoff SHA256: 67c3a99d032bf511adc6f65cee358445901bdae93fa5a862a10c6f5b333a845b
+Installer schema: 12 (unchanged protocol)
+Frozen candidate for coordinator publication; this task has not published or deployed. e4 is not prior831/afd unchanged manual-tested bytes.

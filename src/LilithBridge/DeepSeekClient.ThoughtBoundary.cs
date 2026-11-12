@@ -36,7 +36,8 @@ internal sealed partial class DeepSeekClient
         DialogueRequest request) => sources.Concat(request.ReviewSourceViews
             .Where(pair => request.ReviewSourceRecords.TryGetValue(pair.Key, out var turn) && IsPublicViewUtterance(turn))
             .SelectMany(pair => pair.Value.Select(view => new PublicViewSource(
-                request.ReviewSourceRecords[pair.Key].EventId + ":offset=" + view.Offset,
+                request.ReviewSourceRecords[pair.Key].EventId + ":offset=" + view.Offset
+                    + ":basis=" + (view.RawTextPreserved ? "raw_utf16" : "legacy_clean_utf16"),
                 "reviewed_public_reply_excerpt", view.Text))))
         .GroupBy(s => s.Id, StringComparer.Ordinal).Select(g => g.First()).ToArray();
 

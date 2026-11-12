@@ -13,8 +13,10 @@ internal sealed class NativeHistoryWindow
     private TMP_Text? _toast;
     private TMP_InputField? _bodyInput;
     private RectTransform? _clip;
+    private RectTransform? _panel,_viewport;
     private HistoryPageText? _page;
     private readonly HistoryCopyGesture _copyGesture = new();
+    private readonly NativeUiMonitorLease _monitorLease = new();
     private float _toastUntil;
     private TMP_InputField? _search;
     private ScrollRect? _scroll;
@@ -27,18 +29,23 @@ internal sealed class NativeHistoryWindow
         _style = style; _close = close;
         if (_root == null) Create(owner);
         _view = new DialogueHistoryView(snapshot);
-        _search!.text = ""; _root!.SetActive(true); Render();
+        _search!.text = ""; _root!.SetActive(true); _monitorLease.Hold();
+        NativeUiViewport.Tick();
+        Canvas.ForceUpdateCanvases();
+        FitPanel();
+        Render();
         _search.ActivateInputField();
     }
     public void Hide()
     {
+        _monitorLease.Clear();
         NativeUiInputGate.ClaimPointer();
         _copyGesture.Reset(); _page = null;
         if (_root != null) _root.SetActive(false);
         if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
         _view = null;
     }
-    public void Destroy() { if (_root != null) UnityEngine.Object.Destroy(_root); _root = null; _view = null; }
+    public void Destroy() { _monitorLease.Clear(); if (_root != null) UnityEngine.Object.Destroy(_root); _root = null; _view = null; }
     private void Search() { _view?.Search(_search?.text); Render(); }
     private void Render()
     {
@@ -55,7 +62,9 @@ internal sealed class NativeHistoryWindow
     }
     public void Tick()
     {
-        if (!IsOpen) return;
+        if (!IsOpen) { _monitorLease.Clear(); return; }
+        _monitorLease.Hold();
+        FitPanel();
         if (_toast != null && Time.unscaledTime >= _toastUntil) _toast.text = "";
         if (!Application.isFocused && !NativeInput.IsGameForeground()) { _copyGesture.Reset(); return; }
         Vector3 pointer = Input.mousePosition;
@@ -100,11 +109,12 @@ internal sealed class NativeHistoryWindow
         var canvas = _root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.sortingOrder = 10010;
         var scaler = _root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920f,1080f); scaler.matchWidthOrHeight = .5f;
-        Transform monitorViewport = NativeUiViewport.Create(canvas);
-        var shield = Box("ModalPointerShield",monitorViewport,Vector2.zero,Vector2.zero);
+        NativeUiViewport.PrepareMonitorCanvas(canvas);
+        var viewportRoot=NativeUiViewport.Create(canvas);_viewport=viewportRoot.GetComponent<RectTransform>();
+        var shield = Box("ModalPointerShield",viewportRoot,Vector2.zero,Vector2.zero);
         shield.anchorMin=Vector2.zero;shield.anchorMax=Vector2.one;shield.offsetMin=Vector2.zero;shield.offsetMax=Vector2.zero;
         shield.gameObject.AddComponent<Image>().color=new Color(0,0,0,.20f);
-        var panel = Box("HistoryPanel", monitorViewport, new Vector2(0,0), new Vector2(760,690));
+        var panel = Box("HistoryPanel", viewportRoot, new Vector2(0,0), new Vector2(760,690));_panel=panel;
         panel.gameObject.AddComponent<CanvasRenderer>(); panel.gameObject.AddComponent<Image>().color = new Color(.04f,.05f,.08f,.98f);
         Label(panel,"历史",new Vector2(-245,308),new Vector2(200,34),25);
         Button(panel,"关闭",new Vector2(325,308),new Vector2(80,34),()=>_close?.Invoke());
@@ -143,13 +153,22 @@ internal sealed class NativeHistoryWindow
         _scroll.horizontal = false; _scroll.vertical = true; _scroll.movementType = ScrollRect.MovementType.Clamped; _scroll.scrollSensitivity = 35;
         var rail=Box("ScrollRail",scrollArea,new Vector2(347,0),new Vector2(10,408));
         rail.gameObject.AddComponent<Image>().color=new Color(.11f,.14f,.19f,1);
-        var handle=Box("Handle",rail,Vector2.zero,new Vector2(10,80));var handleImage=handle.gameObject.AddComponent<Image>();handleImage.color=new Color(.38f,.48f,.56f,1);
+        var handle=Box("Handle",rail,Vector2.zero,Vector2.zero);handle.anchorMin=Vector2.zero;handle.anchorMax=Vector2.one;
+        handle.offsetMin=Vector2.zero;handle.offsetMax=Vector2.zero;
+        var handleImage=handle.gameObject.AddComponent<Image>();handleImage.color=new Color(.38f,.48f,.56f,1);
         var bar=rail.gameObject.AddComponent<Scrollbar>();bar.handleRect=handle;bar.targetGraphic=handleImage;bar.direction=Scrollbar.Direction.BottomToTop;
         var nav=bar.navigation;nav.mode=Navigation.Mode.None;bar.navigation=nav;_scroll.verticalScrollbar=bar;
         Button(panel,"更早",new Vector2(-295,-282),new Vector2(110,36),()=>{_view?.Older();Render();});
         Button(panel,"更新",new Vector2(295,-282),new Vector2(110,36),()=>{_view?.Newer();Render();});
         _status = Label(panel,"",new Vector2(0,-315),new Vector2(710,48),16);
         _toast=Label(panel,"",new Vector2(0,-256),new Vector2(690,16),14);_toast.color=new Color(.56f,.85f,.84f,1);_toast.alignment=TextAlignmentOptions.Center;
+        FitPanel();
+    }
+    private void FitPanel()
+    {
+        if(_panel==null||_viewport==null)return;
+        float scale=Mathf.Clamp(Mathf.Min((_viewport.rect.width-32)/760f,(_viewport.rect.height-32)/690f),.2f,1f);
+        _panel.localScale=Vector3.one*scale;
     }
     private static RectTransform Box(string name, Transform parent, Vector2 position, Vector2 size)
     {

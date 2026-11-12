@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace LilithBridge;
 
@@ -13,6 +14,18 @@ internal static class NativeUiViewport
         .GetType("LilithWindow")?.GetProperty("CharacterMonitorInUnityScreen", BindingFlags.Public | BindingFlags.Static);
     private static readonly List<(Canvas Canvas, RectTransform Rect)> Entries = new();
     private static bool _warned;
+
+    // These two monitor-anchored overlays use physical pixel units on the
+    // layered host. Scaling by the transient character-window dimensions makes
+    // opening/resizing that window change their size. Leave older hosts alone.
+    public static void PrepareMonitorCanvas(Canvas canvas)
+    {
+        if (MonitorRect == null) return;
+        var scaler = canvas.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+        scaler.scaleFactor = 1f;
+        canvas.scaleFactor = 1f; // Apply before the first viewport measurement.
+    }
 
     public static Transform Create(Canvas canvas)
     {

@@ -111,6 +111,8 @@ internal sealed partial class MemoryStore
 
     public UserMemoryOperationResult? TryApplyUserMemoryCommand(MemoryTurn input)
     {
+        var legacyCommand=TryApplyLegacyArchiveCommand(input);
+        if(legacyCommand!=null)return legacyCommand;
         string clarificationKind = _memoryCommandClarificationKind;
         _memoryCommandClarificationKind = "";
         UserMemoryOperationResult? b1Explicit = TryApplyB1ManagementCommand(input, null, explicitOnly: true);
@@ -604,8 +606,10 @@ internal sealed partial class MemoryStore
                 } while (added);
                 // Retain the expanded identity closure in the existing delete
                 // receipt, so old captured Work cannot restore purged bodies.
+                if (!PurgePublicExpressions(ids,delete:false)) return false;
                 receipt.SourceEventIds = ids.ToArray();
                 if (!SaveList("v4-native-autonomous-memory.json", _autonomous)) return false;
+                if (!PurgePublicExpressions(ids)) return false;
                 if (!PurgeReflectionWork(ids)) return false;
                 if (!PurgeB1Sources(ids)) return false;
                 var quotes = _autonomous.Where(t=>t.RecallId == receipt.RecallId)
@@ -635,6 +639,7 @@ internal sealed partial class MemoryStore
                     }
                 }
                 _experienceCache = null;
+                InvalidateExperienceValidationView();
                 foreach (var pair in new[]{("sessions\\v4-native-chat.json",_history),("v4-native-context.json",_native),
                              ("v4-native-events.json",_events),("v4-native-profile.json",_profile),("v4-native-summaries.json",_summaries),
                              ("v4-native-dreams.json",_dreams),("v4-native-recall-ledger.json",_recallLog),
@@ -701,6 +706,7 @@ internal sealed partial class MemoryStore
             catch (Exception error)
             {
                 _experienceCache = null;
+                InvalidateExperienceValidationView();
                 NativeEventLog.Trace("memory.delete_incomplete","mod","system","memory purge needs retry",error.GetType().Name);
                 return false;
             }

@@ -30,6 +30,7 @@ internal sealed partial class MemoryStore
             // reads must be visible on reopening. Paging/search use the snapshot.
             // Never reconcile/back-fill from _history while viewing an archive.
             _experienceCache = null;
+            InvalidateExperienceValidationView();
             if (!_experienceArchiveEnabled)
                 return new(Array.Empty<DialogueHistoryEntry>(), "经历归档未启用，无法提供长期聊天；不读取备份。", false);
             if (!Directory.Exists(ExperienceDirectory))

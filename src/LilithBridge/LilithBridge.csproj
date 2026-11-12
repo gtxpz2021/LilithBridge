@@ -7,13 +7,12 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>LilithBridge</AssemblyName>
     <RootNamespace>LilithBridge</RootNamespace>
-    <Version>0.3.150.66-rc.3.fix.2</Version>
+    <Version>0.3.150.103-generated.validation.local.candidate.1</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>Lilith Native Bridge</Product>
   </PropertyGroup>
   <PropertyGroup>
-    <BepInExRuntimeDir Condition="'$(LILITH_GAME_DIR)' == ''">$(USERPROFILE)\Desktop\PrjL\The NOexistenceN of Lilith\BepInEx</BepInExRuntimeDir>
-    <BepInExRuntimeDir Condition="'$(LILITH_GAME_DIR)' != ''">$(LILITH_GAME_DIR)\BepInEx</BepInExRuntimeDir>
+    <BepInExRuntimeDir Condition="'$(BepInExRuntimeDir)' == '' and '$(LILITH_GAME_DIR)' != ''">$(LILITH_GAME_DIR)\BepInEx</BepInExRuntimeDir>
     <BepInExCoreDir>$(BepInExRuntimeDir)\core</BepInExCoreDir>
     <BepInExInteropDir>$(BepInExRuntimeDir)\interop</BepInExInteropDir>
   </PropertyGroup>
@@ -47,6 +46,9 @@
     <Reference Include="spine-unity"><HintPath>$(BepInExInteropDir)\spine-unity.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="BehaviorDesigner.Runtime"><HintPath>$(BepInExInteropDir)\BehaviorDesigner.Runtime.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
+  <Target Name="RequireLegalReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(BepInExRuntimeDir)' == ''" Text="Set LILITH_GAME_DIR or BepInExRuntimeDir to legally obtained local build references." />
+  </Target>
   <Import Project="PublicBuild.props" />
 </Project>
 

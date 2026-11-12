@@ -44,6 +44,22 @@ internal sealed class ReviewProcess
     internal CancellationToken Token => _stop.Token;
     internal bool Closed { get { lock(_gate) return State is "stopped" or "expired" or "replaced" or "source_changed" or "permission_revoked" or "scope_changed"; } }
     internal bool Running { get { lock(_gate) return State == "running"; } }
+    internal ReviewSourceSnapshot? InheritedSources {get;private set;}
+    internal void InheritSources(ReviewSourceSnapshot? sources)
+    {
+        if(InheritedSources!=null)throw new InvalidOperationException("Review dependencies already frozen");
+        InheritedSources=sources;
+    }
+    // Same lock order as Complete: process, then source/capability. A prepared
+    // source callback must never be the first place that acquires this lock.
+    internal bool ReplaceCompleted(Func<bool> commit)
+    {
+        lock(_gate)
+        {
+            if(Closed||Running||Token.IsCancellationRequested||DateTimeOffset.UtcNow>=Deadline)return false;
+            return commit();
+        }
+    }
     internal ReviewProcess(DialogueRequest request, MemoryStore store, BridgeConfig config)
     {
         OriginEvent=request.UserEventId; Session=store.ReviewSessionIdentity;ConfigRoot=config.DataDirectory;_originQuery=request.ReviewCurrentText;_originConfig=config;
@@ -129,7 +145,11 @@ internal sealed class ReviewProcess
             var assessment=InspectSupply(store,request);
             if(assessment==ReviewSupplyAssessment.Invalid){Stop("source_changed");return Status();}
             if(assessment!=ReviewSupplyAssessment.Allowed)return WithheldReceipt(assessment);
-            var taken = _result with { IsControlReceipt=false, Json=ReviewContext.Serialize(new { operation_id=Id,status=State,question=Question,
+            // Taking retained material performs no new model request. Keep the
+            // original execution's accounting on its first outcome and _result,
+            // but do not count that old HTTP again in this continuation.
+            var taken = _result with { ModelRequests=0,PromptTokens=0,CompletionTokens=0,ReasoningTokens=0,
+                PromptCacheHitTokens=0,PromptCacheMissTokens=0,IsControlReceipt=false, Json=ReviewContext.Serialize(new { operation_id=Id,status=State,question=Question,
                 source_versions=_steps.SelectMany(s=>s.SourceVersions??Array.Empty<DaySourceDependency>()).Distinct().ToArray(),
                 steps=_steps.Select(s=>JsonSerializer.Deserialize<JsonElement>(s.Json)).ToArray(),
                 used_calls=Calls,remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-Calls),
@@ -139,8 +159,25 @@ internal sealed class ReviewProcess
                 SourceVersions=_steps.SelectMany(s=>s.SourceVersions??Array.Empty<DaySourceDependency>()).Distinct().ToArray(),
                 DerivedMethodSources=_steps.SelectMany(s=>s.DerivedMethodSources??Array.Empty<MethodSource>()).Distinct().ToArray(),
                 MethodSourcesTracked=_steps.All(s=>s.MethodSourcesTracked) };
-            return taken with { SourceSnapshot=request==null?null
-                :ReviewSourceSnapshot.ForTransfer(_steps.Select(s=>s.SourceSnapshot),request,taken.Json) };
+            var transfer=request==null?null
+                :ReviewSourceSnapshot.ForTransfer(_steps.Select(s=>s.SourceSnapshot),request,taken.Json);
+            // The retained read may own a logical/archive snapshot whose full
+            // version footprint is wider than SourceRecords. A correction can
+            // change that footprint while the original raw body is unchanged.
+            // Withhold the old payload and return usable control feedback before
+            // registration; a fresh read can replace this process normally.
+            // An unavailable check is not proof of deletion or a lifecycle edit.
+            bool transferPermitted;
+            try { transferPermitted=transfer==null||transfer.IsPermitted(); }
+            catch { transferPermitted=false; }
+            if(!transferPermitted)
+                return Empty("unavailable","retained_source_unavailable") with {
+                    Json=ReviewContext.Serialize(new {operation_id=Id,status="unavailable",
+                        reason="retained_source_unavailable",records=Array.Empty<object>(),
+                        next_action="Use a fresh message/read/discover call without operation_id to obtain currently qualified material; the retained result was not supplied.",
+                        used_calls=Calls,remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-Calls),
+                        remaining_reconsider=Math.Max(0,ReviewContext.MaxReconsiderPerTurn-Reconsiders),http_used=Http,deadline=Deadline}) };
+            return taken with { SourceSnapshot=transfer };
         }
     }
     // Caller holds _gate. This is inspection only: no payload registration,
@@ -201,7 +238,7 @@ internal sealed class ReviewProcess
         operation_id=Id,status=State,used_calls=Calls,
         remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-Calls),remaining_reconsider=Math.Max(0,ReviewContext.MaxReconsiderPerTurn-Reconsiders),
         http_used=Http,deadline=Deadline,records=Array.Empty<object>() }) };
-    internal void Stop(string reason="stopped") { lock(_gate) { if(Closed)return;State=reason;Question="";_result=null;_steps.Clear();_inFlightSources=Array.Empty<MemoryTurn>();_inFlightDerivedSources=Array.Empty<MethodSource>();_stop.Cancel(); } }
+    internal void Stop(string reason="stopped") { lock(_gate) { if(Closed)return;State=reason;Question="";_result=null;_steps.Clear();InheritedSources=null;_inFlightSources=Array.Empty<MemoryTurn>();_inFlightDerivedSources=Array.Empty<MethodSource>();_stop.Cancel(); } }
     internal static ReviewToolOutcome Empty(string status,string reason)=>new(ReviewContext.Serialize(new {status,reason,records=Array.Empty<object>()}),0,0,0,0,0,0,false,IsControlReceipt:true);
     private static ReviewToolOutcome StripThought(ReviewToolOutcome outcome)
     {
@@ -241,15 +278,25 @@ internal sealed class ReviewHandoff
         lock(_gate)if(Current is { } p && (p.Root!=DataPaths.Root()||p.ConfigRoot!=config.DataDirectory||p.Session!=store.ReviewSessionIdentity))
         {p.Stop("scope_changed");Current=null;}
     }
-    internal ReviewProcess Start(DialogueRequest request,MemoryStore store)
+    internal ReviewProcess? Start(DialogueRequest request,MemoryStore store)=>request.WithReviewOwnership(()=>
     {
         lock(_gate)
         {
             if(request.ReviewBudget is { } existing&&ReferenceEquals(Current,existing))return existing;
-            Current?.Stop("replaced");Current=new ReviewProcess(request,store,Config(request));
-            request.ReviewBudget=Current;return Current;
+            var previous=Current;var next=new ReviewProcess(request,store,Config(request));
+            var plan=previous==null?default:request.PrepareReviewReplacement(previous,next);
+            bool Publish()
+            {
+                if(!ReferenceEquals(Current,previous)||request.IsCancelled||next.Token.IsCancellationRequested
+                    ||DateTimeOffset.UtcNow>=next.Deadline)return false;
+                if(plan.Required&&(previous==null||previous.Token.IsCancellationRequested||DateTimeOffset.UtcNow>=previous.Deadline))return false;
+                previous?.Stop("replaced");Current=next;request.ReviewBudget=next;return true;
+            }
+            bool committed=plan.Required?previous!.ReplaceCompleted(()=>plan.Commit(Publish)):Publish();
+            if(!committed){next.Stop("source_changed");return null;}
+            return next;
         }
-    }
+    });
     internal void Stop(string reason="stopped") {lock(_gate)Current?.Stop(reason);}
     internal void Trim(MemoryStore store,BridgeConfig config)
     {lock(_gate)if(Current is { } p && !store.GetRequestHistory(config).Any(t=>t.EventId==p.OriginEvent)){p.Stop("expired");Current=null;}}

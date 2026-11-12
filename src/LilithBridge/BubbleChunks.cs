@@ -95,6 +95,11 @@ public static class BubbleChunks
     // repartition the renderer's exact text, never invent a whitespace policy.
     internal static BubbleDisplayPlan BuildPlan(string text, IReadOnlyList<string> chunks)
         => MapPlan(text, chunks, string.Concat(chunks) == string.Concat(SplitCore(text)));
+    // Progressive units freeze their partition before the full answer exists.
+    // Repartitioning may omit whitespace only; MapPlan still proves every
+    // rendered character's source coordinate and lists every omitted gap.
+    internal static BubbleDisplayPlan BuildStreamingPlan(string text,IReadOnlyList<string> chunks)
+        =>MapPlan(text,chunks,true);
 
     private static BubbleDisplayPlan MapPlan(string generated, IReadOnlyList<string> chunks, bool valid)
     {

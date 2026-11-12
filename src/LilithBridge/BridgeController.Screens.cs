@@ -20,6 +20,7 @@ internal sealed partial class BridgeController
     internal DialogueRequest BeginDialogueRequest(BridgeConfig config, string userEventId,
         string? userText = null, string? modeOverride = null, bool reviewAuthorized = false)
     {
+        if (_b1ReflectionOwner != null) CancelReflectionPreparation("new_dialogue_request");
         bool requestPending = _requestPending;
         if (_activeDialogue != null && !_activeDialogue.IsCancelled) CancelPendingDialogue(preserveReview:true);
         _requestPending = requestPending;
@@ -33,6 +34,7 @@ internal sealed partial class BridgeController
         owner.ReviewStore=_memory;owner.ReviewCurrentText=userText??"";
         owner.ReviewDataRoot=DataPaths.Root();owner.ReviewConfigRoot=config.DataDirectory;owner.ReviewSessionIdentity=_memory.ReviewSessionIdentity;
         _activeDialogue = owner;
+        BeginTemporaryWork(owner, config);
         _memory.BeginReflectionDelivery(userEventId, owner.Id);
         return owner;
     }
@@ -84,32 +86,37 @@ internal sealed partial class BridgeController
     }
 
     [HideFromIl2Cpp]
-    internal void CancelPendingDialogue(bool preserveReview=false)
+    internal void CancelPendingDialogue(bool preserveReview=false, string reason="request_cancelled")
     {
+        // Observe the UI before cancelling ownership; an appeared bubble counts
+        // in full, while an unconfirmed accepted call remains uncertain.
+        NativeBubblePresenter.FlushObservedAppearance();
         if(!preserveReview)_reviewHandoff.Stop();
         _activeDialogue?.PreparationTrace?.Finish("cancelled");
         // Nullable-owner proactive callbacks share this cancellation generation.
         _conversationGeneration++;
-        CancelMemoResultContinuation("request_cancelled", finishDelivery: false);
+        InvalidateB1ReflectionForInput();
+        RetainAndStopTemporaryWork(reason);
+        CancelMemoResultContinuation(reason, finishDelivery: false);
         // A generated reply waiting for its playback window belongs to the
         // cancelled request: close its delivery record before display so it
         // cannot arrive late or enter history.
-        CancelNativeLinkage("request_cancelled");
-        CancelQueuedReply("request_cancelled");
+        CancelNativeLinkage(reason);
+        CancelQueuedReply(reason);
         _requestPending = false;
         _storyRecallInProgress = false;
         _memoryRecallInProgress = false;
-        if (_activeDialogue == null) {CancelAiSpeech("request_cancelled");return;}
+        if (_activeDialogue == null) {CancelAiSpeech(reason);return;}
         var cancelled = _activeDialogue;
         cancelled.Cancel();
         _pendingScreenCapture?.Completion.TrySetCanceled(cancelled.Token);
         _pendingScreenCapture = null;
-        CancelAiSpeech("request_cancelled");
+        CancelAiSpeech(reason);
         // Ownership is cancelled, callbacks reject this request, and both the
         // controller queue and presenter have now been synchronously cleared.
         _memory.EndReflectionDelivery(cancelled.UserEventId, cancelled.Id, "cancelled", false);
-        NativeEventLog.Trace("dialogue.cancelled", "mod", "player", "ordinary dialogue cancelled",
-            "request_id=" + cancelled.Id + ";http_attempts=" + cancelled.HttpAttempts);
+        NativeEventLog.Trace("dialogue.cancelled", "mod", reason == "sleep" ? "system" : "player", "ordinary dialogue cancelled",
+            "request_id=" + cancelled.Id + ";http_attempts=" + cancelled.HttpAttempts + ";reason=" + reason);
     }
 
     [HideFromIl2Cpp]

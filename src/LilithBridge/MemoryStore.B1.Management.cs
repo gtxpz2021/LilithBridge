@@ -248,7 +248,7 @@ internal sealed partial class MemoryStore
         var ids = new HashSet<string>(receipt.TargetVersions, StringComparer.Ordinal);
         if (ids.Count == 0 || ids.Any(id => B1ManagementState(doc, id) is not ("deleting" or "deleted")))
             return new(false, "stale_or_invalid_binding", "判断状态已经变化，这次没有继续清除。");
-        if (!PurgeLegacyB1Versions(ids))
+        if (!PurgeB1ReflectionWork(ids) || !PurgeLegacyB1Versions(ids))
         {
             var pending = CloneB1ManagementDocument(doc);
             int index = pending.ManagementReceipts.FindLastIndex(r => r.OperationId == input.EventId);

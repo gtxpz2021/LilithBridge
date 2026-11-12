@@ -84,63 +84,60 @@ internal sealed partial class MemoryStore
         var quotes=UtteranceAttribution.LiteralQuotes(query);
         var scope=MemorySemantics.ParseExperienceRecallQuery(query);
         string speaker=MemorySemantics.RequestedHistorySpeaker(query);
-        List<MemoryTurn> current = ReadExperiences()
-            .Where(t => t.SessionId == _sessionId
-                && (t.Role == "user" || t.Role == "assistant")
-                && t.EventId.Length > 0
-                && !excluded.Contains(t.EventId)
-                && IsMentionAllowed(t)
-                && IsNativeSupplyAllowed(t)
-                && (speaker.Length==0||t.Role==speaker) && (scope==null||scope.AllowsSourceScope(t))
-                && identifiers.All(id=>MemorySemantics.ContainsRecallIdentifier(t.Text,id))
-                && quotes.All(q=>t.Text.Contains(q,StringComparison.Ordinal)))
-            .OrderBy(t => t.Sequence)
-            .ToList();
+        var catalog = GetReviewLogicalCatalog();
+        var current = catalog.Units.Where(u => !u.SourceSpans.All(t => excluded.Contains(t.EventId))
+                && (speaker.Length == 0 || u.Role == speaker) && LogicalUnitScopeAllowed(u, scope, discoveryTerms: false))
+            .OrderBy(t => t.FirstSequence).ToList();
+        var discoverable = current.Where(u => LogicalUnitScopeAllowed(u, scope, discoveryTerms: true)
+            && identifiers.All(id => u.Runs.Any(run => MemorySemantics.ContainsRecallIdentifier(run.Text, id)))
+            && quotes.All(u.ContainsExact)).ToList();
         if (current.Count == 0)
-            return current;
+            return Array.Empty<MemoryTurn>();
         string clean = ReviewContext.Clean(query);
         if (clean.Length == 0)
-            return current.TakeLast(Math.Min(limit, current.Count)).ToList();
+            return new LogicalDialogueSelection(current.TakeLast(Math.Min(limit, current.Count)), materialize: WithNaturalMemoryContext);
 
-        var ranked = current
-            .Select(t => new { Turn = t, Score = MemorySemantics.Similarity(t.Text, clean) })
-            .Where(x => x.Score > 0 || MemorySemantics.IsRelevantRecall(clean, x.Turn.Text))
-            .OrderByDescending(x => x.Score)
-            .ThenByDescending(x => x.Turn.Sequence)
+        var queryTokens = MemorySemantics.MatchingTokens(clean);
+        var ranked = discoverable
+            .Select(t => new { Turn = t, Match = MemorySemantics.CompareMatchingTokens(t.MatchingTokens, queryTokens) })
+            .Where(x => x.Match.Similarity > 0 || x.Match.Relevant)
+            .OrderByDescending(x => x.Match.Similarity)
+            .ThenByDescending(x => x.Turn.FirstSequence)
             .Take(Math.Max(1, limit / 2))
             .Select(x => x.Turn)
             .ToList();
         // Exact IDs/versions/permissions precede the bound. Vector candidates
         // need no second lexical match and cannot enter another session.
         var vector=SemanticResultMatches(query,semantic,SemanticDomain.Events)
-            ? semantic!.Candidates.Where(c=>c.Kind=="utterance").OrderByDescending(c=>c.Score)
-                .Select(c=>current.FirstOrDefault(t=>SemanticCandidateMatches(c,t))).Where(t=>t!=null).Cast<MemoryTurn>().ToList()
-            : new List<MemoryTurn>();
+            ? semantic!.Candidates.Where(c=>c.Kind is "utterance" or "message").OrderByDescending(c=>c.Score)
+                .Select(c=>catalog.ResolveCandidate(c)).Where(t=>t!=null&&discoverable.Any(u=>u.Key==t.Key))
+                .Cast<LogicalDialogueUnit>().DistinctBy(u=>u.Key).ToList()
+            : new List<LogicalDialogueUnit>();
         PreparationTiming.Current?.Value("semantic_review_candidates",vector.Count);
-        PreparationTiming.Current?.Value("semantic_review_rejected",Math.Max(0,(semantic?.Candidates.Count(c=>c.Kind=="utterance")??0)-vector.Count));
+        PreparationTiming.Current?.Value("semantic_review_rejected",Math.Max(0,(semantic?.Candidates.Count(c=>c.Kind is "utterance" or "message")??0)-vector.Count));
         ranked=ranked.Take(1).Concat(vector.Take(Math.Max(1,limit/2))).Concat(ranked.Skip(1))
-            .DistinctBy(t=>t.EventId).Take(limit).ToList();
+            .DistinctBy(t=>t.Key).Take(limit).ToList();
         if (ranked.Count == 0)
-            return current.TakeLast(Math.Min(limit, current.Count)).ToList();
+            return new LogicalDialogueSelection(discoverable.TakeLast(Math.Min(limit, discoverable.Count)), materialize: WithNaturalMemoryContext);
 
-        var positions = current.Select((turn, index) => new { turn.EventId, index })
-            .ToDictionary(x => x.EventId, x => x.index, StringComparer.Ordinal);
+        var positions = current.Select((turn, index) => new { turn.Key, index })
+            .ToDictionary(x => x.Key, x => x.index, StringComparer.Ordinal);
         var selected = ranked.Take(limit).ToList();
-        var seen = selected.Select(t=>t.EventId).ToHashSet(StringComparer.Ordinal);
-        foreach (MemoryTurn anchor in ranked)
+        var seen = selected.Select(t=>t.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (LogicalDialogueUnit anchor in ranked)
         {
-            if (!positions.TryGetValue(anchor.EventId, out int at)) continue;
-            // Keep one adjacent record as context, never a wider slice.
+            if (!positions.TryGetValue(anchor.Key, out int at)) continue;
+            // Keep adjacent logical messages intact; bubble count is irrelevant.
             for (int delta = -1; delta <= 1 && selected.Count < limit; delta++)
             {
                 int index = at + delta;
                 if (index < 0 || index >= current.Count) continue;
-                if (seen.Add(current[index].EventId)) selected.Add(current[index]);
+                if (seen.Add(current[index].Key)) selected.Add(current[index]);
             }
         }
         // The caller applies its final display bound before sorting for reading.
         // Keep candidate anchors ahead of adjacency through that final cut.
-        return semantic!=null?selected.Take(limit).ToList():selected.OrderBy(t => t.Sequence).Take(limit).ToList();
+        return new LogicalDialogueSelection(selected.Take(limit), ranked.SelectMany(u=>u.Members).Select(t=>t.EventId), WithNaturalMemoryContext);
     }
 
     /// <summary>
@@ -202,13 +199,16 @@ internal sealed partial class MemoryStore
     {
         if (ids.Count == 0) return Array.Empty<MemoryTurn>();
         var wanted = new HashSet<string>(ids, StringComparer.Ordinal);
-        return ReadExperiences()
+        lock (_experienceLock)
+        return GetExperienceValidationTurns()
             .Where(t => t.SessionId == _sessionId
                 && wanted.Contains(t.EventId)
                 && (t.Role == "user" || t.Role == "assistant")
                 && IsMentionAllowed(t)
                 && IsNativeSupplyAllowed(t))
             .OrderBy(t => t.Sequence)
+            // Callers own these bounded results; never expose archive records.
+            .Select(t => t.Copy())
             .ToList();
     }
 }

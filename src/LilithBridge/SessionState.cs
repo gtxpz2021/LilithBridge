@@ -109,7 +109,6 @@ internal sealed class SessionState
     public string LastAssistantEventId { get; set; } = "";
     public int ShortTermEventLimit { get; set; } = 16;
     public List<LilithSceneEvent> RecentEvents { get; } = new();
-    public EmotionalSubstrate Emotions { get; } = new();
     public RelationshipState Relationship { get; } = new();
     public WorldBelief Belief { get; } = new();
     private bool _conversationStarted;
@@ -139,7 +138,6 @@ internal sealed class SessionState
             _conversationStarted = true;
         RememberConversationMaterial(sceneEvent);
         RecentEvents.Add(sceneEvent);
-        Emotions.ApplyEvent(sceneEvent);
         if (!IsBasicNavigation(sceneEvent))
         {
             InteractionCount++;
@@ -333,19 +331,6 @@ internal sealed class SessionState
             LastAssistantEventId, noNewChat);
     }
 
-    public string BuildEmotionalContext()
-    {
-        string signal = Emotions.DescribeForPrompt();
-        if (signal.Length == 0)
-            return "";
-        var builder = new StringBuilder();
-        builder.AppendLine("[程序提供的短时反应建议（不要复述，也不要当成玩家的话）]");
-        builder.AppendLine("以下描述由预设基线、近期游戏事件和随时间衰减的状态计算而来，是表达参考，不是已经发生的心理事实：");
-        builder.AppendLine("- " + signal);
-        builder.AppendLine("请结合当前话语和具体情境决定是否采纳，也可以完全不采纳；触碰等输入本身不证明玩家的意图、双方感受或关系进展。");
-        return builder.ToString();
-    }
-
     public void TickRelationshipEvolution()
     {
         if (Relationship != null)
@@ -452,16 +437,7 @@ internal sealed class SessionState
         if (eventForNote == null)
             return null;
 
-        // Last-scene notes used to carry a hint derived from a numeric threshold
-        // ("关系更轻松"). That is a derived relationship label, so it is no
-        // longer produced; only observable emotional residue is kept.
-        string boundary = "";
-        string residue = "";
-        if (Emotions.Tension > 0.62)
-            residue = "还没完全放下";
-        else if (Emotions.Warmth > 0.62)
-            residue = "心里还暖暖的";
-
+        // Preserve event-backed material without deriving a psychological residue.
         var summary = new LastSceneSummary
         {
             SchemaVersion = 3,
@@ -474,8 +450,6 @@ internal sealed class SessionState
             UserText = _lastUserEvent?.Details ?? "",
             AssistantText = _lastReplyEvent?.Details ?? "",
             AssistantTimestamp = _lastReplyEvent?.Timestamp,
-            BoundaryHint = boundary,
-            EmotionalResidue = residue,
             Source = _lastUserEvent != null ? _lastUserEvent.Kind.ToString()
                 + (_lastReplyEvent != null ? "," + _lastReplyEvent.Kind : "") : string.Join(",", sourceKinds)
         };

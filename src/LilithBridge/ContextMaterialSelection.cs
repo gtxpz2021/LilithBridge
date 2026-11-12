@@ -130,7 +130,7 @@ internal sealed class ContextMaterialSelection
     /// selected" with a recorded reason instead of breaking the request.
     /// </summary>
     internal static ContextMaterialSelection Select(MemoryStore memory, BridgeConfig config,
-        string query, string querySource, string branch, string? previousUserLine = null)
+        string query, string querySource, string branch, string? previousUserLine = null, bool playerDirected = true)
     {
         string text = query ?? "";
         if (memory == null || config == null)
@@ -145,7 +145,7 @@ internal sealed class ContextMaterialSelection
             relationship = new RelationshipMaterialSelection(null, "selection_failed", text,
                 "memory_store.relationship_readings");
         }
-        StoryMaterial story = SelectStory(config, text);
+        StoryMaterial story = playerDirected ? SelectStory(config, text) : StoryMaterial.Disabled("not_player_directed");
         var included = new List<MaterialEntry>();
         var excluded = new List<MaterialEntry>();
         if (story.Mode == DisabledMode)
@@ -230,78 +230,23 @@ internal sealed class ContextMaterialSelection
 
     private static StoryMaterial SelectStory(BridgeConfig config, string text)
     {
-        if (!config.PreviousStoryEnabled && !config.PreviousStoryAutoRecallEnabled)
-            return StoryMaterial.Disabled("previous_story_disabled");
-        if (!PreviousStoryArchive.IsAvailable)
-            return StoryMaterial.Disabled("previous_story_unavailable");
+        if (!PreviousStoryArchive.CanSupply(config))
+            return StoryMaterial.Disabled("story_disabled_or_no_consent");
         string? term = PreviousStoryArchive.FindStoryTerm(text);
-        if (term != null)
-        {
-            // The archive auto-recall used to be appended by the controller after
-            // Build. It now travels inside this decision, so a request carries one
-            // story material instead of the archive block plus a second recall.
-            if (config.PreviousStoryAutoRecallEnabled)
-            {
-                try
-                {
-                    StoryRecallResult? recall = PreviousStoryArchive.AutoRecall(text, "", config);
-                    if (recall is { Found: true })
-                    {
-                        string block = PreviousStoryArchive.BuildRecallContext(recall, config);
-                        if (block.Length > 0)
-                        {
-                            NativeEventLog.Trace("story.recall.auto", "mod", "system",
-                                "automatic story-archive recall selected by material selection",
-                                "query=" + recall.Query + ";chars=" + recall.Content.Length
-                                + ";source=context_builder.build");
-                            return new StoryMaterial(TargetedRecallMode, "story_term:" + term, term,
-                                block, recall.Query, block.Length);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Story archive must never break a request.
-                }
-            }
-            if (config.PreviousStoryEnabled)
-            {
-                try
-                {
-                    string framed = PreviousStoryArchive.FrameAsPartialRecord(PreviousStoryArchive.Build(config));
-                    if (framed.Length > 0)
-                        return new StoryMaterial(FullArchiveMode, "story_term:" + term, term, framed, "", 0);
-                    // No archive body available: keep the always-on identity core
-                    // instead of sending navigation without any material.
-                    string core = PreviousStoryArchive.BuildIdentityCore();
-                    if (core.Length > 0)
-                        return new StoryMaterial(IdentityCoreMode, "story_term_no_archive:" + term, term, core, "", 0);
-                }
-                catch
-                {
-                    // Story archive must never break a request.
-                }
-            }
-            return StoryMaterial.Disabled(config.PreviousStoryAutoRecallEnabled
-                ? "auto_recall_not_found_and_story_disabled"
-                : "previous_story_disabled");
-        }
-        if (!config.PreviousStoryEnabled)
-            return StoryMaterial.Disabled("previous_story_disabled");
+        if (term == null) return StoryMaterial.Disabled("current_turn_not_work_related");
+        if (!PreviousStoryArchive.IsAvailable(config))
+            return StoryMaterial.Disabled("previous_story_unavailable");
+        if (!config.PreviousStoryAutoRecallEnabled)
+            return StoryMaterial.Disabled("story_explicit_recall_only");
         try
         {
-            string core = PreviousStoryArchive.BuildIdentityCore();
-            string? common = PreviousStoryArchive.FindCommonHistoryTerm(text);
-            // Common-history words ask for the memory/experience path. They are
-            // recorded so the trace can prove the archive was deliberately kept
-            // closed, not merely missing.
-            return new StoryMaterial(IdentityCoreMode,
-                common == null ? "ordinary_turn" : "common_history_term:" + common, "", core, "", 0);
+            var recall = PreviousStoryArchive.AutoRecall(text, "", config);
+            if (recall is { Found: true })
+                return new StoryMaterial(TargetedRecallMode, "story_term:" + term, term,
+                    recall.Content, recall.Query, recall.Content.Length);
         }
-        catch
-        {
-            return StoryMaterial.Disabled("identity_core_unavailable");
-        }
+        catch { /* A missing private reference must never break conversation. */ }
+        return StoryMaterial.Disabled("story_no_relevant_excerpt");
     }
 
     /// <summary>Serializable decision for the request dump and the harness.</summary>

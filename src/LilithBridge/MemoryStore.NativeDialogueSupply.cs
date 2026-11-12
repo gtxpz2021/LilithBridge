@@ -28,7 +28,9 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         {
             bool currentAuthorized = playerDirected || authorization?.Permits(this) == true;
-            var history=GetRecentHistory(MaxHistory);
+            // The retained store is bounded in logical messages. A second raw
+            // 160-record slice would cut a long reply before projection sees it.
+            var history=GetRecentHistory(int.MaxValue);
             IReadOnlyList<MemoryTurn> Project(int budget)=>contextConfig==null?Array.Empty<MemoryTurn>():HistoryProjection.Build(history,budget,
                 contextConfig.HistoryGroupReplies,contextConfig.HistoryWindowInMessages).Turns.SelectMany(t=>t.Records).ToArray();
             var currentSources = contextConfig == null || !currentAuthorized ? new HashSet<string>(StringComparer.Ordinal)
@@ -36,8 +38,14 @@ internal sealed partial class MemoryStore
                     .Select(t=>t.EventId).ToHashSet(StringComparer.Ordinal);
             if (contextConfig != null && currentAuthorized) currentSources.UnionWith(_currentNativeSceneOnlySources);
             if (!playerDirected && authorization != null) currentSources.IntersectWith(authorization.Sources);
-            var raw = ReadExperiences().Concat(_history)
-                .GroupBy(t => t.EventId).Select(g => g.First())
+            // The archive owns identity precedence, even when its first record is
+            // non-native. Suppressed archive ids are absent from the old read view,
+            // so only those ids (or missing ids) may fall back to recent history.
+            var archive = GetExperienceValidationView();
+            var denied = SuppressedExperienceIds();
+            var raw = archive.NativeHistoryTurns.Where(t => !denied.Contains(t.EventId))
+                .Concat(_history.GroupBy(t => t.EventId).Select(g => g.First())
+                    .Where(t => (!archive.ContainsId(t.EventId) || denied.Contains(t.EventId)) && IsNativeHistoryRecord(t)))
                 .OrderBy(t => t.Timestamp).ThenBy(t => t.Sequence).ToList();
             var native = raw.Where(t => IsNativeUtterance(t) && t.DeliveryState == "delivered"
                 && !IsExperienceSuppressed(t.EventId) && IsMentionAllowed(t)).ToList();
@@ -49,18 +57,30 @@ internal sealed partial class MemoryStore
             // Every recall/fallback below can only select from this native pool.
             if (mayRecall && native.Count > 0)
             {
+                // One synchronous request can test/rank the same text several
+                // times. Reuse only pure lexical values here; selected ids and
+                // every live eligibility filter below are still rebuilt.
+                var queryTokens = MemorySemantics.MatchingTokens(query);
+                var matches = new Dictionary<string, MemorySemantics.MatchingResult>(StringComparer.Ordinal);
+                MemorySemantics.MatchingResult Match(string text)
+                {
+                    if (!matches.TryGetValue(text, out var match))
+                        matches.Add(text, match = MemorySemantics.CompareMatchingTokens(queryTokens,
+                            ExperienceBodyTokens(text)));
+                    return match;
+                }
+                bool namesNative = NamesNativeSpeech(query), refersLatest = RefersToLatestSpeech(query);
                 // Reuse the existing relevance/ranking and archive, without changing
                 // their threshold. A bare shared topic is not enough to replay idle lines.
                 selected.AddRange(GetExperienceCandidates(query, 9, requestedRole: "assistant")
-                    .Concat(native.Where(t => MemorySemantics.IsRelevantRecall(query, t.Text)))
+                    .Concat(native.Where(t => Match(t.Text).Relevant))
                     .Where(IsNativeUtterance)
-                    .Where(t => MemorySemantics.IsRelevantRecall(query, t.Text))
-                    .Where(t => !RefersToLatestSpeech(query) || NamesNativeSpeech(query))
-                    .Where(t => NamesNativeSpeech(query)
-                        || MemorySemantics.MatchingOverlap(query, t.Text) >= 3
-                            && MemorySemantics.Similarity(query, t.Text) >= 0.3)
+                    .Where(t => Match(t.Text).Relevant)
+                    .Where(t => !refersLatest || namesNative)
+                    .Where(t => namesNative
+                        || Match(t.Text).Overlap >= 3 && Match(t.Text).Similarity >= 0.3)
                     .GroupBy(t => t.EventId).Select(g => g.First())
-                    .OrderByDescending(t => MemorySemantics.Similarity(query, t.Text))
+                    .OrderByDescending(t => Match(t.Text).Similarity)
                     .ThenByDescending(t => t.Timestamp).Take(3));
 
                 // "Why?", "okay" etc. refer to the latest actual assistant turn,
@@ -74,9 +94,9 @@ internal sealed partial class MemoryStore
                     && latest.SessionId == _sessionId
                     && (NamesLatestSpeech(query)
                         || DateTimeOffset.UtcNow - latest.Timestamp <= TimeSpan.FromMinutes(3))
-                    && RefersToLatestSpeech(query))
+                    && refersLatest)
                     selected.Insert(0, latest);
-                if (selected.Count == 0 && NamesNativeSpeech(query)
+                if (selected.Count == 0 && namesNative
                     && Regex.IsMatch(query, @"什么|哪些|哪句|哪一句|回顾|对白|台词"))
                     selected.AddRange(native.TakeLast(3));
             }
@@ -123,7 +143,9 @@ internal sealed partial class MemoryStore
                 foreach (MemoryTurn artifact in artifacts.Where(t => ReferencesMentionSources(t, currentClosure)))
                     if (artifact.EventId.Length > 0) changed |= currentClosure.Add(artifact.EventId);
             } while (changed);
-            _nativeDialoguePolicy.Value = new(query, playerDirected, selected, withheld, currentSources, recentSources,
+            // A policy can outlive this lock. Detach only the bounded native selection;
+            // no borrowed archive record escapes to request-history readers.
+            _nativeDialoguePolicy.Value = new(query, playerDirected, selected.Select(t => t.Copy()).ToArray(), withheld, currentSources, recentSources,
                 currentClosure, authorization, contextConfig != null);
         }
         return new MentionScope(() => _nativeDialoguePolicy.Value = previous);
@@ -184,20 +206,37 @@ internal sealed partial class MemoryStore
     private IReadOnlyList<MemoryTurn> GetNativeAwareRequestHistory(BridgeConfig config)
     {
         NativeDialoguePolicy? policy = _nativeDialoguePolicy.Value;
+        var recent = GetRecentHistory(int.MaxValue);
         if (policy == null)
-            return GetRecentHistory(config.HistoryGroupReplies && config.HistoryWindowInMessages
-                ? MaxHistory : config.ConversationMaxMessages);
+        {
+            var plain = HistoryProjection.Build(recent, config.ConversationMaxMessages,
+                config.HistoryGroupReplies, config.HistoryWindowInMessages);
+            var records = plain.Turns.SelectMany(t => t.Records).Select(t => t.Copy()).ToList();
+            return new HistoryWindowRecords(records, new(recent.Count, recent.Count,
+                Math.Max(1, config.ConversationMaxMessages), 0, records.Count,
+                records.Count, records.Count, plain.OmissionReason, plain.RetainedSourceRootOverflow,
+                plain.OmissionReason));
+        }
         int budget = Math.Max(1, config.ConversationMaxMessages);
         var selected = policy.Selected.Where(IsMentionAllowed).Where(t => !policy.CurrentSources.Contains(t.EventId))
             .Take(Math.Min(3, budget - 1)).ToList();
-        var ordinary = GetRecentHistory(MaxHistory).Where(t => (!IsNativeUtterance(t)
+        var ordinary = recent.Where(t => (!IsNativeUtterance(t)
             || (policy.CurrentSources.Contains(t.EventId)||policy.PlayerDirected&&policy.RecentSources.Contains(t.EventId)) && t.SessionId == _sessionId)
             && IsNativeSupplyAllowed(t)).ToList();
         // Reserve space before projecting, so an explicitly recalled older line
         // cannot silently fall out of the message window. Keep the player's turn.
         var projection = HistoryProjection.Build(ordinary, budget - selected.Count,
             config.HistoryGroupReplies, config.HistoryWindowInMessages);
-        return projection.Turns.SelectMany(t => t.Records).Concat(selected).GroupBy(t=>t.EventId).Select(g=>g.First())
+        var result = projection.Turns.SelectMany(t => t.Records).Concat(selected).GroupBy(t=>t.EventId).Select(g=>g.First())
             .OrderBy(t => t.Timestamp).ThenBy(t => t.Sequence).Select(t => t.Copy()).ToList();
+        string reasons = string.Join(";", new[] {
+            ordinary.Count < recent.Count ? "native_policy_filter" : "",
+            selected.Count > 0 ? "reserved_native_recall" : "",
+            projection.OmissionReason,
+            projection.RetainedSourceRootOverflow ? "exact_source_root_extra_slot" : ""
+        }.Where(s => s.Length > 0));
+        return new HistoryWindowRecords(result, new(recent.Count, ordinary.Count,
+            budget - selected.Count, selected.Count, projection.SelectedRecords,
+            result.Count, result.Count, projection.OmissionReason, projection.RetainedSourceRootOverflow, reasons));
     }
 }

@@ -20,6 +20,8 @@ internal sealed record SemanticDiscoveryRequest(string OwnerId,long Generation,s
 internal sealed partial class MemoryStore
 {
     internal Func<SemanticDiscoveryRequest,CancellationToken,Task<SemanticRecallResult>>? SemanticDiscovery {get;set;}
+    // Installed with the existing controller worker. No extra process or cache.
+    internal Func<string, bool>? SemanticIndexCurrent { get; set; }
     internal async Task<SemanticRecallResult> DiscoverSemanticAsync(string owner,long generation,string query,
         SemanticDomain domains,DateTimeOffset deadline,CancellationToken token)
     {
@@ -74,4 +76,11 @@ internal sealed partial class MemoryStore
     internal static bool SemanticCandidateMatches(SemanticRecallCandidate c,MemoryTurn t,string kind="utterance") =>
         c.Kind==kind && c.EventId==t.EventId && c.TextHash==SemanticTextHash(t.Text)
         && (c.Version.Length==0||c.Version==SemanticSourceVersion(t));
+
+    // Message identity belongs to the complete immutable membership snapshot,
+    // not to the hash/version of its first raw bubble.
+    internal static bool SemanticMessageCandidateMatches(SemanticRecallCandidate candidate, LogicalDialogueUnit unit) =>
+        candidate.Kind == "message" && unit.IsMessage && candidate.EventId == unit.Key
+        && candidate.TextHash == unit.TextHash && candidate.Version.Length > 0
+        && candidate.Version == unit.VersionFingerprint;
 }

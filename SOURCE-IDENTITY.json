@@ -1,0 +1,22 @@
+{
+  "product": "LilithBridge",
+  "version": "0.3.150.103-generated.validation.local.candidate.1",
+  "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+  "pdb_sha256": "55da2d1b10932fc260c3ed4bbd614fcb6698065c93703ec7a85fd972349db60d",
+  "deps_sha256": "041493b8a2c607d05defa6b4b8eb643209fd925a4777750368a54edb11b5f77f",
+  "installer_version": "0.1.4.13",
+  "installer_build_id": "0.1.4.13-normal-use-prep5",
+  "installer_schema": 12,
+  "supported_config_schema": 1,
+  "handoff_protocol": 1,
+  "installer_sha256": "b344bcebace3d5b1caccbbacf64f5a07ff2f93ba2d65b52c5583c5630242fafb",
+  "handoff_sha256": "67c3a99d032bf511adc6f65cee358445901bdae93fa5a862a10c6f5b333a845b",
+  "candidate_frozen_for_coordinator": true,
+  "published": false,
+  "daily_or_steam_upgrade_performed_by_this_task": false,
+  "isolated_upgrade_repeat_rollback_verified": true,
+  "mouse_gui_verified": false,
+  "product_rebuilt": false,
+  "original_corpus_redistribution_permission_evidence": "not_established",
+  "product_source_root_files": 299
+}

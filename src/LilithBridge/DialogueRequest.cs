@@ -19,6 +19,9 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
     public static DialogueGeneration Capture(BridgeConfig config, string? userText = null,
         string? modeOverride = null, string purpose = "dialogue")
     {
+        if (config.IsOpenAI)
+            return new(config.OpenAIReasoningEffort != "none", config.OpenAIReasoningEffort,
+                config.OpenAIMaxOutputTokens) { Selection = "openai_manual" };
         string mode = Normalize(config.DialogueThinkingMode);
         string selection = "configured_mode";
         if (!string.IsNullOrWhiteSpace(modeOverride))
@@ -90,7 +93,7 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
     }
 }
 
-internal sealed class DialogueRequest : IDisposable
+internal sealed partial class DialogueRequest : IDisposable
 {
     private readonly object _b1Ownership = new();
     internal NativeMemoTarget? MemoAnnotationTarget { get; set; }
@@ -103,6 +106,27 @@ internal sealed class DialogueRequest : IDisposable
     internal int MethodMaterialRevision {get;set;}
     internal MemoryTurn[] MethodBaseSources {get;set;} = Array.Empty<MemoryTurn>();
     internal MemoryTurn[] MethodRuntimeSources {get;set;} = Array.Empty<MemoryTurn>();
+    internal string[] ReflectionTargetOfferedEventIds {get;set;} = Array.Empty<string>();
+    internal ReflectionReasonBasis? ReflectionReasonBasis {get;set;}
+    internal Dictionary<string,string> ReflectionTargetOfferedAliases {get;} = new(StringComparer.Ordinal);
+    internal string[] StagedReflectionTargetIds {get;set;} = Array.Empty<string>();
+    internal ReflectionReasonBasis? StagedReflectionReasonBasis {get;set;}
+    internal string[] ReflectionToolTargetIds {get;set;} = Array.Empty<string>();
+    internal ReflectionReasonBasis? ReflectionToolReasonBasis {get;set;}
+    internal ReflectionReasonBasis? ReflectionProtocolReasonBasis {get;set;}
+    private static ReflectionReasonBasis? MergeReflectionBases(params ReflectionReasonBasis?[] bases)
+    {
+        var present = bases.Where(b => b != null).Cast<ReflectionReasonBasis>().ToArray();
+        var generated=present.SelectMany(b=>b.GeneratedSources??Array.Empty<PublicExpressionGeneratedSource>()).Distinct().ToArray();
+        return present.Length == 0 ? null : new(present.SelectMany(b => b.Dependencies).Distinct().ToArray(), present.All(b => b.Complete),generated.Length==0?null:generated);
+    }
+    internal void CommitReflectionPurposeInput()
+    {
+        ReflectionTargetOfferedEventIds = StagedReflectionTargetIds.Concat(ReflectionToolTargetIds).Distinct(StringComparer.Ordinal).ToArray();
+        ReflectionReasonBasis = MergeReflectionBases(StagedReflectionReasonBasis, ReflectionToolReasonBasis, ReflectionProtocolReasonBasis);
+    }
+    internal void RetainReflectionProtocolBasis() => ReflectionProtocolReasonBasis = MergeReflectionBases(ReflectionProtocolReasonBasis, ReflectionReasonBasis);
+
     internal List<MethodSource> ReviewDerivedMethodSources {get;} = new();
     internal bool ReviewDerivationUntracked {get;private set;}
     internal bool RegisterReviewDerivation(ReviewToolOutcome outcome)
@@ -122,6 +146,8 @@ internal sealed class DialogueRequest : IDisposable
             {
                 if(IsCancelled||_disposed||!RegisterReviewDerivation(outcome)
                     ||!RegisterReviewSupply(outcome.SourceRecords,outcome.SourceViews,outcome.SourceVersions))return false;
+                if(outcome.SourceSnapshot is {} historySnapshot && (historySnapshot.HasChatHistory || historySnapshot.HasExactB1 || historySnapshot.HasLogicalMessage))
+                {ChatHistorySnapshots.Add(historySnapshot);ChatHistoryBudgetActive |= historySnapshot.HasChatHistory || historySnapshot.HasExactB1;}
                 register();return true;
             }
             return outcome.SourceSnapshot is { } snapshot?snapshot.TryUse(Apply):Apply();
@@ -185,6 +211,8 @@ internal sealed class DialogueRequest : IDisposable
             if (B1UnavailableReason.Length == 0) B1UnavailableReason = reason;
             if (B1Packet != null) B1RetiredPackets.Add(B1Packet);
             B1Packet = null;
+            ReadableB1 = null;
+            ReadableB1SourcePermission = null;
         }
     }
     internal B1Commit WithB1Ownership(Func<B1Commit> commit)
@@ -193,6 +221,17 @@ internal sealed class DialogueRequest : IDisposable
             : _b1CapabilityOwner == null ? commit() : _b1CapabilityOwner.WithBoundary(commit);
     }
     public RequestWaitStatus WaitStatus { get; } = new();
+    internal bool StoryToolEnabled => !IsCancelled && PreviousStoryArchive.CanSupply(RequestConfig)
+        && PreviousStoryArchive.IsAvailable(RequestConfig);
+    // A supplied work excerpt retains its live source/consent guard across every
+    // continuation belonging to this request, including legacy recall paths.
+    internal List<Func<bool>> StorySupplyChecks { get; } = new();
+    internal void AddStorySupply(Func<bool> permission)
+    {
+        StorySupplyChecks.Add(permission);
+        ReviewDerivationUntracked = true;
+    }
+    internal bool StorySupplyPermitted() => StorySupplyChecks.All(check => check());
     private int _memoResultContinuationStarted;
     internal bool TryBeginMemoResultContinuation() => !IsCancelled
         && Interlocked.CompareExchange(ref _memoResultContinuationStarted, 1, 0) == 0;
@@ -234,17 +273,39 @@ internal sealed class DialogueRequest : IDisposable
     internal string ReviewSessionIdentity {get;set;}="";
     internal MemoryStore? ReviewStore {get;set;}
     internal string ReviewCurrentText {get;set;}="";
-    internal bool ReviewSourcesPermitted()=>ReviewStore?.ReviewOutboundPermitted(this)!=false;
+    internal bool ReviewSourcesPermitted(bool includeChatHistory=true)=>ReviewStore?.ReviewOutboundPermitted(this)!=false
+        && (!includeChatHistory || ChatHistorySupplyPermitted());
     // A zero-record result can still supply its question or note. Actual supply,
     // rather than the number of original source records, owns revalidation.
     internal bool HasReviewSupply => ReviewHandoffSupplied || ReviewSuppliedText.Count > 0
         || ReviewSourceRecords.Count > 0;
-    internal bool ReviewSupplyPermitted() => !HasReviewSupply
-        || (ReviewToolEnabled && ReviewStore != null && ReviewSourcesPermitted());
+    internal bool ReviewSupplyPermitted(bool includeChatHistory=true) => !HasReviewSupply
+        || (ReviewToolEnabled && ReviewStore != null && ReviewSourcesPermitted(includeChatHistory));
     internal string HandoffContext {get;set;} = "";
     internal bool JoinReviewProcess(ReviewProcess process) => process.Join(this);
     internal Task<ReviewToolOutcome> StartReview(Func<Task<ReviewToolOutcome>> start)
     { lock(_b1Ownership) { Token.ThrowIfCancellationRequested(); return start(); } }
+    internal ReviewProcess? WithReviewOwnership(Func<ReviewProcess?> start)
+    {lock(_b1Ownership)return IsCancelled||_disposed?null:start();}
+    // Called with owner ownership held, before taking a process/source lock.
+    // Resolve live config/work checks now; publish only after the old grant and
+    // every source are revalidated under their existing boundaries.
+    internal (bool Required,Func<Func<bool>,bool> Commit) PrepareReviewReplacement(ReviewProcess previous,ReviewProcess next)
+    {
+        var original=ChatHistorySnapshots.ToArray();
+        if(!original.Any(s=>s.UsesOperation(previous)))return(false,use=>use());
+        var replacement=ReviewSourceSnapshot.ForReplacement(original,this,previous,next);
+        var prepared=ReviewSourceSnapshot.PrepareUseMany(original);
+        return(true,use=>prepared(()=>
+        {
+            if(IsCancelled||_disposed||!ChatHistorySnapshots.SequenceEqual(original))return false;
+            next.InheritSources(replacement);
+            if(!use())return false;
+            ChatHistorySnapshots.Clear();
+            if(replacement!=null)ChatHistorySnapshots.Add(replacement);
+            return true;
+        }));
+    }
     public bool ReviewAuthorizedTurn { get; }
     public int ReviewCalls { get; private set; }
     public int ReconsiderCalls { get; private set; }
@@ -275,7 +336,7 @@ internal sealed class DialogueRequest : IDisposable
                 if (!selected.TryGetValue(view.Id, out var turn)) return false;
                 string? version = versions!.FirstOrDefault(v => v.Kind == "utterance" && v.EventId == turn.EventId)?.Fingerprint;
                 if (string.IsNullOrEmpty(version) || ReviewSourceVersions.TryGetValue(view.Id, out var previous) && previous != version) return false;
-                string text = ReviewContext.Clean(turn.Text);
+                string text = view.RawTextPreserved ? turn.Text : ReviewContext.Clean(turn.Text);
                 if (view.TotalChars != text.Length || view.Offset < 0 || view.Offset > text.Length
                     || view.Text.Length > text.Length - view.Offset
                     || text.Substring(view.Offset, view.Text.Length) != view.Text) return false;
@@ -324,6 +385,9 @@ internal sealed class DialogueRequest : IDisposable
     public VisionImage? Frame { get; private set; }
     public bool FrameAccepted { get; private set; }
     public int HttpAttempts { get; private set; }
+    // Null unless the native trial or isolated harness explicitly attaches it.
+    internal DialogueWorkSession? WorkPrototype { get; set; }
+    internal Func<bool>? WorkCarryPermission { get; set; }
     // Includes screenshot continuation and existing boundary/recall retries.
     public const int MaxHttpAttempts = 6;
     private readonly CancellationTokenSource _cancellation = new();
@@ -349,13 +413,13 @@ internal sealed class DialogueRequest : IDisposable
             : Math.Min(config.MaxTokens, 600);
         ReviewMode = ReviewContextModes.Normalize(config.ReviewContextMode);
         ReviewAuthorizedTurn = reviewAuthorized;
-        _nativeToolsInitiallyEnabled = config.DialogueNativeToolsEnabled || ReviewToolEnabled || config.SessionReadMethodsEnabled;
+        _nativeToolsInitiallyEnabled = config.DialogueNativeToolsEnabled || config.ExperimentalTemporaryExpressions || ReviewToolEnabled || config.SessionReadMethodsEnabled;
         ScreenshotNative = _nativeToolsInitiallyEnabled;
         // Historical speech has no authentic reasoning/tool transcript. Supply it
         // as attributed data rather than fabricating assistant protocol messages.
         SourceEnvelope = config.DialogueSourceEnvelopeEnabled || ScreenshotNative;
         UserEventId = userEventId;
-        _capture = config.VisionEnabled ? capture : null;
+        _capture = config.VisionEnabled && DeepSeekModels.AllowsImages(config) ? capture : null;
     }
 
     internal void SelectNativeCarrier()
@@ -443,7 +507,7 @@ internal sealed class DialogueRequest : IDisposable
         : ScreenRequested ? "capture_unavailable" : "no_image",
         Frame?.CapturedAt ?? default, Frame?.Sha256 ?? "");
 
-    public string ReviewContract() => ReviewToolEnabled ? ReviewContext.Contract()
+    public string ReviewContract() => ReviewToolEnabled ? ReviewContext.Contract(ReviewStore?.HasLegacyArchive==true)
         : CanStopReview ? "[已有回看操作的停止能力] 仅可用 review_context(mode=stop, operation_id="
             +ReviewControlOperationId+") 停止已有操作；不需要重新授权读取，不提供原材料，也不能read/reconsider/take。可继续普通回应。" : "";
 

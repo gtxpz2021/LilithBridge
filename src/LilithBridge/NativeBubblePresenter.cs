@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace LilithBridge;
 
-internal static class NativeBubblePresenter
+internal static partial class NativeBubblePresenter
 {
     private static readonly Queue<string> Pending = new();
     private static ApiResult? _activeReply;
@@ -15,11 +15,18 @@ internal static class NativeBubblePresenter
     private static LilithActionType? _activeAction;
     private static string _activeEmotion = "";
     private static string _activeVoice = "";
-    private static int _chunkIndex;
+    private static int _chunkIndex,_startChunkIndex;
     private static string _lastShown = "";
     private static float _nextChunkAt;
     private static bool _retrying;
     private static float _retryUntil;
+    private static float _editingPausedAt = -1f;
+    private sealed record PendingAppearance(ApiResult Reply, int Index, string Text, bool First,
+        LilithActionType? Action, LilithActionType? NativeAction, NativeAppearanceWait Wait);
+    private static PendingAppearance? _appearance;
+    internal static Func<(double Time, int Frame)>? AppearanceClockForTests { get; set; }
+    private static (double Time, int Frame) AppearanceClock() => AppearanceClockForTests?.Invoke()
+        ?? (Time.unscaledTime, Time.frameCount);
     private const float RetryIntervalSeconds = 0.5f;
     private const float RetryWindowSeconds = 3f;
     // The delivery record lives on the result itself: the generated full text
@@ -36,6 +43,12 @@ internal static class NativeBubblePresenter
 
     public static void ObserveGenerated(ApiResult reply)
     {
+        // Capture the actual received public answer before Clean or local
+        // rewrites. A cancelled owner can still have received an answer; that
+        // does not make any of its body a displayed history event.
+        if (reply.Error.Length == 0 && !reply.IsLocalFallback
+            && reply.Response.Outcome is "accepted" or "accepted_without_finish_reason")
+            BridgeController.Instance?.CaptureGeneratedPublicReply(reply);
         if (reply.Error.Length > 0 || reply.Response.Outcome == "cancelled"
             || reply.DialogueRequest?.IsCancelled == true || MemoryStore.Clean(reply.Text).Length == 0)
             return;
@@ -61,6 +74,8 @@ internal static class NativeBubblePresenter
         if (text.Length == 0)
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
+        if(!PublicFinalHandoff.Prepare(reply,text,delivery))
+        {CancelUndispatched(reply,"public_prefix_changed","local_final_text_differs_from_streamed_prefix");return;}
         delivery.PrepareFinalDisplayPlan(text);
     }
 
@@ -73,6 +88,12 @@ internal static class NativeBubblePresenter
         if (ReferenceEquals(_activeReply, reply) || reply.DeliveryOutcome.Length > 0)
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
+        if(reply.DialogueRequest?.IsCancelled==true)
+        {CancelUndispatched(reply,"cancelled","request_cancelled_before_stream_handoff");return;}
+        if(!PublicFinalHandoff.Prepare(reply,text,delivery)||!PublicFinalHandoff.Import(reply,delivery))
+        {CancelUndispatched(reply,"public_prefix_changed","streamed_prefix_handoff_not_verified");return;}
+        if(BridgeController.Instance?.ArchiveFinalStreamPrefix(reply)==false)
+        {CancelUndispatched(reply,"source_changed","streamed_prefix_archive_source_changed");return;}
         BubbleDisplayPlan plan = delivery.PrepareFinalDisplayPlan(text);
         var chunks = plan.Chunks;
         // A cancelled owner can outlive its callback or display retry. Reject it
@@ -105,52 +126,64 @@ internal static class NativeBubblePresenter
                 _activeAction.Value.ToString(), "available_action_list");
             _activeAction = null;
         }
-        if (_activeAction.HasValue)
+        if(NativeActionPreparationForTests is {} prepareAction)_activeAction=prepareAction(_activeAction);
+        else
         {
-            LilithActionType? poseResolved = ActionExecutor.ResolveActionForPose(_activeAction);
-            if (poseResolved.HasValue)
+            if (_activeAction.HasValue)
             {
-                if (poseResolved.Value != _activeAction.Value)
+                LilithActionType? poseResolved = ActionExecutor.ResolveActionForPose(_activeAction);
+                if (poseResolved.HasValue)
                 {
-                    NativeEventLog.Trace("action.pose_resolved", "mod", "lilith",
-                        _activeAction.Value.ToString(), "resolved=" + poseResolved.Value);
+                    if (poseResolved.Value != _activeAction.Value)
+                    {
+                        NativeEventLog.Trace("action.pose_resolved", "mod", "lilith",
+                            _activeAction.Value.ToString(), "resolved=" + poseResolved.Value);
+                    }
+                    _activeAction = poseResolved;
                 }
-                _activeAction = poseResolved;
+                else
+                {
+                    NativeEventLog.Trace("action.pose_blocked", "mod", "lilith",
+                        _activeAction.Value.ToString(), "no pose-safe fallback");
+                    _activeAction = null;
+                }
             }
-            else
+            if (_activeAction.HasValue && !ActionExecutor.HasNativeAnimation(_activeAction.Value))
             {
-                NativeEventLog.Trace("action.pose_blocked", "mod", "lilith",
-                    _activeAction.Value.ToString(), "no pose-safe fallback");
+                NativeEventLog.Trace("action.availability_skip", "mod", "lilith",
+                    _activeAction.Value.ToString(),
+                    "native HasLilithActionAnimation returned false");
                 _activeAction = null;
             }
-        }
-        if (_activeAction.HasValue && !ActionExecutor.HasNativeAnimation(_activeAction.Value))
-        {
-            NativeEventLog.Trace("action.availability_skip", "mod", "lilith",
-                _activeAction.Value.ToString(),
-                "native HasLilithActionAnimation returned false");
-            _activeAction = null;
         }
         _activeEmotion = ActionCatalog.NormalizeEmotion(reply.Emotion);
         _activeVoice = reply.Voice;
         Pending.Clear();
         _nextChunkAt = 0f;
         _lastShown = "";
-        _chunkIndex = 0;
+        _chunkIndex = _startChunkIndex = delivery.ShownChunks.Count;
 
         if (chunks.Count == 0)
             return;
-        foreach (ReplyDeliveryChunk chunk in chunks)
+        foreach (ReplyDeliveryChunk chunk in chunks.Skip(_startChunkIndex))
             Pending.Enqueue(chunk.Text);
         delivery.MarkQueued(plan);
         TraceDelivery("ai.delivery_queued", reply, delivery, "", "");
-        if (!ShowNextChunk(true))
+        if(Pending.Count==0){CompleteWithoutNewBubble(reply);return;}
+        if (!ShowNextChunk(true) && ReferenceEquals(_activeReply, reply))
             ScheduleRetry();
     }
 
     public static bool OnChunkFinished()
     {
         if (StopCancelledOwner()) return false;
+        if (_appearance is { } unseen)
+        {
+            _appearance = null;
+            EndUnknownDisplay(unseen.Reply, unseen.Index, unseen.Text, "appearance",
+                "native_ended_without_observed_appearance");
+            return false;
+        }
         if (_retrying)
             return _chunkIndex > 0 && Pending.Count > 0;
         if (Pending.Count > 0)
@@ -164,13 +197,26 @@ internal static class NativeBubblePresenter
         return false;
     }
 
-    /// <summary>
-    /// Called every frame by the bridge; shows the queued bubble once the pause
-    /// decided in <see cref="OnChunkFinished"/> has elapsed.
-    /// </summary>
+    // Freeze the retry clock while an unsubmitted draft owns input.
+    public static void PauseForEditing()
+    {
+        if (_activeReply != null && Pending.Count > 0 && _editingPausedAt < 0f)
+            _editingPausedAt = Time.unscaledTime;
+    }
+
+    /// <summary>Advance the next bubble after its reading pause and input gates.</summary>
     public static void Tick()
     {
+        if (BridgeController.Instance?.CancelDeliveryForSleep() == true) return;
         if (StopCancelledOwner()) return;
+        if (_appearance != null) { ResolveAppearance(); return; }
+        if (BridgeController.Instance?.AiDeliveryEditing == true)
+        { PauseForEditing(); return; }
+        if (_editingPausedAt >= 0f)
+        {
+            if (_retrying) _retryUntil += Math.Max(0f, Time.unscaledTime - _editingPausedAt);
+            _editingPausedAt = -1f;
+        }
         if (Pending.Count == 0 || _nextChunkAt <= 0f)
             return;
         if (_retrying && Time.unscaledTime >= _retryUntil)
@@ -183,12 +229,19 @@ internal static class NativeBubblePresenter
         if (_retrying && BridgeController.Instance?.CanResumeAiDelivery() == false)
             return;
         _nextChunkAt = 0f;
-        if (!ShowNextChunk(_chunkIndex == 0))
+        ApiResult? advancing = _activeReply;
+        if (!ShowNextChunk(_chunkIndex == _startChunkIndex) && ReferenceEquals(_activeReply, advancing))
             ScheduleRetry();
     }
 
     public static void ClearPending(string outcome = "cancelled", string reason = "")
     {
+        if (_appearance is { } accepted)
+        {
+            _appearance = null;
+            EnsureDelivery(accepted.Reply).MarkDisplayUnknown(accepted.Index, accepted.Text,
+                "accepted_without_observed_appearance");
+        }
         int pendingChunks = Pending.Count;
         Pending.Clear();
         _nextChunkAt = 0f;
@@ -207,6 +260,8 @@ internal static class NativeBubblePresenter
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
         string text = MemoryStore.Clean(reply.Text);
+        if(!PublicFinalHandoff.Prepare(reply,text,delivery))
+        {CancelUndispatched(reply,"public_prefix_changed","local_final_text_differs_from_streamed_prefix");return;}
         delivery.MarkQueued(delivery.PrepareFinalDisplayPlan(text));
     }
 
@@ -223,17 +278,25 @@ internal static class NativeBubblePresenter
         string text = MemoryStore.Clean(reply.Text);
         delivery.CancelBeforeDisplay(text, SplitNaturalChunks(text).Count, outcome, reason);
         reply.DeliveryOutcome = outcome;
+        BridgeController.Instance?.RecordGeneratedPublicEnd(reply, outcome);
         TraceDelivery("ai.delivery_terminal", reply, delivery, outcome, reason,
             pendingChunks: delivery.AbandonedChunks);
     }
 
     private static bool StopCancelledOwner()
     {
-        if (_activeReply != null && BridgeController.Instance?.NativeLinkageAllows(_activeReply) == false)
-        { ClearPending("cancelled", "native_linkage_invalidated"); return true; }
-        if (_activeReply?.DialogueRequest?.IsCancelled != true) return false;
-        ClearPending("cancelled", "request_cancelled");
-        return true;
+        // Cancellation is already authoritative; do not reconstruct source
+        // history for an owner that can no longer present anything.
+        if (_activeReply?.DialogueRequest?.IsCancelled == true)
+        { ClearPending("cancelled", "request_cancelled"); return true; }
+        // Show checked full sources before accepting this completed reply. Keep
+        // its ordinary speech natural: display ticks and subsequent chunks only
+        // check live owner/explicit cancellation, without rereading old review
+        // material. Generated-but-unshown text remains in the existing archive
+        // when an explicit interruption clears the pending display queue.
+        if (_activeReply != null && BridgeController.Instance?.NativePlaybackAllows(_activeReply) == false)
+        { ClearPending("cancelled", "playback_owner_invalidated"); return true; }
+        return false;
     }
 
     private static void ScheduleRetry()
@@ -253,8 +316,11 @@ internal static class NativeBubblePresenter
     private static bool ShowNextChunk(bool first)
     {
         if (StopCancelledOwner()) return false;
+        if (_appearance != null) return true;
         if (Pending.Count == 0)
             return false;
+        ApiResult? displayingReply = _activeReply;
+        int displayingIndex = _chunkIndex;
         string text = Pending.Peek();
         string emotion = first ? _activeEmotion : "";
         LilithActionType? action = first ? _activeAction : null;
@@ -270,80 +336,123 @@ internal static class NativeBubblePresenter
                 && resolved is not (LilithActionType.None or LilithActionType.Idle)
                 ? action
                 : null;
-        bool displayed = false;
+        NativeBubbleAttempt attempt = default!;
+        bool Dispatch() { attempt = TryNativeBubble(new(text, emotion, duration)); return true; }
+        if (!(displayingReply?.TryUseSelection(Dispatch) ?? Dispatch()))
+        { ClearPending("cancelled", "selection_changed"); return false; }
+        if (!ReferenceEquals(_activeReply, displayingReply)) return true;
+        if (attempt.Outcome == WorkDisplayOutcome.Unknown && displayingReply != null)
+        { EndUnknownDisplay(displayingReply, displayingIndex, text, attempt.Endpoint); return false; }
+        if (attempt.Outcome == WorkDisplayOutcome.Shown)
+        {
+            Pending.Dequeue(); _retrying = false; _lastShown = text;
+            NotifyShown(text, first, action, nativeAction); return true;
+        }
+        if (attempt.Outcome == WorkDisplayOutcome.Accepted && displayingReply != null)
+        {
+            var clock = AppearanceClock();
+            _retrying = false; _nextChunkAt = 0;
+            _appearance = new(displayingReply, displayingIndex, text, first, action, nativeAction,
+                new(text, clock.Time, clock.Frame));
+            NativeEventLog.Trace("native.bubble.accepted", "mod", "lilith", text,
+                "appearance=pending;chunk=" + displayingIndex);
+            return true;
+        }
+        NativeEventLog.Trace("native.bubble.fallback", "mod", "lilith", text, "no native bubble available");
+        return false;
+    }
 
+    // Cancellation does not lose input or protect a timer window. It samples
+    // the current bubble once before ownership changes, then ends normally.
+    internal static void FlushObservedAppearance() => ResolveAppearance(atCancellation: true, executeAction: false);
+    private static void ResolveAppearance(bool atCancellation = false, bool executeAction = true)
+    {
+        if (_appearance is not { } pending) return;
+        var clock = AppearanceClock();
+        var outcome = pending.Wait.Poll(clock.Time, clock.Frame, atCancellation);
+        if (outcome == WorkDisplayOutcome.Accepted) return;
+        _appearance = null;
+        if (!ReferenceEquals(_activeReply, pending.Reply)) return;
+        if (outcome != WorkDisplayOutcome.Shown)
+        {
+            EndUnknownDisplay(pending.Reply, pending.Index, pending.Text, "appearance", "appearance_unconfirmed");
+            return;
+        }
+        Pending.Dequeue(); _lastShown = pending.Text;
+        NotifyShown(pending.Text, pending.First, pending.Action, pending.NativeAction, executeAction);
+    }
+
+    // Both regular replies and temporary expressions enter the same Say /
+    // ShowNode implementation. A test replaces only this native endpoint.
+    internal static Func<NativeBubbleRequest, NativeBubbleAttempt>? NativeEndpointForTests { get; set; }
+    internal static WorkDisplayOutcome ShowTemporaryBubble(WorkBubble bubble) =>
+        TryNativeBubble(new(bubble.Text, "", Math.Clamp(1.2f + bubble.Text.Length * 0.045f, 1.5f, 6f))).Outcome;
+
+    internal static NativeBubbleAttempt TryNativeBubble(NativeBubbleRequest request)
+    {
+        if (NativeEndpointForTests is { } injected)
+        {
+            try { return injected(request); }
+            catch { return new(WorkDisplayOutcome.Unknown, "injected_native_endpoint"); }
+        }
+        bool entered = false;
         try
         {
             DialogueManager? manager = DialogueManager.instance;
             if (manager != null)
             {
-                displayed = manager.Say(
-                    text,
-                    LilithActionType.None,
-                    emotion,
-                    duration,
-                    0,
-                    true);
+                entered = true;
+                if (manager.Say(request.Text, LilithActionType.None, request.Emotion, request.Duration, 0, true))
+                    return new(WorkDisplayOutcome.Accepted, "Say");
             }
         }
         catch (Exception error)
         {
-            Plugin.PluginLog.LogWarning("Native bubble Say failed: " + error.Message);
+            if (entered) return new(WorkDisplayOutcome.Unknown, "Say");
+            Plugin.PluginLog.LogWarning("Native bubble Say unavailable before call: " + error.Message);
         }
-
-        if (displayed)
-        {
-            Pending.Dequeue();
-            _retrying = false;
-            _lastShown = text;
-            NotifyShown(text,first,action,nativeAction);
-            return true;
-        }
-
+        entered = false;
         try
         {
             DialogueBubbleUI? bubble = UnityEngine.Object.FindObjectOfType<DialogueBubbleUI>(true);
-            MethodInfo? show = bubble?.GetType().GetMethod(
-                "ShowNode",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (bubble != null && show != null)
+            MethodInfo? show = bubble?.GetType().GetMethod("ShowNode", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (bubble != null && show != null && show.ReturnType == typeof(bool))
             {
-                var node = new DialogueNode
-                {
-                    id = -100000 - (text.GetHashCode() & 0x7FFFFFFF) % 100000,
-                    speaker = "Lilith",
-                    text = text,
-                    emotion = emotion,
-                    actionType = LilithActionType.None,
-                    duration = duration,
-                    soundId = "",
-                    textIsFinal = true
-                };
-                object? result = show.Invoke(bubble, new object[] { node });
-                displayed = result is not bool success || success;
+                var node = new DialogueNode { id = -100000 - (request.Text.GetHashCode() & 0x7FFFFFFF) % 100000,
+                    speaker = "Lilith", text = request.Text, emotion = request.Emotion,
+                    actionType = LilithActionType.None, duration = request.Duration, soundId = "", textIsFinal = true };
+                entered = true;
+                if (show.Invoke(bubble, new object[] { node }) is bool shown && shown)
+                    return new(WorkDisplayOutcome.Accepted, "ShowNode");
             }
         }
-
         catch (Exception error)
         {
-            Plugin.PluginLog.LogWarning("Native bubble ShowNode failed: " + error.Message);
+            bool targetNotEntered = error is ArgumentException or TargetParameterCountException or TargetException or MemberAccessException;
+            if (entered && !targetNotEntered) return new(WorkDisplayOutcome.Unknown, "ShowNode");
+            Plugin.PluginLog.LogWarning("Native bubble ShowNode unavailable before call: " + error.Message);
         }
-
-        if (displayed)
-        {
-            Pending.Dequeue();
-            _retrying = false;
-            _lastShown = text;
-            NotifyShown(text,first,action,nativeAction);
-            return true;
-        }
-
-        NativeEventLog.Trace("native.bubble.fallback", "mod", "lilith", text,
-            "no native bubble available");
-        return false;
+        return new(WorkDisplayOutcome.NotShown, "unavailable");
     }
 
-    private static void NotifyShown(string text, bool first, LilithActionType? action, LilithActionType? nativeAction)
+    private static void EndUnknownDisplay(ApiResult reply, int index, string text, string endpoint, string reason = "")
+    {
+        if (reason.Length == 0) reason = endpoint + "_exception_after_entry";
+        ReplyDeliveryRecord delivery = EnsureDelivery(reply);
+        delivery.MarkDisplayUnknown(index, text, endpoint);
+        reply.DialogueRequest?.Cancel();
+        if (ReferenceEquals(_activeReply, reply))
+        {
+            try { DialogueManager.instance?.ForceEndDialogue(); } catch { }
+            ClearPending("delivery_unknown", reason);
+        }
+        // Re-entrant handoff may already have ended the old reply. Never clear
+        // a different presenter's queue or change its pending request flags.
+        TraceDelivery("ai.display_receipt_unknown", reply, delivery, delivery.Outcome,
+            reason, index, text.Length);
+    }
+
+    private static void NotifyShown(string text, bool first, LilithActionType? action, LilithActionType? nativeAction, bool executeAction = true)
     {
         // Display has already succeeded. A bookkeeping or animation failure
         // must never send the same visible chunk through a second display path.
@@ -354,21 +463,19 @@ internal static class NativeBubblePresenter
         {
             delivery = EnsureDelivery(shownReply);
             delivery.MarkShown(index, text, _activePlan?.Version ?? "");
+            // Record actual appearance even if the following raw archive
+            // callback fails. A later exact raw turn upgrades this same receipt.
+            BridgeController.Instance?.RecordGeneratedPublicDisplay(shownReply, null, index, text);
             shownReply.DialogueRequest?.WaitStatus.MarkFirstShown();
         }
         try { BridgeController.Instance?.OnAiBubbleShown(text,_activeReply,index,Pending.Count == 0); }
         catch (Exception error) { Plugin.PluginLog.LogWarning("Bubble delivery receipt failed: " + error.Message); }
         if (shownReply != null && delivery != null)
             TraceDelivery("ai.delivery_chunk", shownReply, delivery, "", "", index, text.Length);
-        try
-        {
-            ActionPathDiagnostic.TracePlayback(nativeAction);
-            if (first && _activeReply != null)
-                ActionExecutor.Execute(_activeReply,action:action,alreadyHandledByNativeSay:false);
-        }
-        catch (Exception error) { Plugin.PluginLog.LogWarning("Bubble action failed: " + error.Message); }
+        try{ActionPathDiagnostic.TracePlayback(nativeAction);}catch{ }
+        if(executeAction&&first&&shownReply!=null)SubmitReplyEffects(shownReply,action,"first_remaining_bubble_appeared");
         NativeEventLog.Trace("native.bubble", "mod", "lilith", text,"shown;first=" + first + ";chunk=" + index);
-        if (Pending.Count == 0)
+        if (ReferenceEquals(_activeReply,shownReply)&&Pending.Count == 0)
             EndDelivery("completed");
     }
 
@@ -383,6 +490,7 @@ internal static class NativeBubblePresenter
 
     private static void ClearActive()
     {
+        _appearance = null;
         _activeReply = null;
         _activePlan = null;
         _activeAction = null;
@@ -390,6 +498,7 @@ internal static class NativeBubblePresenter
         _activeVoice = "";
         _retrying = false;
         _retryUntil = 0f;
+        _editingPausedAt = -1f;
     }
 
     private static void EndDelivery(string outcome, string reason = "", int? abandonedChunks = null)
@@ -409,6 +518,7 @@ internal static class NativeBubblePresenter
             ? 0
             : Math.Max(0, (delivery.DisplayPlan?.RenderedText.Length ?? delivery.GeneratedChars) - delivery.DeliveredChars);
         delivery.Complete(outcome, receiptReason, pendingChunks, pendingChars);
+        BridgeController.Instance?.RecordGeneratedPublicEnd(reply, outcome);
         TraceDelivery("ai.delivery_terminal", reply, delivery, outcome, receiptReason,
             pendingChunks: pendingChunks);
         try { BridgeController.Instance?.OnAiDeliveryEnded(reply, outcome); }
@@ -455,6 +565,8 @@ internal static class NativeBubblePresenter
                 fully_delivered = delivery.IsFullyDelivered,
                 pending_chunks = pendingChunks ?? delivery.AbandonedChunks,
                 abandoned_chunks = delivery.AbandonedChunks, abandoned_chars = delivery.AbandonedChars,
+                unknown_chunks = delivery.UnknownChunks, unknown_chars = delivery.UnknownChars,
+                unknown_chunk_index = delivery.UnknownChunkIndex, unknown_endpoint = delivery.UnknownEndpoint,
                 chunk_index = chunkIndex, chunk_chars = chunkChars
             }));
     }

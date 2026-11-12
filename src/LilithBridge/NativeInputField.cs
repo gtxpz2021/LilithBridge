@@ -17,15 +17,24 @@ internal sealed partial class NativeInputField
     private Action<string>? _onSubmit;
     private Action? _onCancel;
     private bool _wantsFocus;
+    private readonly NativeUiMonitorLease _monitorLease = new();
     private int _characterLimit = 1000;
     private bool _multiLine = true;
     private string _lastLayoutText = "";
+    private bool _layoutDirty = true;
+    private RectTransform? _layoutViewport;
+    private Canvas? _layoutCanvas;
+    private Vector2 _lastLayoutViewportSize = new(-1f, -1f);
+    private float _lastLayoutScale = -1f, _lastLayoutFontSize = -1f;
+    private bool _lastLayoutMultiLine;
     private Action<string>? _onModeSelected;
     private NativeOptionsMenu? _menu;
     private GameObject? _canvasRoot;
     private string? _modeError;
     private Action? _onOpenHistory;
     private Action? _onOpenSharedActivity;
+    private Action? _onOpenB1Selection;
+    private bool _suspendedForHistory;
     private Action? _onAuthorizeReview;
     private bool _reviewAuthorized;
     private TMP_Text? _failureNotice;
@@ -34,11 +43,39 @@ internal sealed partial class NativeInputField
         => StageReplyFailure(draft, preserveCurrentDraft, TransportFailurePresentation.Notice);
     public void StageReplyFailure(string draft, bool preserveCurrentDraft, string notice)
     {
-        if(preserveCurrentDraft) { if(_failureNotice!=null)_failureNotice.text=notice;return; }
+        if(preserveCurrentDraft && _input!=null && (_root?.activeSelf==true || _suspendedForHistory))
+        {
+            if(string.IsNullOrWhiteSpace(_input.text))_input.SetTextWithoutNotify(draft);
+            if(_failureNotice!=null)_failureNotice.text=notice;return;
+        }
         _pendingFailureDraft=draft;_pendingFailureNotice=notice;
     }
     public TMP_Text? StyleText => _input?.textComponent;
-    public void SuspendForHistory(bool suspended) { _menu?.Close(false); _wantsFocus=!suspended; if (_root != null) _root.SetActive(!suspended); }
+    public void SuspendForHistory(bool suspended)
+    {
+        _suspendedForHistory=suspended; _menu?.Close(false); _wantsFocus=!suspended;
+        if (_root != null) _root.SetActive(!suspended);
+        TickMonitorLease();
+        _layoutDirty = true;
+        if (!suspended && IsOpen)
+        {
+            NativeUiViewport.Tick();
+            Canvas.ForceUpdateCanvases();
+            RefreshLayout();
+        }
+    }
+    // The controller calls this before menu/history keyboard branches return.
+    // A visible options/model menu must retain the input's own native token.
+    public void TickMonitorLease()
+    {
+        if (IsOpen)
+        {
+            _monitorLease.Hold();
+            // The menu keyboard branch skips the listening-layout path.
+            if (UiConsumesKeyboard) RefreshLayout();
+        }
+        else _monitorLease.Clear();
+    }
     public bool UiConsumesKeyboard => _menu?.ConsumesKeyboard == true;
     public bool IsMenuOpen => _menu?.IsOpen == true;
     public void CloseMenu() => _menu?.Close();
@@ -46,6 +83,10 @@ internal sealed partial class NativeInputField
         || (_failureNotice!=null && _failureNotice.text.Length>0 && RectTransformUtility.RectangleContainsScreenPoint(_failureNotice.rectTransform,point,null)));
 
     public bool IsOpen => _root != null && _root.activeSelf;
+    // Same monitor viewport and CanvasScaler as the status canvas. Reserve any
+    // host failure notice above the draft so the request status cannot cover it.
+    internal RectTransform? RequestStatusAnchor => IsOpen ? _root!.GetComponent<RectTransform>() : null;
+    internal float RequestStatusTopPadding => _failureNotice != null && _failureNotice.text.Length > 0 ? 70f : 10f;
     public string Text => _input?.text ?? "";
 
     public void EnsureFocus()
@@ -64,7 +105,8 @@ internal sealed partial class NativeInputField
         Action<string>? onModeSelected = null,
         Action? onOpenHistory = null,
         Action? onAuthorizeReview = null,
-        Action? onOpenSharedActivity = null)
+        Action? onOpenSharedActivity = null,
+        Action? onOpenB1Selection = null)
     {
         _characterLimit = config.InputCharacterLimit;
         _multiLine = config.InputMultiLine;
@@ -76,12 +118,13 @@ internal sealed partial class NativeInputField
         _onModeSelected = onModeSelected;
         _onOpenHistory = onOpenHistory;
         _onOpenSharedActivity = onOpenSharedActivity;
+        _onOpenB1Selection = onOpenB1Selection;
+        _suspendedForHistory = false;
         _onAuthorizeReview = onAuthorizeReview;
         _reviewAuthorized = false;
         _modeError = null;
         RefreshThinkingMode(config);
-        _lastLayoutText = "";
-        ApplyLayout();
+        _layoutDirty = true;
         if (_input != null)
         {
             _input.characterLimit = _characterLimit;
@@ -94,14 +137,20 @@ internal sealed partial class NativeInputField
         _onSubmit = onSubmit;
         _onCancel = onCancel;
         _root.SetActive(true);
+        TickMonitorLease();
         _wantsFocus = true;
+        NativeUiViewport.Tick();
+        Canvas.ForceUpdateCanvases();
+        _layoutDirty = true; // A menu cooldown may have measured before this flush.
+        RefreshLayout();
         Activate();
-        UpdateDynamicHeight();
         return true;
     }
 
     public void Hide()
     {
+        _monitorLease.Clear();
+        _suspendedForHistory = false;
         if (_root == null)
             return;
         if (EventSystem.current != null)
@@ -114,25 +163,35 @@ internal sealed partial class NativeInputField
 
     public void Destroy()
     {
+        _monitorLease.Clear();
+        _menu?.Dispose();
         if (_canvasRoot != null)
             UnityEngine.Object.Destroy(_canvasRoot);
         _root = null;
         _input = null;
         _menu = null; _canvasRoot = null;
+        _layoutViewport = null; _layoutCanvas = null; _layoutDirty = true;
         _failureNotice=null;_pendingFailureDraft=null;_pendingFailureNotice=null;
         _onModeSelected = null;
         _onAuthorizeReview = null;
+        _onOpenB1Selection = null; _suspendedForHistory = false;
     }
 
     public void RefreshLayout()
     {
-        if (_input == null)
+        if (_input == null || _root == null || !_root.activeSelf)
             return;
         string current = _input.text;
-        if (current == _lastLayoutText)
+        Vector2 viewport = _layoutViewport != null ? _layoutViewport.rect.size : Vector2.zero;
+        float scale = _layoutCanvas != null ? _layoutCanvas.scaleFactor : 1f;
+        float fontSize = _input.textComponent != null ? _input.textComponent.fontSize : 0f;
+        if (!_layoutDirty && current == _lastLayoutText && viewport == _lastLayoutViewportSize
+            && scale == _lastLayoutScale && fontSize == _lastLayoutFontSize && _multiLine == _lastLayoutMultiLine)
             return;
-        _lastLayoutText = current;
         UpdateDynamicHeight();
+        _lastLayoutText = current; _lastLayoutViewportSize = viewport;
+        _lastLayoutScale = scale; _lastLayoutFontSize = fontSize; _lastLayoutMultiLine = _multiLine;
+        _layoutDirty = false;
     }
 
     public bool CancelCurrent()
@@ -175,12 +234,14 @@ internal sealed partial class NativeInputField
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             scaler.matchWidthOrHeight = 0.5f;
-            Transform monitorViewport = NativeUiViewport.Create(canvas);
+            NativeUiViewport.PrepareMonitorCanvas(canvas);
 
             var fieldGo = new GameObject("LilithNativeInput");
             fieldGo.AddComponent<RectTransform>();
             fieldGo.AddComponent<CanvasRenderer>();
-            fieldGo.transform.SetParent(monitorViewport, false);
+            Transform viewportRoot=NativeUiViewport.Create(canvas);
+            _layoutViewport=viewportRoot.GetComponent<RectTransform>(); _layoutCanvas=canvas;
+            fieldGo.transform.SetParent(viewportRoot, false);
             var fieldRect = fieldGo.GetComponent<RectTransform>();
             fieldRect.anchorMin = new Vector2(0.5f, 0.04f);
             fieldRect.anchorMax = new Vector2(0.5f, 0.04f);
@@ -283,11 +344,12 @@ internal sealed partial class NativeInputField
             var failureGo=new GameObject("TransportFailureNotice");failureGo.AddComponent<RectTransform>();failureGo.transform.SetParent(fieldGo.transform,false);
             _failureNotice=failureGo.AddComponent<TextMeshProUGUI>();_failureNotice.font=text.font;_failureNotice.fontSize=16;_failureNotice.color=new Color(1,.72f,.60f,1);
             _failureNotice.richText=false;_failureNotice.raycastTarget=false;_failureNotice.alignment=TextAlignmentOptions.Center;
-            var failureRect=_failureNotice.rectTransform;failureRect.anchorMin=failureRect.anchorMax=new Vector2(.5f,1);failureRect.pivot=new Vector2(.5f,0);failureRect.anchoredPosition=new Vector2(0,6);failureRect.sizeDelta=new Vector2(430,28);
-            _menu = new NativeOptionsMenu(fieldGo.transform,monitorViewport,text,
+            _failureNotice.enableWordWrapping=true;
+            var failureRect=_failureNotice.rectTransform;failureRect.anchorMin=failureRect.anchorMax=new Vector2(.5f,1);failureRect.pivot=new Vector2(.5f,0);failureRect.anchoredPosition=new Vector2(0,6);failureRect.sizeDelta=new Vector2(640,54);
+            _menu = new NativeOptionsMenu(fieldGo.transform,viewportRoot,text,
                 mode=>_onModeSelected?.Invoke(mode),()=>_onOpenHistory?.Invoke(),
                 owns=>{_wantsFocus=!owns;if(owns)_input?.DeactivateInputField();else Activate();},
-                ()=>AuthorizeReviewFromMenu(), () => _onOpenSharedActivity?.Invoke());
+                ()=>AuthorizeReviewFromMenu(), () => _onOpenSharedActivity?.Invoke(), () => _onOpenB1Selection?.Invoke());
         }
         catch (Exception error)
         {
@@ -313,11 +375,6 @@ internal sealed partial class NativeInputField
     {
         _reviewAuthorized = authorized;
         _menu?.RefreshReview(authorized);
-    }
-
-    private void ApplyLayout()
-    {
-        UpdateDynamicHeight();
     }
 
     private void UpdateDynamicHeight()

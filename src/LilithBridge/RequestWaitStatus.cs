@@ -16,6 +16,8 @@ internal sealed class RequestWaitStatus
     // with the owner across recall continuations; the wait origin is kept too.
     private long _generatedReceivedUtcTicks, _firstShownUtcTicks;
     private int _active, _retrying, _begun, _preparing;
+    private string _streamPhase="";
+    private int _streamChars;
     public RequestWaitStatus(Func<long>? clock = null) => _clock = clock ?? (() => Environment.TickCount64);
     public bool IsActive => Volatile.Read(ref _active) != 0;
     public void Begin()
@@ -26,6 +28,7 @@ internal sealed class RequestWaitStatus
         Interlocked.Exchange(ref _generatedReceivedUtcTicks, 0);
         Interlocked.Exchange(ref _firstShownUtcTicks, 0);
         Volatile.Write(ref _retrying, 0);
+        Volatile.Write(ref _streamPhase,"");Volatile.Write(ref _streamChars,0);
         Volatile.Write(ref _begun, 1);
         Volatile.Write(ref _active, 1);
     }
@@ -43,6 +46,11 @@ internal sealed class RequestWaitStatus
     public void Prepare() { Resume(); Volatile.Write(ref _preparing,1); }
     public void WaitingForReply() { Resume(); Volatile.Write(ref _preparing,0); }
     public void Retry() { if (Volatile.Read(ref _active) != 0) Volatile.Write(ref _retrying, 1); }
+    public void ReportStream(string phase,int chars)
+    {
+        if(!IsActive)return;
+        Volatile.Write(ref _preparing,0);Volatile.Write(ref _streamPhase,phase);Volatile.Write(ref _streamChars,Math.Max(0,chars));
+    }
     // First generation/display wins for the owning request; a later recall
     // continuation keeps the original request milestones instead of resetting.
     public void MarkGenerationReceived() =>
@@ -72,5 +80,24 @@ internal sealed class RequestWaitStatus
     public string Text => Volatile.Read(ref _active) == 0 ? ""
         : Volatile.Read(ref _preparing) != 0 ? Preparing
         : Volatile.Read(ref _retrying) != 0 ? Retrying
-        : _clock() - Interlocked.Read(ref _started) >= 8000 ? Waiting : "";
+        : Volatile.Read(ref _streamPhase) switch
+        {
+            "connecting"=>"正在连接模型",
+            "headers" or "waiting"=>"模型已响应，尚无正文",
+            "text"=>"正文生成中（尚未交付）",
+            "tool"=>"正在生成工具请求（尚未交付）",
+            "validating"=>"正在校验完整回复",
+            _=>_clock() - Interlocked.Read(ref _started) >= 8000 ? Waiting : ""
+        };
+    public string DisplayText => DisplayTextFor(false);
+    // Editing is not cancellation. Keep the same owner's clock and describe
+    // the actual Enter/Esc routes without implying the original request stopped.
+    public string DisplayTextFor(bool editing)
+    {
+        string text=Text;if(text.Length==0)return "";
+        long seconds=ElapsedMilliseconds/1000;
+        string received=Volatile.Read(ref _streamPhase)=="text"?" · 已收 "+Volatile.Read(ref _streamChars)+" 字":"";
+        string hint=editing ? "原请求继续 · Enter 发送并替换 · Esc 关闭输入" : "Enter 编辑新输入 · Esc 取消请求";
+        return text+received+" · "+(seconds/60).ToString("00")+":"+(seconds%60).ToString("00")+"\n"+hint;
+    }
 }

@@ -1,15 +1,26 @@
 {
   "schema": 1,
   "product": "LilithBridge",
-  "id": "lilithbridge-preview-20261103-rc3-fix2",
-  "plugin_sha256": "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
+  "id": "lilithbridge-103-normal-use-installer13-prep5",
+  "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
   "previous_plugin_hashes": [
     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
     "4d257ce576f4fcb15de8668d84351b7c6ef4570fb2bd36d25a39934ba0d2295b",
     "f7030fd9686c0fa98166d31c61b8ca2b851e23851959f6b0e9bda19da9dbfedf",
     "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353",
     "d387eff9e0422fd62ff0ce1943e2383293c978fb373d0632c4b8298655e150db",
-    "6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369"
+    "6a028692fcc06d14666c0d4af0433be3cb727be19a97ae23252d6796de3be369",
+    "c73a3973c4df32fff90a47d5e980637c2607c435e6fee348e21e54941428643b",
+    "6148f5f9139d998cd26ddb877ff12c1b760d3395dbe21d04bb150cfaa4855a3a",
+    "1e7011343ce0e601224ce3bd794b61197fce03aa5576d20ff88b331cfcd0a249",
+    "caf0be7e84531a1922cf5eb5c300f57434fcbd37286cb1540c4001aab2c80325",
+    "f7c67ee6f305eda6758f546b6eac34d7a4a211095ead0d481fbd2342e32d4a30",
+    "4b53c5366d77ed61b827d69380d04cdb729a1d93cdf98848d07e2cf61ca60e80",
+    "89c86d1fb43132d0ed46037ae6d15b0906979d7b6a30353c3d1257203e997c9e",
+    "83168a8fd166b87c56d0ebc3fa9a5cae0f045b2f07b5622e38cb180a3bc54dda",
+    "db3b6c17d43ea9143461d1be4ebe9bd4274d74ccf6a2c2d45d4ed59e01ab0e96",
+    "447a8637702d5a1af8721246c0b51949ab4ff8e17caf1f6a67e3f3078160ca46",
+    "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7"
   ],
   "target_hashes": {},
   "compatibility_mode": "actual static interfaces and loader freshness; no game hash whitelist",
@@ -47,6 +58,7 @@
     "BepInEx\\interop\\spine-unity.dll": "1a4dd245c72c3afc577f68d4460123c0e9c701fdc0f9d2ccfb11f519246b4ba7",
     "BepInEx\\interop\\BehaviorDesigner.Runtime.dll": "0d8526748bcea88b184e8f6154912145d9cec2fbb315728138d13cacf3acb01f"
   },
-  "min_installer_schema": 3,
-  "config_schema": 1
+  "min_installer_schema": 12,
+  "config_schema": 1,
+  "preparation_only": true
 }

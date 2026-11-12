@@ -19,6 +19,7 @@ internal sealed class ReflectionPreparation : IDisposable
     internal string SemanticStatus { get; private set; } = "not_requested";
     internal string WorkerEpoch { get; private set; } = "";
     internal bool Staged { get; set; }
+    internal ReflectionServiceTrace? IntentTrace { get; set; }
     internal ReflectionPreparation(long generation, string root, string session, string query, IReadOnlyList<MemoryTurn> window)
     {
         Generation = generation; DataRoot = root; SessionId = session; Query = query;
@@ -57,7 +58,7 @@ internal sealed partial class MemoryStore
     {
         if (!_longTermEnabled || !_experienceArchiveEnabled) return Array.Empty<MemoryTurn>();
         var ids = window.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        return ReadExperiences().Where(t => ids.Contains(t.EventId) && t.DeliveryState is "received" or "delivered"
+        return GetExperienceValidationTurns().Where(t => ids.Contains(t.EventId) && t.DeliveryState is "received" or "delivered"
             && IsMentionAllowed(t) && IsNativeSupplyAllowed(t)).Select(t => t.Copy()).ToArray();
     }
     internal bool ReflectionPreparationCurrent(ReflectionPreparation owner) =>
@@ -71,14 +72,17 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         {
             if (!ReflectionPreparationCurrent(owner) || !ReflectionMaterialsCurrent(request, recovering)) return false;
-            return use();
+            return TryUseB1SelectionGeneration(request.SelectionGeneration, use);
         }
     }
 
     private bool ReflectionMaterialsCurrent(ReflectionRequestSnapshot request, bool recovering = false)
     {
-        if (!NoteHistoryStillReadable(request, out _)) return false;
-        var raw = ReadExperiences().ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        if (request.SelectionGeneration != CurrentB1SelectionGeneration()) return false;
+        if (!ReflectionRequestOriginCurrent(request) || !ReflectionPurposesCurrent(request)) return false;
+        if (!ReflectionGeneratedPublicCurrent(request)) return false;
+        if (!NoteHistoryStillReadable(request, out _) || !RelationshipHistoryStillReadable(request, out _)) return false;
+        var raw = GetExperienceValidationTurns().ToDictionary(t => t.EventId, StringComparer.Ordinal);
         if (request.Evidence.Any(t => !raw.ContainsKey(t.EventId) || !IsMentionAllowed(raw[t.EventId]) || !IsNativeSupplyAllowed(raw[t.EventId]))) return false;
         // A completed chain may itself have retired one of the versions it
         // read. Only that work's recorded targets may differ in lifecycle;
@@ -108,6 +112,14 @@ internal sealed partial class MemoryStore
         // above. Re-evaluate the read graph through those original versions so
         // their unchanged dependent lessons/readings are not mistaken for an
         // external invalidation. This view grants no new proposal citations.
+        // Recheck every day actually supplied, even if no proposal cites it.
+        // The existing supplier distinguishes retired declared support from
+        // ordinary revision of reading-only background; preserve that distinction.
+        if (request.DayArtifacts.Count > 0)
+        {
+            var days = AvailableDayArtifactIds(restoredNotes);
+            if (request.DayArtifacts.Any(t => !days.Contains(t.EventId))) return false;
+        }
         var active = SelectAvailableReflectionNotes(int.MaxValue, null, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         var settled = SelectAvailableSettledNotes(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         var lessons = SelectAvailableReflectionLessons(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);

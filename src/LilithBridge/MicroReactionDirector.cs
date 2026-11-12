@@ -122,37 +122,6 @@ internal static class MicroReactionDirector
             reason = "morning";
             return true;
         }
-        if (state.Emotions.Tension > 0.62)
-        {
-            action = Rng.NextDouble() < 0.5
-                ? LilithActionType.RubEyes
-                : LilithActionType.Tense;
-            reason = "emotional_tension_residue";
-            return true;
-        }
-        if (state.Emotions.Warmth > 0.62 && state.Emotions.Closeness > 0.54)
-        {
-            action = Rng.Next(3) switch
-            {
-                0 => LilithActionType.TiltHead,
-                1 => LilithActionType.Blink,
-                _ => LilithActionType.Blush
-            };
-            reason = "warm_residue";
-            return true;
-        }
-        if (state.Emotions.Curiosity > 0.66)
-        {
-            double roll = Rng.NextDouble();
-            action = roll switch
-            {
-                < 0.45 => LilithActionType.TiltHead,
-                < 0.80 => LilithActionType.Turnhead,
-                _ => LilithActionType.Blink
-            };
-            reason = "curious_residue";
-            return true;
-        }
         if (state.Mood == MoodKind.Shy)
         {
             action = LilithActionType.Blink;

@@ -29,14 +29,14 @@ internal sealed partial class MemoryStore
             .Select(x => (x.Ref, x.Tokens)).ToList();
     }
 
-    private bool SemanticB1QueryScope(string query,B1Entry entry)
+    private bool SemanticB1QueryScope(string query,B1Entry entry, bool requireLiteralQuotes = true)
     {
         var ids=MemorySemantics.RecallIdentifiers(query);
         var quotes=UtteranceAttribution.LiteralQuotes(query);
-        string available=entry.Text+" "+entry.Scope+" "+string.Join(" ",entry.ObjectAnchors.Concat(entry.Sources)
+        string available=B1DiscoveryText(entry)+" "+string.Join(" ",entry.ObjectAnchors.Concat(entry.Sources)
             .Where(r=>r.Kind!="b1").Select(r=>B1Turn(r.Kind,r.Version)?.Text??""));
         return ids.All(id=>MemorySemantics.ContainsRecallIdentifier(available,id))
-            &&quotes.All(q=>available.Contains(q,StringComparison.Ordinal));
+            &&(!requireLiteralQuotes || quotes.All(q=>available.Contains(q,StringComparison.Ordinal)));
     }
 
     private IEnumerable<string> B1CorrectingUtterances(string oldEvent) => _autonomous

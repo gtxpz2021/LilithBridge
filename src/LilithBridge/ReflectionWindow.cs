@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LilithBridge;
 
@@ -15,7 +16,9 @@ internal sealed record ReflectionRecentReceipt(string UserId, string RequestId, 
 
 internal readonly record struct ReflectionWindowSnapshot(string InputId, long FactActivity, bool ModelRequested,
     ReflectionRecentReceipt[]? RecentConsumed = null, bool RecentInitialized = false,
-    ReflectionWork? Work = null)
+    ReflectionWork? Work = null, [property: System.Text.Json.Serialization.JsonConverter(typeof(ReflectionSerialJsonConverter))] long ModelRequestSerial = 0, ReflectionRequestOrigin? RequestOrigin = null,
+    ReflectionPendingIntent[]? PendingIntents = null, string[]? ImportedTransfers = null,
+    int RecentPassesSinceBacklog = 0)
 {
     public static readonly ReflectionWindowSnapshot Empty = new("", 0L, false);
 }
@@ -97,27 +100,41 @@ internal sealed class ReflectionWindowCursor
     // In-flight material has not been consumed. Persist only the previous
     // receipt, plus any model request that arrived while this pass was running.
     public ReflectionWindowSnapshot DurableSnapshot => _beforePass is { } previous
-        ? previous with { ModelRequested = previous.ModelRequested || _current.ModelRequested }
+        ? previous with { ModelRequested = previous.ModelRequested || _current.ModelRequested, ModelRequestSerial = ModelRequestVersion, RequestOrigin = _current.RequestOrigin, PendingIntents = MergeIntents(previous.PendingIntents, _current.PendingIntents) }
         : _current;
-    public void Restore(ReflectionWindowSnapshot snapshot) { _current = snapshot; _beforePass = null; MarkInitialized(true); }
+    public void Restore(ReflectionWindowSnapshot snapshot) { _current = snapshot; _beforePass = null; ModelRequestVersion = snapshot.ModelRequestSerial; MarkInitialized(true); }
 
     /// <summary>New fact baseline after a session start or a config reload.</summary>
     public void ResetFactBaseline(long factActivity) =>
         _current = _current with { FactActivity = factActivity };
 
     /// <summary>She asked for a look back; the next pass may consume that request.</summary>
-    public void MarkModelRequested()
+    public void MarkModelRequested(ReflectionRequestOrigin? origin = null, ReflectionPendingIntent[]? intents = null)
     {
         ModelRequestVersion++;
-        _current = _current with { ModelRequested = true };
+        _current = _current with { ModelRequested = true, ModelRequestSerial = ModelRequestVersion, RequestOrigin = origin,
+            PendingIntents = MergeIntents(_current.PendingIntents, intents?.Select(i => i with { Serial = ModelRequestVersion }).ToArray()) };
         if (_current.Work is { } work) SetWork(work with { RequestedAgain = true });
+    }
+
+    private static ReflectionPendingIntent[] MergeIntents(ReflectionPendingIntent[]? first, ReflectionPendingIntent[]? second) =>
+        (first ?? Array.Empty<ReflectionPendingIntent>()).Concat(second ?? Array.Empty<ReflectionPendingIntent>())
+            .DistinctBy(i => (i.Serial, i.TagIndex)).OrderBy(i => i.Serial).ThenBy(i => i.TagIndex).ToArray();
+
+    internal void ForgetRequestOrigin(HashSet<string> ids)
+    {
+        _current = _current with { PendingIntents = _current.PendingIntents?.Where(i => !MemoryStore.ReflectionIntentReferences(i, ids)).ToArray() };
+        if (_beforePass is {} priorIntents) _beforePass = priorIntents with { PendingIntents = priorIntents.PendingIntents?.Where(i => !MemoryStore.ReflectionIntentReferences(i, ids)).ToArray() };
+        if (_current.RequestOrigin is {} current && ids.Contains(current.UserEventId)) _current = _current with { RequestOrigin = null };
+        if (_beforePass is {} previous && previous.RequestOrigin is {} prior && ids.Contains(prior.UserEventId))
+            _beforePass = previous with { RequestOrigin = null };
     }
 
     /// <summary>Stage what this pass may consume, keeping the previous window aside.</summary>
     public void BeginPass(ReflectionWindowSnapshot requested)
     {
         _beforePass = _current;
-        _current = requested;
+        _current = requested with { ModelRequestSerial = ModelRequestVersion };
     }
 
     /// <summary>
@@ -132,7 +149,7 @@ internal sealed class ReflectionWindowCursor
         if (!retained && commit != null && !commit(_current))
             retained = true;
         if (retained && _beforePass is { } previous)
-            _current = previous with { ModelRequested = previous.ModelRequested || _current.ModelRequested };
+            _current = previous with { ModelRequested = previous.ModelRequested || _current.ModelRequested, ModelRequestSerial = ModelRequestVersion, RequestOrigin = _current.RequestOrigin, PendingIntents = MergeIntents(previous.PendingIntents, _current.PendingIntents) };
         _beforePass = null;
         return retained;
     }

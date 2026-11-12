@@ -252,7 +252,8 @@ internal static partial class MemorySemantics
     public static bool DeclinesArchiveRecall(string? query)
     {
         string value = MaskRecallQuotes(query ?? "");
-        return Regex.IsMatch(value, @"(?:^|[，,。；;])\s*(?:今天|这次|本轮|现在)?(?:我们|我|请)?(?:先|暂时)?(?:不|不用|不要|别|无需|先不)(?:再|去)?(?:翻|查|找|检索|回顾)(?:阅|看|找)?(?:以前的|过去的|之前的|旧|历史)(?:记录|纪录|档案|对话|聊天)(?:了|吧)?(?=[，,。！？?；;\s]|$)");
+        return Regex.IsMatch(value, @"(?:^|[，,。；;])\s*(?:今天|这次|本轮|现在)?(?:我们|我|请)?(?:先|暂时)?(?:不|不用|不要|别|无需|先不)(?:再|去)?(?:翻|查|找|检索|回顾)(?:阅|看|找)?(?:以前的|过去的|之前的|旧|历史)(?:记录|纪录|档案|对话|聊天)(?:了|吧)?(?=[，,。！？?；;\s]|$)")
+            || Regex.IsMatch(value,@"(?:^|[，,。；;])\s*(?:今天|这次|本轮|现在)?(?:我们|我|请)?(?:先|暂时)?(?:不|不用|不要|别|无需)(?:再|去)?(?:聊|谈|提)(?:旧事|往事|过去的事|以前的事|历史话题)(?:了|吧)?(?=[，,。！？?；;\s]|$)");
     }
 
     internal static string MaskRecallQuotes(string text) => Regex.Replace(text,

@@ -10,6 +10,7 @@ internal sealed record SemanticPreparedMaterial(int Revision,string RequestId,lo
     IReadOnlyList<MemoryTurn>? MethodRuntimeSources=null,bool MethodRuntimeTracked=true)
 {
     internal PaperSourceSnapshot? PaperSources { get; init; }
+    internal int RecallSupplementCount {get;init;}
 }
 internal sealed record SemanticMessageRefresh(List<object> Messages,IReadOnlyList<string> RuntimeBlocks,
     IReadOnlyList<MemoryTurn> History,HistoryProjectionSummary Projection);
@@ -32,6 +33,33 @@ internal sealed class SemanticRequestMaterial
     internal bool RebasedAtBoundary(int attempts)=>_lastRebasedBoundary==attempts;
     private readonly object _auditLock=new();
     private readonly List<PaperSourceSnapshot> _sentPaperSources = new();
+    private readonly List<RecallSupplement> _recallSupplements=new();
+    internal bool RecallSupplementsPermitted()=>_recallSupplements.All(s=>s.IsPermitted());
+    // Registration and composition run on the existing main-thread material owner.
+    internal void AddRecallSupplement(RecallSupplement supplement,DialogueRequest owner)
+    {
+        if(owner.Id!=RequestId||owner.IsCancelled||!supplement.IsPermitted()
+            ||_recallSupplements.Any(s=>s.Kind==supplement.Kind))
+            throw new SemanticMaterialException("recall_source_changed");
+        _recallSupplements.Add(supplement);
+        ApplyRecallSupplements(Current??throw new InvalidOperationException("No initial material"),owner);
+    }
+    internal SemanticPreparedMaterial ApplyRecallSupplements(SemanticPreparedMaterial material,DialogueRequest owner)
+    {
+        if(!RecallSupplementsPermitted())throw new SemanticMaterialException("recall_source_changed");
+        var additions=_recallSupplements.Skip(material.RecallSupplementCount).ToArray();
+        if(additions.Length==0)return material;
+        var sources=additions.SelectMany(s=>s.Sources).Select(t=>t.Copy()).ToArray();
+        var paper=material.PaperSources;
+        foreach(var item in additions)paper=PaperSourceSnapshot.Combine(paper,item.PaperSources);
+        var revised=material with {Revision=material.Revision+1,
+            Context=material.Context+Environment.NewLine+string.Join(Environment.NewLine,additions.Select(s=>s.Context)),
+            HostFootprint=material.HostFootprint.Concat(sources).ToArray(),
+            RecallSources=material.RecallSources.Concat(sources).ToArray(),PaperSources=paper,
+            RecallSupplementCount=_recallSupplements.Count};
+        Accept(revised,owner,"recall_supplement");
+        return revised;
+    }
     internal SemanticRequestMaterial(string id,long generation,string query,string dataRoot)
     {RequestId=id;Generation=generation;QueryHash=MemoryStore.SemanticTextHash(query);DataRoot=dataRoot;}
     internal static IReadOnlyList<SemanticSourceAudit> Audit(IEnumerable<MemoryTurn> turns)=>turns
@@ -44,7 +72,7 @@ internal sealed class SemanticRequestMaterial
         {
             Retired.Add(new(Current.Revision,reason,Audit(owner.B1HostFootprint.Concat(Current.History)),owner.HttpAttempts));
             RefreshCount++;
-            _lastRebasedBoundary=owner.HttpAttempts;
+            if(reason=="materials_rebased")_lastRebasedBoundary=owner.HttpAttempts;
         }
         Current=material;
         owner.MethodMaterialRevision++;
@@ -52,13 +80,16 @@ internal sealed class SemanticRequestMaterial
         owner.MethodRuntimeTracked=material.MethodRuntimeTracked;
         // Old footprint has already been retained as immutable identities.
         owner.B1HostFootprint.Clear();owner.B1HostFootprint.AddRange(material.HostFootprint.Select(t=>t.Copy()));
-        if(material.Revision>1)ReplacementAccepted=true;
+        if(reason=="materials_rebased")ReplacementAccepted=true;
     }
     internal async Task<SemanticPreparedMaterial> PrepareAsync(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        if(!RecallSupplementsPermitted())throw new SemanticMaterialException("recall_source_changed");
         if(RefreshOnOwner==null)throw new InvalidOperationException("semantic owner refresh is unavailable");
-        var material=await RefreshOnOwner(token).ConfigureAwait(false);token.ThrowIfCancellationRequested();return material;
+        var material=await RefreshOnOwner(token).ConfigureAwait(false);token.ThrowIfCancellationRequested();
+        if(!RecallSupplementsPermitted())throw new SemanticMaterialException("recall_source_changed");
+        return material;
     }
     internal void ObserveHttp(string attempt,string outcome)
     {

@@ -137,23 +137,27 @@ internal static partial class MemorySemantics
     }
 
     public static double Similarity(string? left, string? right)
-    {
-        HashSet<string> a = TokenizeForMatching(left);
-        HashSet<string> b = TokenizeForMatching(right);
-        if (a.Count == 0 || b.Count == 0)
-            return 0d;
-        int overlap = a.Count(token => b.Contains(token));
-        return overlap / (double)Math.Max(1, Math.Min(a.Count, b.Count));
-    }
+        => CompareMatchingTokens(TokenizeForMatching(left), TokenizeForMatching(right)).Similarity;
     // B1 caches these derived search tokens; this does not change matching semantics.
     internal static HashSet<string> MatchingTokens(string? value) => TokenizeForMatching(value);
 
     /// <summary>Number of shared matching tokens (words and CJK bigrams).</summary>
     public static int MatchingOverlap(string? left, string? right)
+        => CompareMatchingTokens(TokenizeForMatching(left), TokenizeForMatching(right)).Overlap;
+
+    // Pure lexical values, with the same tokenizer/comparer and thresholds as
+    // the public string helpers. No source eligibility or permission is stored.
+    internal readonly record struct MatchingResult(int Overlap, double Similarity)
     {
-        HashSet<string> a = TokenizeForMatching(left);
-        HashSet<string> b = TokenizeForMatching(right);
-        return a.Count(token => b.Contains(token));
+        internal bool Relevant => Similarity >= MinRecallSimilarity
+            && (Overlap >= MinRecallOverlap || Similarity >= 0.5);
+    }
+    internal static MatchingResult CompareMatchingTokens(IReadOnlySet<string> a, IReadOnlySet<string> b)
+    {
+        int overlap = 0;
+        foreach (string token in a) if (b.Contains(token)) overlap++;
+        return new(overlap, a.Count == 0 || b.Count == 0 ? 0d
+            : overlap / (double)Math.Max(1, Math.Min(a.Count, b.Count)));
     }
 
     /// <summary>
@@ -169,12 +173,9 @@ internal static partial class MemorySemantics
     {
         if (string.IsNullOrWhiteSpace(query))
             return true;
-        double score = Similarity(query, text);
-        if (score < MinRecallSimilarity)
-            return false;
         // Several shared tokens, or a short question the memory almost entirely
         // covers (for example "盆栽呢？" against a sentence about the plant).
-        return MatchingOverlap(query, text) >= MinRecallOverlap || score >= 0.5;
+        return CompareMatchingTokens(TokenizeForMatching(query), TokenizeForMatching(text)).Relevant;
     }
 
     /// <summary>

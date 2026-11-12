@@ -1,17 +1,11 @@
-# 许可与第三方内容
+# 许可与随包原作语料
 
-LilithBridge 的自有源码，以及文档中作者有权许可的部分，采用根目录的 [MIT License](LICENSE)：`Copyright (c) 2026 gtxpz2021`。
+LilithBridge作者有权许可的自有源码、工具与文档采用根目录MIT License（Copyright (c) 2026 gtxpz2021）。MIT不覆盖原作文本、角色、剧情或第三方组件，仅覆盖作者有权许可部分。
 
-游戏《不/存在的莉莉丝》的角色、剧情、游戏素材，以及相关作品和 README 题记等第三方内容，保留各自权利，不属于本项目的 MIT 授权范围。
+本候选新增 `setup/story/first-game.collection.jsonl`：第一作《The NOexistenceN of you AND me》脚本文本整理库，2076条/18脚本，原作文本不属于项目MIT源码。来源、加工说明、精确hash及安装/本地选源用途见 `setup/story/README.md` 与 `SOURCE.json`。该文件保留未核说话人、未知分支和脚本顺序非执行图等标记，包装层人工别名不冒充原作词句或玩家经历。
 
-游戏、BepInEx、interop、Python、依赖安装包和模型不随本包分发，各自适用原提供方的许可。当前依赖记录包括：
+既有语料整理manifest记载原作再分发许可未建立（not_established）；源文件与当前整理记录之间的来源一致性已核实，不等于新增再分发授权。本候选在隔离目录准备，不将这项许可证据缺口写成已闭合，也不据项目MIT覆盖原作。没有纳入第二作、旧人格提示词或完整来源ZIP。
 
-- BepInEx be.769：LGPL-2.1-or-later。
-- Il2CppInterop：LGPL-3.0-only。
-- HarmonyX：MIT。
+`src/LilithBridge/PersonaDefaults.cs` 内嵌的四段原作示例、两部作品/角色引用及相应编译常量也保留原作权利，不归项目MIT。
 
-版本与取得入口见[依赖说明](docs/DEPENDENCIES.md)。可选 worker 的第三方来源见 [NOTICE-REFERENCES.md](optional/semantic-worker/NOTICE-REFERENCES.md)。
-
-如果你要重新打包或分发第三方组件、模型或依赖，请先核对具体版本的完整许可及随附通知。本项目的 MIT 许可证仅授权本项目有权许可的内容。
-
-安装器唯一随包的第三方托管库 Mono.Cecil 0.11.4 采用 MIT，完整许可见 [LICENSES/Mono.Cecil.txt](LICENSES/Mono.Cecil.txt)，说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。游戏依赖、加载器、Python 和模型仍不随包分发。
+安装器唯一随附第三方二进制为Mono.Cecil 0.11.4，MIT全文见 `LICENSES/Mono.Cecil.txt`。可选worker参考与依赖说明保留原通知。Python、模型、wheel、游戏本体、加载器及生成interop均未随本候选分发，另行取得时适用其原提供方许可。详见 `THIRD-PARTY-NOTICES.md`。

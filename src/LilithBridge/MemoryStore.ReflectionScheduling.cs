@@ -30,6 +30,7 @@ internal sealed partial class MemoryStore
         // An invalid existing receipt is not equivalent to no receipt.
         try
         {
+            if (File.Exists(ReflectionTransferLockPath)) throw new IOException("reflection transfer transaction is pending");
             var deleted = DeletedReflectionSources();
             if (deleted.Count > 0 && !PurgeReflectionWork(deleted))
                 throw new IOException("deleted reflection work could not be purged");
@@ -37,9 +38,15 @@ internal sealed partial class MemoryStore
             {
                 var restored = JsonSerializer.Deserialize<ReflectionWindowSnapshot>(File.ReadAllText(ReflectionWindowPath));
                 if (restored.InputId == null || restored.FactActivity < 0
+                    || restored.RecentPassesSinceBacklog is < 0 or > 2
+                    || restored.RequestOrigin is {} origin && !ValidReflectionRequestOrigin(origin)
+                    || restored.PendingIntents?.Any(i => !ValidReflectionPendingIntent(i)) == true
                     || restored.Work is { } work && (work.Request == null || string.IsNullOrEmpty(work.Request.RequestId)
                         || work.Window == null || work.Window.Length == 0 || work.Window.Any(t => t == null)
                         || work.Target.Work != null || work.Target.InputId == null || work.Target.FactActivity < 0
+                        || work.Target.RecentPassesSinceBacklog is < 0 or > 2
+                        || work.Target.RequestOrigin is {} targetOrigin && !ValidReflectionRequestOrigin(targetOrigin)
+                        || work.Request.PurposeContexts == null || work.Request.PurposeContexts.Any(c => c == null || !ValidReflectionPendingIntent(c.Intent))
                         || work.Request.Evidence == null || work.Request.Notes == null || work.Request.Lessons == null
                         || work.Request.Readings == null || work.Request.DayArtifacts == null || work.Request.Settled == null)
                     || restored.RecentConsumed?.Any(r => r == null || string.IsNullOrEmpty(r.UserId)
@@ -84,7 +91,7 @@ internal sealed partial class MemoryStore
         }
         cursorReason = ReflectionWindow.CompletionReason(aggregate, chains);
         bool retained = cursor.EndPass(cursorReason, s => SaveReflectionWindow(s with { Work = null }));
-        if (!retained) cursor.SetWork(null);
+        if (!retained) { cursor.SetWork(null); CompleteB1ReflectionNormalTurn(cursor); }
         return retained;
     }
 
@@ -102,8 +109,8 @@ internal sealed partial class MemoryStore
     {
         var deliveries = ReflectionDeliveries();
         if (deliveries.Values.Any(r => r.InteractionOrder > 0)) return true;
-        var archive = ReadExperiences(includeSuppressed: true);
-        var view = IndexReflectionArchive(archive);
+        var view = GetExperienceValidationView().ReflectionArchive;
+        var archive = view.Archive;
         // Migration may recognize only an actual, verified delivery session.
         // The recorded event time locates the latest real session; insertion
         // time/mtime and unverified imported records cannot seed this lane.
@@ -152,8 +159,8 @@ internal sealed partial class MemoryStore
 
     private bool RecentReflectionSettled(IEnumerable<ReflectionRecentReceipt> groups)
     {
-        var archive = ReadExperiences(includeSuppressed: true);
-        var view = IndexReflectionArchive(archive);
+        var view = GetExperienceValidationView().ReflectionArchive;
+        var archive = view.Archive;
         return groups.All(g => ReflectionDeliveries().TryGetValue(g.UserId, out var delivery)
             && RecentReflectionGroup(delivery, view) is { } current
             && current.Key == g.Key && current.EventIds.SequenceEqual(g.EventIds));
@@ -194,15 +201,54 @@ internal sealed partial class MemoryStore
             .GroupBy(r => r.Key, StringComparer.Ordinal).Select(g => g.First()).ToArray();
         cursor.BeginPass(before with { InputId = selection.Recent ? before.InputId : selection.History.Last().EventId,
             FactActivity = coveredFactActivity,
-            ModelRequested = before.ModelRequested && cursor.ModelRequestVersion != coveredModelRequest, RecentConsumed = consumed });
+            // Staged with coverage: failed sends/results/saves roll this back too.
+            // This is service debt, not importance or a reason to run reflection.
+            RecentPassesSinceBacklog = selection.Recent ? Math.Min(2, before.RecentPassesSinceBacklog + 1) : 0,
+            ModelRequested = before.ModelRequested && cursor.ModelRequestVersion != coveredModelRequest, RecentConsumed = consumed,
+            PendingIntents = before.PendingIntents?.Where(i => i.Serial > coveredModelRequest).ToArray() });
+    }
+
+    // Called only after the controller has admitted an existing opportunity.
+    // Selection must not create a new pass or erase an already earned one when
+    // the old prefix has fewer complete exchanges than the recent opportunity.
+    internal ReflectionHistorySelection BalancePendingReflectionHistory(
+        ReflectionWindowSnapshot receipt, ReflectionHistorySelection recent)
+    {
+        // Two successfully completed recent passes earn an ordinary older
+        // prefix a turn. Explicit public requests and frozen work keep priority.
+        // This limit is a service bound, not a semantic score or target inference.
+        if (!recent.Recent || receipt.ModelRequested || receipt.Work != null
+            || receipt.RecentPassesSinceBacklog < 2 || recent.History.Count == 0) return recent;
+        var older = SelectPendingReflectionHistory(receipt.InputId, receipt.RecentConsumed);
+        if (older.History.Count == 0) return recent;
+        var view = GetExperienceValidationView().ReflectionArchive;
+        // Reuse old-lane source, delivery, whole-group and budget gates; retain
+        // recent relevance when there is no genuinely older eligible prefix.
+        if (!view.Positions.TryGetValue(older.History[0].EventId, out int olderPosition)
+            || !view.Positions.TryGetValue(recent.History[0].EventId, out int recentPosition)
+            || olderPosition >= recentPosition) return recent;
+        return older with { PendingReason = "backlog_fairness" };
     }
 
     internal ReflectionHistorySelection SelectPendingReflectionHistory(ReflectionWindowSnapshot receipt)
+        => SelectReflectionDeliveryHistory(receipt, currentSessionOnly: false);
+
+    // "Recent" receipts can survive a restart and belong to yesterday. Preserve
+    // their consumption contract, but give today's actually delivered groups a
+    // timely selection before continuing the older delivery-service lane.
+    internal ReflectionHistorySelection SelectCurrentReflectionHistory(ReflectionWindowSnapshot receipt)
+        => SelectReflectionDeliveryHistory(receipt, currentSessionOnly: true);
+
+    private ReflectionHistorySelection SelectReflectionDeliveryHistory(ReflectionWindowSnapshot receipt, bool currentSessionOnly)
+    {
+        lock (_experienceLock) return SelectReflectionDeliveryHistoryLocked(receipt, currentSessionOnly);
+    }
+    private ReflectionHistorySelection SelectReflectionDeliveryHistoryLocked(ReflectionWindowSnapshot receipt, bool currentSessionOnly)
     {
         if (!_longTermEnabled || !_experienceArchiveEnabled) return new(Array.Empty<MemoryTurn>(), false, 0);
-        var archive = ReadExperiences(includeSuppressed: true);
-        var view = IndexReflectionArchive(archive);
-        var allowed = ReadExperiences().Where(t => IsMentionAllowed(t) && IsNativeSupplyAllowed(t))
+        var view = GetExperienceValidationView().ReflectionArchive;
+        var archive = view.Archive;
+        var allowed = GetExperienceValidationTurns().Where(t => IsMentionAllowed(t) && IsNativeSupplyAllowed(t))
             .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         var consumed = (receipt.RecentConsumed ?? Array.Empty<ReflectionRecentReceipt>())
             .Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
@@ -213,6 +259,7 @@ internal sealed partial class MemoryStore
         foreach (var delivery in ReflectionDeliveries().Values.Where(r => r.InteractionOrder > 0)
             .OrderBy(r => r.InteractionOrder))
         {
+            if (currentSessionOnly && delivery.SessionId != _sessionId) continue;
             var group = RecentReflectionGroup(delivery, view);
             if (group == null)
             {
@@ -236,6 +283,7 @@ internal sealed partial class MemoryStore
             chars += groupChars; selected.AddRange(turns); groups.Add(group);
         }
         if (groups.Count > 0) return new(selected, false, CountReflectionDialogueLines(selected), true, groups.ToArray());
+        if (currentSessionOnly) return new(Array.Empty<MemoryTurn>(), false, 0);
         return SelectPendingReflectionHistory(receipt.InputId, receipt.RecentConsumed);
     }
 
@@ -255,7 +303,7 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock)
         {
-            if (!_longTermEnabled || !_experienceArchiveEnabled || _reflectionReceiptUnavailable
+            if (!_longTermEnabled || !_experienceArchiveEnabled || _reflectionReceiptUnavailable || File.Exists(ReflectionTransferLockPath)
                 || snapshot.Work is { } work && ReflectionWorkWasDeleted(work)) return false;
             return WriteReflectionWindow(snapshot);
         }
@@ -267,6 +315,7 @@ internal sealed partial class MemoryStore
         {
             Directory.CreateDirectory(_root);
             string temp=ReflectionWindowPath+".tmp";
+            using var readerRequirement=ReflectionSerialJsonConverter.ForSnapshot(snapshot);
             File.WriteAllText(temp,JsonSerializer.Serialize(snapshot));
             File.Move(temp,ReflectionWindowPath,true);
             return true;
@@ -287,11 +336,16 @@ internal sealed partial class MemoryStore
     internal ReflectionHistorySelection SelectPendingReflectionHistory(string afterEventId,
         ReflectionRecentReceipt[]? recentConsumed = null)
     {
+        lock (_experienceLock) return SelectPendingReflectionHistoryLocked(afterEventId, recentConsumed);
+    }
+    private ReflectionHistorySelection SelectPendingReflectionHistoryLocked(string afterEventId, ReflectionRecentReceipt[]? recentConsumed)
+    {
         if (!_longTermEnabled || !_experienceArchiveEnabled)
             return new(Array.Empty<MemoryTurn>(), false, 0);
-        List<MemoryTurn> all=ReadExperiences(includeSuppressed:true);
+        var archiveView = GetExperienceValidationView().ReflectionArchive;
+        List<MemoryTurn> all=archiveView.Archive.ToList();
         var rawArchive = all;
-        var archivedIds = all.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var archivedIds = archiveView.Ids;
         int anchor=afterEventId.Length==0 ? -1 : all.FindIndex(t=>t.EventId==afterEventId);
         // A physically unavailable receipt cannot authorize replay of old material.
         if (afterEventId.Length>0 && anchor<0)
@@ -299,15 +353,15 @@ internal sealed partial class MemoryStore
         else all=all.Skip(anchor+1).ToList();
         // Skip only the exact complete groups previously consumed in the recent
         // lane. Companion old evidence never creates one of these receipts.
-        var recentView = recentConsumed is { Length: > 0 } ? IndexReflectionArchive(rawArchive) : null;
+        var recentView = recentConsumed is { Length: > 0 } ? archiveView : null;
         var skipped = (recentConsumed ?? Array.Empty<ReflectionRecentReceipt>())
             .Where(g => ConsumedRecentGroupMatchesArchive(g, recentView!))
             .SelectMany(g => g.EventIds).ToHashSet(StringComparer.Ordinal);
         all = all.Where(t => !skipped.Contains(t.EventId)).ToList();
         int open = all.FindIndex(t => t.Role == "user" && !ReflectionDeliverySettled(t, archivedIds));
         if (open >= 0) all = all.Take(open).ToList();
-        var allowed=ReadExperiences().Select(t=>t.EventId).ToHashSet(StringComparer.Ordinal);
-        all=all.Where(t=>allowed.Contains(t.EventId) && t.Role is "user" or "assistant"
+        var denied=SuppressedExperienceIds();
+        all=all.Where(t=>!denied.Contains(t.EventId) && t.Role is "user" or "assistant"
             && t.DeliveryState is "received" or "delivered" && IsMentionAllowed(t) && IsNativeSupplyAllowed(t)).ToList();
         int[] starts=all.Select((t,i)=>(t,i)).Where(x=>x.t.Role=="user").Select(x=>x.i).ToArray();
         int end=starts.Length>6?starts[6]:all.Count;

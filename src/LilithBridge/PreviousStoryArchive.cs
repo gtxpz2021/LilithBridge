@@ -1,321 +1,177 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Text.Encodings.Web;
+using System.Text.Unicode;
 
 namespace LilithBridge;
 
-internal sealed record StoryRecallResult(
-    string Query,
-    string Content,
-    bool Found);
+internal sealed record StoryRecallResult(string Query, string Content, bool Found, string ArchiveDigest = "", string ReasonCode = "");
 
-internal static class PreviousStoryArchive
+// Private, explicitly selected local data. Never embedded, downloaded, or added
+// to MemoryStore. Selection is pure and repeatable, including adjacent turns.
+internal static partial class PreviousStoryArchive
 {
-    private const string ResourceName = "LilithBridge.PREVIOUS_GAME_STORY.md";
-
-    // Availability is actual embedded content, never a configuration promise.
-    internal static bool IsAvailable =>
-        typeof(PreviousStoryArchive).Assembly.GetManifestResourceInfo(ResourceName) != null;
-    // Story-specific terms. Only a turn that names the work itself (or one of
-    // its named people, places and props) may open the full archive. Ordinary
-    // common-history words (还记得/回忆/以前/之前) are deliberately NOT here:
-    // those ask for shared memory recall, not for the previous game's script.
-    private static readonly string[] StoryTerms =
+    private const int MaxBytes = 262144;
+    internal sealed record Entry(int Schema, string Id, string Work, string Kind,
+        string Source, string Locator, double Confidence, string Speaker,
+        string Branch, bool Spoiler, string[] Terms, string Text)
     {
-        "第一作", "前作", "游戏剧情", "银葱之森", "银葱", "逐梦之典", "曼德拉草",
-        "无脸国王", "学者", "魔王", "草莓蛋糕", "烤箱", "时间机器",
-        "FONTAINEBLEAU", "摩天轮", "Huis-clos", "夏特露酱", "弗子酱",
-        "甜心护士", "糖果药丸", "第四颗糖", "黑色笔记本", "Tulpa",
-        "tulpa", "孤独国王", "世界之外", "世界之内", "你存在吗",
-        "我存在吗", "屏幕前的你", "不存在的你", "蛋糕时间",
-        "心跳刺激", "青涩约会", "治疗"
-    };
-
-    // Ordinary common-history vocabulary. It asks for shared experience, not
-    // for the previous work's chapter archive; kept separately so the archive
-    // is not opened by "还记得/以前/回忆" alone (stage-two A line, 2026-10-17).
-    internal static readonly string[] CommonHistoryTerms =
-    {
-        "还记得", "回忆", "以前", "之前", "以前的事"
-    };
-
-    public static string Build(BridgeConfig config)
-    {
-        if (config == null || !config.PreviousStoryEnabled || !IsAvailable)
-            return "";
-        return Fit(GetFullArchive(), config.PreviousStoryMaxChars);
+        internal OriginalLine[]? Lines { get; init; }
+        internal string SourceDigest { get; init; } = "";
     }
+    internal static readonly string[] CommonHistoryTerms = { "还记得", "回忆", "以前", "之前", "以前的事" };
+    private static readonly string[] WorkTerms = { "原作", "前作", "第一作", "第一部", "游戏剧情", "游戏里", "游戏中", "不存在的你和我", "NOexistenceN of you AND me" };
+    private static readonly string[] UniqueTerms = { "银葱", "逐梦之典", "摩天轮", "Huis-clos", "夏特露酱", "弗子酱", "FONTAINEBLEAU" };
 
-    public static string BuildNavigation() => "";
-
-    /// <summary>
-    /// The first story-specific term this input names, or null. This is the only
-    /// gate that opens the full archive; it is separate from common-history
-    /// vocabulary so "还记得/以前" stays on the memory-recall path.
-    /// </summary>
-    internal static string? FindStoryTerm(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-        foreach (string term in StoryTerms)
-        {
-            if (text.Contains(term, StringComparison.OrdinalIgnoreCase))
-                return term;
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// The ordinary common-history term this input names, or null. Reported for
-    /// diagnostics only: it never opens the story archive.
-    /// </summary>
-    internal static string? FindCommonHistoryTerm(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-        foreach (string term in CommonHistoryTerms)
-        {
-            if (text.Contains(term, StringComparison.OrdinalIgnoreCase))
-                return term;
-        }
-        return null;
-    }
-
-    /// <summary>True when the current input itself already points at the first game.</summary>
+    internal static string? FindStoryTerm(string? text) => Find(text, new[] { "第二作", "第二部", "NOexistenceN of Lilith" }) != null
+        ? null : Find(text, WorkTerms.Concat(UniqueTerms));
+    internal static string? FindCommonHistoryTerm(string? text) => Find(text, CommonHistoryTerms);
+    private static string? Find(string? text, IEnumerable<string> terms) =>
+        string.IsNullOrWhiteSpace(text) ? null : terms.FirstOrDefault(t => text.Contains(t, StringComparison.OrdinalIgnoreCase));
     public static bool LooksStoryRelevant(string? text) => FindStoryTerm(text) != null;
-
-    /// <summary>
-    /// Compact always-on core: who she is and where she comes from, without the
-    /// chapter-by-chapter archive. Used when the full archive is only supplied on
-    /// story-relevant turns.
-    /// </summary>
     public static string BuildIdentityCore() => "";
+    public static string BuildNavigation() => "";
+    // The old whole-document entry point deliberately cannot supply an archive.
+    public static string Build(BridgeConfig config) => "";
+    internal static void ResetAutoRecallStateForTests() { lock (CollectionCacheLock) _collectionCache = null; }
 
-    /// <summary>
-    /// Frames the archive as a partial record rather than an authoritative
-    /// dossier or proof of the current player's history. Keep explicit record
-    /// boundaries. Historical framing measurements in
-    /// PRJL-DYNAMIC-PROMPT-EXPERIMENT-20260918.md apply to the previous wording;
-    /// the corpus-based wording below has not been evaluated with a live model.
-    /// </summary>
-    public static string FrameAsPartialRecord(string archive) =>
-        string.IsNullOrWhiteSpace(archive)
-            ? archive
-            : "[前作剧情档案·节选（记录并不完整）]\n" +
-              "说明：下面是部分作品资料，可以用莉莉丝的视角谈起；共同经历以当前对话或记录确认的路径为准，不合并互斥分支，不据此推断玩家现实。未提供的细节不能靠想象补成回忆。\n" +
-              // Added after the acceptance sweep: in two of four rounds she answered
-              // "你当时怎么回应" by inventing a specific branch choice.
-              "玩家问“我当时是怎么回应／选了什么／说过什么”时：档案只记录作品里存在哪些分支，没有记录他走过哪一条。先说这条选择没有留档，再谈作品里有哪些可能；不要替他确认走过哪一条。\n" +
-              // 2026-09-25 user ruling: a player may have walked mutually exclusive
-              // routes in different playthroughs. Accept that as multi-valued, but
-              // never merge it into one continuity — and never ask him to pick a
-              // single canon unless the current question needs the current path.
-              "玩家说“两条（互斥路线）我都走过”时：可以承认他在不同周目里都经历过，" +
-              "但不得把它们合并成同一周目、同一连续路径或当前共同过去；" +
-              "只有当前问题确实需要确定哪条路线属于当前连续性、而记录不足时，才保持不确定或请他确认。\n" +
-              archive +
-              "\n（节选到此为止；缺失细节仅表示这份资料无法核对，不表示过去绝未发生。）";
+    internal static bool CanSupply(BridgeConfig config) => config.PreviousStoryEnabled
+        && config.StoryArchiveOnDemand && config.StoryDataConsent && (!config.IsOpenAI || config.OpenAIDataConsent);
+    internal static bool IsAvailable(BridgeConfig config) => TryRead(config, out _, out _, out _);
+    internal static string Status(BridgeConfig config) => TryRead(config, out var entries, out _, out string reason)
+        ? reason == "available" ? $"本地短资料可读 · {entries.Length} 条 · 每轮最多 2 条" : reason : reason;
 
-    private static string? _lastAutoRecallQuery;
-    private static DateTimeOffset _lastAutoRecallAt = DateTimeOffset.MinValue;
-
-    public static StoryRecallResult? AutoRecall(
-        string userText,
-        string recentContext,
-        BridgeConfig config)
+    private static bool TryRead(BridgeConfig config, out Entry[] entries, out string digest, out string reason)
     {
-        if (config == null || !config.PreviousStoryAutoRecallEnabled)
-            return null;
-        string source = Clean(userText ?? "")
-            + " " + Clean(recentContext ?? "");
-        string? query = FindAutoRecallQuery(source);
-        if (query == null)
-            return null;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (string.Equals(_lastAutoRecallQuery, query, StringComparison.OrdinalIgnoreCase)
-            && now - _lastAutoRecallAt < TimeSpan.FromSeconds(120))
-        {
-            return null;
-        }
-        StoryRecallResult recall = Recall(query, config);
-        if (!recall.Found)
-            return null;
-        _lastAutoRecallQuery = query;
-        _lastAutoRecallAt = now;
-        return recall;
-    }
-
-    private static string? FindAutoRecallQuery(string source) => FindStoryTerm(source);
-
-    // Test-only: the cross-request throttle is process state. A suite that
-    // compares decisions for the same input resets it explicitly.
-    internal static void ResetAutoRecallStateForTests()
-    {
-        _lastAutoRecallQuery = null;
-        _lastAutoRecallAt = DateTimeOffset.MinValue;
-    }
-
-    public static StoryRecallResult Recall(string query, BridgeConfig config)
-    {
-        query = Clean(query);
-        if (query.Length < 2)
-            return new StoryRecallResult(query, "没有可检索的关键词", false);
-
-        string full = GetFullArchive();
-        if (full.Length == 0)
-            return new StoryRecallResult(query, "完整前作剧情库不可用", false);
-
-        string[] terms = BuildTerms(query);
-        string[] lines = full.Replace("\r\n", "\n").Split('\n');
-        var builder = new StringBuilder();
-        builder.AppendLine("[前作剧情库补全：由莉莉丝主动召回]");
-        builder.AppendLine("下面是作品片段，不是当前玩家的经历证明；只把已确认路径当作共同回忆，不合并互斥分支，不推断玩家现实。说话人须结合语境核对，归属不清时不作确定引用。"
-            + "玩家问“我当时是怎么回应／选了什么／说过什么”时：档案只记录作品里有哪些分支，没有记录他走过哪一条；先说这条选择没有留档，不要替他确认。");
-        builder.AppendLine("检索关键词：" + query);
-        builder.AppendLine();
-
-        bool found = false;
-        var seen = new System.Collections.Generic.HashSet<int>();
-        for (int i = 0; i < lines.Length; i++)
-        {
-            string line = lines[i].Trim();
-            if (line.Length == 0)
-                continue;
-            if (!ContainsAny(line, terms))
-                continue;
-            found = true;
-            int start = Math.Max(0, i - 2);
-            int end = Math.Min(lines.Length - 1, i + 5);
-            for (int j = start; j <= end; j++)
-            {
-                if (!seen.Add(j))
-                    continue;
-                string raw = lines[j];
-                if (raw.Length <= 9000)
-                    builder.AppendLine(raw.TrimEnd());
-            }
-        }
-
-        if (!found)
-        {
-            string fallback = FindFallbackSection(full, query);
-            if (fallback.Length > 0)
-            {
-                found = true;
-                builder.AppendLine(fallback);
-            }
-        }
-
-        if (!found)
-            return new StoryRecallResult(query, "剧情库中暂时没有找到这条细节；不要补全。", false);
-
-        string content = Fit(builder.ToString(), config.PreviousStoryRecallMaxChars);
-        return new StoryRecallResult(query, content, true);
-    }
-
-    public static string BuildRecallContext(StoryRecallResult recall, BridgeConfig config)
-    {
-        if (recall == null || !recall.Found)
-            return "";
-        return recall.Content
-            + Environment.NewLine
-            + Environment.NewLine
-            + "这是你主动调用的前作剧情补全。请自然使用它，不要再输出检索标签，不要解释程序或检索过程，不要像说明书一样朗读。";
-    }
-
-    private static string GetFullArchive()
-    {
+        entries = Array.Empty<Entry>(); digest = ""; reason = "请指定本地 .jsonl 作品资料文件";
         try
         {
-            using Stream? stream = typeof(PreviousStoryArchive).Assembly
-                .GetManifestResourceStream(ResourceName);
-            if (stream == null)
-                return "";
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            return reader.ReadToEnd();
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    private static string[] BuildTerms(string query)
-    {
-        var terms = new System.Collections.Generic.List<string>();
-        string trimmed = Clean(query);
-        if (trimmed.Length > 0)
-            terms.Add(trimmed);
-        foreach (Match match in Regex.Matches(
-            query,
-            @"([\p{IsCJKUnifiedIdeographs}]{2,6}|[A-Za-z]{3,}|FONTAINEBLEAU|Huis-clos|Tulpa)",
-            RegexOptions.CultureInvariant))
-        {
-            string value = match.Value;
-            if (value.Length > 1 && !terms.Contains(value, StringComparer.OrdinalIgnoreCase))
-                terms.Add(value);
-        }
-        if (terms.Count == 0)
-            terms.Add(query);
-        return terms.ToArray();
-    }
-
-    private static bool ContainsAny(string source, string[] terms)
-    {
-        foreach (string term in terms)
-        {
-            if (source.Contains(term, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
-
-    private static string FindFallbackSection(string full, string query)
-    {
-        string lower = query.Trim().ToLowerInvariant();
-        string[] anchors =
-        {
-            "5.1 序章", "5.2 第一章", "5.3 第二章", "5.4 第三章",
-            "5.5 第四章", "5.6 第五章", "5.7 第六章", "房间", "草莓蛋糕",
-            "银葱之森", "摩天轮", "甜心护士", "黑色笔记本", "Tulpa",
-            "第四颗糖", "Huis-clos", "逐梦之典", "不/存在的你，和我"
-        };
-        string? best = null;
-        int bestScore = -1;
-        foreach (string anchor in anchors)
-        {
-            if (!lower.Contains(anchor.ToLowerInvariant(), StringComparison.Ordinal)
-                && !anchor.ToLowerInvariant().Contains(lower, StringComparison.Ordinal))
-                continue;
-            int index = full.IndexOf(anchor, StringComparison.OrdinalIgnoreCase);
-            if (index < 0)
-                continue;
-            int score = index >= 0 ? 1 : 0;
-            if (score > bestScore)
+            if (string.IsNullOrWhiteSpace(config.PreviousStoryFile)) return false;
+            string path = Path.GetFullPath(Path.IsPathRooted(config.PreviousStoryFile)
+                ? config.PreviousStoryFile : Path.Combine(config.DataDirectory, config.PreviousStoryFile));
+            if (path.StartsWith(@"\\", StringComparison.Ordinal) || !path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException();
+            if (new DriveInfo(Path.GetPathRoot(path)!).DriveType == DriveType.Network) throw new InvalidDataException();
+            DataPaths.CanonicalPath(path);
+            DataPaths.EnsureNoReparseAncestors(Path.GetDirectoryName(path)!);
+            var info = new FileInfo(path);
+            if (!info.Exists) { reason = "资料文件不存在"; return false; }
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0 || info.Length > CollectionMaxBytes) throw new InvalidDataException();
+            // Bound the opened stream as well as the metadata check.
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length > CollectionMaxBytes) throw new InvalidDataException();
+            byte[] bytes = new byte[(int)stream.Length];
+            int offset = 0;
+            while (offset < bytes.Length)
             {
-                bestScore = score;
-                best = full.Substring(index, Math.Min(2200, full.Length - index));
+                int read = stream.Read(bytes, offset, bytes.Length - offset);
+                if (read == 0) throw new InvalidDataException();
+                offset += read;
             }
+            digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            if (TryCachedCollection(path, digest, out entries, out reason)) return true;
+            string[] lines = new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF').Split('\n');
+            string first = lines.FirstOrDefault(line => !string.IsNullOrWhiteSpace(line)) ?? throw new InvalidDataException();
+            if (first.Length > CollectionMaxLineChars) throw new InvalidDataException();
+            using (var header = JsonDocument.Parse(first))
+                if (header.RootElement.TryGetProperty("schema", out var schema)
+                    && schema.ValueKind == JsonValueKind.String && schema.GetString() == CollectionSchema)
+                    return TryReadCollection(path, lines, digest, out entries, out reason);
+            // The legacy format keeps its original bounds. A collection cannot
+            // be smuggled through a larger v1 Entry file.
+            if (bytes.Length > MaxBytes) throw new InvalidDataException();
+            var list = new List<Entry>(); var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                using var doc = JsonDocument.Parse(line);
+                // Spoiler is retained for legacy-file compatibility, not selection policy.
+                foreach (string key in new[] { "Schema", "Id", "Work", "Kind", "Source", "Locator", "Confidence", "Speaker", "Branch", "Terms", "Text" })
+                    if (!doc.RootElement.TryGetProperty(key, out _)) throw new InvalidDataException();
+                var e = JsonSerializer.Deserialize<Entry>(line) ?? throw new InvalidDataException();
+                if (e.Schema != 1 || !ids.Add(e.Id) || !Safe(e.Id, 80) || !Safe(e.Work, 120)
+                    || e.Kind is not ("quote" or "summary" or "community" or "inference")
+                    || !Safe(e.Source, 160) || e.Source.Contains(':') || e.Source.Contains('\\') || e.Source.Contains('/')
+                    || !Safe(e.Locator, 200) || !Safe(e.Speaker, 180) || !Safe(e.Branch, 180)
+                    || !double.IsFinite(e.Confidence) || e.Confidence < 0 || e.Confidence > 1
+                    || !Safe(e.Text, 1400) || e.Terms == null || e.Terms.Length is < 1 or > 16
+                    || e.Terms.Any(t => !Safe(t, 60) || t.Length < 2) || list.Count >= 256)
+                    throw new InvalidDataException();
+                list.Add(e);
+            }
+            if (list.Count == 0) throw new InvalidDataException();
+            entries = list.ToArray(); reason = "available"; return true;
         }
-        return best ?? "";
+        catch { reason = "资料格式或本地路径不可用：支持私有 v1 短资料或第一作 collection JSONL。"; return false; }
+    }
+    private static bool Safe(string? value, int max) => !string.IsNullOrWhiteSpace(value)
+        && value.Length <= max && !value.Any(char.IsControl);
+
+    public static StoryRecallResult? AutoRecall(string userText, string recentContext, BridgeConfig config)
+    {
+        // recentContext intentionally ignored: yesterday's topic never opens this path.
+        if (!config.PreviousStoryAutoRecallEnabled || !LooksStoryRelevant(userText)) return null;
+        var result = Recall(userText, config, userText);
+        return result.Found ? result : null;
     }
 
-    private static string Clean(string? value)
+    public static StoryRecallResult Recall(string query, BridgeConfig config, string? currentUserText = null)
     {
-        return (value ?? "").Replace("\r", "").Replace("\n", " ").Trim();
+        query = (query ?? "").Trim();
+        StoryRecallResult Miss(string why, string code) => new(query, why, false, ReasonCode: code);
+        if (!CanSupply(config)) return Miss("作品资料未启用或未获发送许可", "permission_required");
+        // AutoRecall owns automatic topic qualification. An explicit model query
+        // may rephrase or explore an association beyond the player's exact words.
+        if (query.Length is < 2 or > 500) return Miss("检索词长度不合适", "invalid_query");
+        if (!TryRead(config, out var entries, out string digest, out string reason)) return Miss(reason, "source_unavailable");
+        var candidates = RankStoryEntries(entries, query);
+        var selected = new List<Entry>(); int limit = Math.Clamp(config.PreviousStoryRecallMaxChars, 1000, 6000);
+        foreach (var candidate in candidates)
+        {
+            Entry entry = candidate;
+            if (entry.Lines != null)
+            {
+                entry = ExpandCollectionEntry(entry, entries, query);
+                if (selected.Any(prior => CollectionOverlaps(prior, entry))) continue;
+                entry = FitCollectionEntry(entry, query, selected, digest, limit);
+            }
+            selected.Add(entry);
+            if (entry.Lines is { Length: 0 } || Render(selected, digest).Length > limit) selected.RemoveAt(selected.Count - 1);
+            if (selected.Count == 2) break;
+        }
+        return selected.Count == 0
+            ? new(query, "所选作品资料中没有匹配片段。", false, digest, "no_matching_material")
+            : new(query, Render(selected, digest), true, digest);
     }
 
-    private static string Fit(string text, int maxChars)
+    private static string Render(List<Entry> entries, string digest) => FrameAsPartialRecord(JsonSerializer.Serialize(new
     {
-        text = (text ?? "").Trim();
-        int limit = Math.Clamp(maxChars, 800, 12000);
-        if (text.Length <= limit)
-            return text;
-        int cut = text.LastIndexOf('\n', limit);
-        if (cut < limit / 2)
-            cut = limit;
-        return text[..cut].TrimEnd() + "\n\n[档案截断：更完整的前作语料可由配置文件路径加载]";
-    }
+        kind = "work_reference_data", schema_version = 1, archive_sha256 = digest,
+        entries = entries.Select(e => e.Lines == null
+            ? (object)new { id = e.Id, work = e.Work, kind = e.Kind, source = e.Source,
+                locator = e.Locator, confidence = e.Confidence, speaker = e.Speaker,
+                branch = e.Branch, text = e.Text }
+            : new { id = e.Id, work = e.Work, kind = e.Kind, source = e.Source, locator = e.Locator,
+                source_corpus_sha256 = e.SourceDigest, speaker = e.Speaker, branch = e.Branch,
+                attribution_verified = false, branch_path_known = false,
+                script_order_is_execution_graph = false, confidence_is_calibrated_probability = false,
+                text_form = "cleaned_script_text; not a verified speaker transcript",
+                lines = e.Lines.Select(line => line.Aliases.Length == 0
+                    ? (object)new { corpus_row = line.Row, line_id = line.LineId, script = line.Script,
+                        source_speaker = line.Speaker, source_role = line.Role, heuristic_confidence = line.Confidence, text = line.Text }
+                    : new { corpus_row = line.Row, line_id = line.LineId, script = line.Script,
+                        source_speaker = line.Speaker, source_role = line.Role, heuristic_confidence = line.Confidence, text = line.Text,
+                        curated_aliases = line.Aliases.Select(alias => new { source = alias.EntryId.StartsWith("project-shorthand:", StringComparison.Ordinal)
+                                ? "project_shorthand_anchored_to_prior_pilot_not_original_wording" : "prior_private_pilot_alias_not_original_wording",
+                            pilot_entry_id = alias.EntryId, source_pilot_sha256 = alias.PilotDigest, terms = alias.Terms }) }) })
+    }, new JsonSerializerOptions { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) }));
+
+    public static string FrameAsPartialRecord(string archive) => string.IsNullOrWhiteSpace(archive) ? "" :
+        "[作品资料·局部节选]\n" + archive + "\n[作品资料结束]";
+    public static string BuildRecallContext(StoryRecallResult recall, BridgeConfig config) => recall.Found ? recall.Content : "";
 }

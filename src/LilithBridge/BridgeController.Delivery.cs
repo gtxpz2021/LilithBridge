@@ -7,8 +7,9 @@ namespace LilithBridge;
 
 // Per-reply delivery record. The generated full text and the actually
 // displayed prefix stay separate: only ShownChunks/DeliveredText may enter
-// history, the experience archive, reflection/day capture or any other
-// "already told" consumer. The record keeps the shown range, the terminal
+// delivered dialogue history or another "already told" consumer. The public
+// generated body is persisted separately with delivery ranges and an explicit
+// received/displayed distinction. The record keeps the shown range, the terminal
 // outcome/reason and the client-side moments of generation receipt, queueing,
 // first display and completion.
 internal sealed class ReplyDeliveryRecord
@@ -39,6 +40,19 @@ internal sealed class ReplyDeliveryRecord
     public long CompletedAtTicks { get; private set; }
     public string Outcome { get; private set; } = "";
     public string Reason { get; private set; } = "";
+    public int? UnknownChunkIndex { get; private set; }
+    public int UnknownChunks => UnknownChunkIndex.HasValue ? 1 : 0;
+    public int UnknownChars { get; private set; }
+    public string UnknownEndpoint { get; private set; } = "";
+    internal void MarkDisplayUnknown(int index, string text, string endpoint)
+    {
+        if (UnknownChunkIndex.HasValue || ShownChunks.Any(c => c.Index == index)) return;
+        UnknownChunkIndex = index; UnknownChars = text.Length; UnknownEndpoint = endpoint;
+        // A re-entrant replacement may have closed this reply during the call.
+        // Correct its former unseen count without touching the new request.
+        if (IsTerminal)
+        { AbandonedChunks = Math.Max(0, AbandonedChunks - 1); AbandonedChars = Math.Max(0, AbandonedChars - UnknownChars); }
+    }
     public int AbandonedChunks { get; private set; }
     public int AbandonedChars { get; private set; }
     public bool IsTerminal => Outcome.Length > 0;
@@ -65,6 +79,21 @@ internal sealed class ReplyDeliveryRecord
         DisplayPlan = plan; HasValidDisplayPlan = plan.IsValid; TotalChunks = plan.Chunks.Count;
     }
 
+    internal BubbleDisplayPlan PrepareFinalDisplayPlan(string text,BubbleDisplayPlan plan)
+    {
+        if(IsTerminal||plan.GeneratedText!=text||!plan.IsValid)throw new InvalidOperationException("Invalid final progress handoff plan");
+        UpdateFinalText(text,plan.Chunks.Count);SetDisplayPlan(plan);return DisplayPlan!;
+    }
+    public List<StreamAppearanceEvidence> ImportedStreamAppearance {get;}=new();
+    internal bool ImportStreamAppearance(IReadOnlyList<StreamAppearanceEvidence> evidence)
+    {
+        if(ImportedStreamAppearance.Count>0)return ImportedStreamAppearance.SequenceEqual(evidence);
+        if(IsTerminal||ShownChunks.Count>0||!HasValidDisplayPlan)return false;
+        if(evidence.Where((e,i)=>e.Index!=i||i>=FinalDisplayPlan.Count||FinalDisplayPlan[i].Text!=e.Text).Any())return false;
+        foreach(var e in evidence){MarkShown(e.Index,e.Text);ImportedStreamAppearance.Add(e);}
+        if(evidence.Count>0){FirstShownAtUtc=evidence[0].ObservedAtUtc;FirstShownAtTicks=evidence[0].ObservedAtTicks;}
+        return true;
+    }
     internal BubbleDisplayPlan PrepareFinalDisplayPlan(string text)
     {
         if (IsTerminal) throw new InvalidOperationException("A terminal display plan cannot be replaced");
@@ -199,8 +228,8 @@ internal sealed class ReplyDeliveryRecord
             return;
         Outcome = outcome;
         Reason = reason;
-        AbandonedChunks = Math.Max(0, abandonedChunks);
-        AbandonedChars = Math.Max(0, abandonedChars);
+        AbandonedChunks = Math.Max(0, abandonedChunks - UnknownChunks);
+        AbandonedChars = Math.Max(0, abandonedChars - UnknownChars);
         CompletedAtTicks = Environment.TickCount64;
         CompletedAtUtc = DateTimeOffset.UtcNow;
     }
@@ -212,20 +241,85 @@ internal sealed class ReplyDeliveryRecord
 // use the product implementations.
 internal sealed partial class BridgeController
 {
+    // Call only with actual received public ApiResult.Text, before any local
+    // repair or playback. The store never reads provider raw/hidden reasoning.
+    // Receipt persistence must not alter or prevent the original delivery.
+    [HideFromIl2Cpp]
+    internal void CaptureGeneratedPublicReply(ApiResult reply)
+        => PersistGeneratedReceipt("capture", reply, () => _memory.CaptureGeneratedReply(reply));
+
+    [HideFromIl2Cpp]
+    internal void RecordGeneratedPublicDisplay(ApiResult reply, MemoryTurn? rawTurn, int chunkIndex, string actualText)
+    {
+        PersistGeneratedReceipt("display", reply,
+            () => _memory.RecordGeneratedDisplay(reply, rawTurn, chunkIndex, actualText));
+        _memory.TraceReflectionIntentDelivery(reply, "display_callback_observed", rawTurn?.EventId ?? "", chunkIndex, actualText);
+    }
+
+    [HideFromIl2Cpp]
+    internal void RecordGeneratedPublicEnd(ApiResult reply, string outcome)
+    {
+        PersistGeneratedReceipt("end", reply, () => _memory.RecordGeneratedEnd(reply, outcome));
+        _memory.TraceReflectionIntentDelivery(reply, "terminal_delivery_callback_observed");
+    }
+
+    private static void PersistGeneratedReceipt(string operation, ApiResult reply, Func<GeneratedReplyWriteResult> write)
+    {
+        try
+        {
+            GeneratedReplyWriteResult result = write();
+            if (!result.Succeeded)
+                TraceGeneratedReceiptFailure(operation, reply, result.Reason);
+        }
+        catch (Exception error)
+        {
+            // No body or exception message: a storage failure is not speech and
+            // must not escape into the native playback callback.
+            TraceGeneratedReceiptFailure(operation, reply, "exception_" + error.GetType().Name);
+        }
+    }
+
+    private static void TraceGeneratedReceiptFailure(string operation, ApiResult reply, string reason)
+    {
+        try
+        {
+            NativeEventLog.Trace("generated.public_receipt_failed", "mod", "system",
+                "Generated public reply receipt was not saved",
+                "operation=" + operation + ";request_id=" + reply.RequestId
+                + ";attempt_id=" + reply.Response.AttemptId + ";reason=" + reason);
+        }
+        catch { /* Diagnostics must not turn a storage failure into UI failure. */ }
+    }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    internal bool CancelDeliveryForSleep(bool receivingResult = false)
+    {
+        if (!NativeStateInspector.IsSleeping) return false;
+        if (receivingResult || _requestPending || _storyRecallInProgress || _memoryRecallInProgress
+            || _queuedReply != null || NativeBubblePresenter.HasPendingReply || TemporaryOutputBlocksFinal)
+        {
+            CancelPendingDialogue(reason: "sleep");
+            _proactiveRequest = false;
+            _pendingProactiveReason = null;
+        }
+        return true;
+    }
+
     internal void CancelAiSpeech(string reason = "player_interrupt")
     {
         // A generation that is still waiting for its playback window belongs
         // to the same interruption. Close its delivery record before display so
         // the unseen tail can never arrive late.
         CancelQueuedReply(reason);
-        if (!_aiSpeechActive && !NativeBubblePresenter.HasPendingReply)
+        if (!_aiSpeechActive && !NativeBubblePresenter.HasPendingReply && !_temporaryNativeEntry)
             return;
         _aiSpeechActive = false;
         NativeBubblePresenter.ClearPending("cancelled", reason);
         try { DialogueManager.instance?.ForceEndDialogue(); }
         catch { /* The native bubble may already be gone. */ }
         ActionExecutor.Clear();
-        NativeEventLog.Trace("ai.speech_cancelled", "mod", "player", "AI bubble interrupted by player",
+        NativeEventLog.Trace("ai.speech_cancelled", "mod", reason == "sleep" ? "system" : "player",
+            reason == "sleep" ? "AI delivery stopped for sleep" : "AI bubble interrupted by player",
             "reason=" + reason);
     }
 
@@ -241,6 +335,7 @@ internal sealed partial class BridgeController
         if (_queuedReply != null && !ReferenceEquals(_queuedReply, result))
             CancelQueuedReply("superseded_by_newer_reply");
         _memory.EnsureReflectionDelivery(result.SourceUserEventId, result.DialogueRequest?.Id ?? result.RequestId);
+        PrepareTemporaryFinal(result);
         _queuedReply = result;
         NativeBubblePresenter.MarkQueuedForDisplay(result);
     }
@@ -277,24 +372,30 @@ internal sealed partial class BridgeController
             native.Shown = true;
             if (!native.EffectsApplied && NativeLinkageAllows(reply))
             {
-                native.EffectsApplied = true;
-                HandleDesktopArrangeIntent(reply);
-                HandleReplyPaper(reply);
-                ApplyAutonomousMemory(reply);
+                reply.TryUseSelection(() =>
+                {
+                    native.EffectsApplied = true;
+                    HandleDesktopArrangeIntent(reply);
+                    HandleReplyPaper(reply);
+                    ApplyAutonomousMemory(reply);
+                    return true;
+                });
             }
         }
         else if (reply != null) CancelNativeLinkage("other_speech_shown");
         if (reply != null)
         {
-            MemoryTurn? turn = _memory.AddHistory("assistant", text, reply.RequestId + ":" + chunkIndex,
-                sourceEventId: reply.SourceUserEventId, isLocalFallback: reply.IsLocalFallback);
+            MemoryTurn? turn = reply.DialogueRequest?.WorkPrototype != null
+                ? TemporaryExpressionMemoryPolicy.ArchiveFinalBubble(_memory, reply, text, chunkIndex)
+                : _memory.AddHistory("assistant", text, reply.RequestId + ":" + chunkIndex,
+                    sourceEventId: reply.SourceUserEventId, isLocalFallback: reply.IsLocalFallback);
+            RecordGeneratedPublicDisplay(reply, turn, chunkIndex, text);
             if (turn != null)
             {
                 _memory.RecordB1Delivery(reply, turn, reply.DeliveredText.Length);
                 reply.DeliveredText += text;
                 _sessionState.LastAssistantText = reply.DeliveredText;
                 _sessionState.LastAssistantEventId = turn.EventId;
-                _memory.AddInteractionMemory("莉莉丝说：" + text, "", "assistant_reply");
                 _sessionState.AddSceneEvent(new LilithSceneEvent
                 {
                     EventId = turn.EventId,
@@ -314,6 +415,7 @@ internal sealed partial class BridgeController
     [HideFromIl2Cpp]
     internal void OnAiDeliveryEnded(ApiResult reply, string outcome)
     {
+        RecordGeneratedPublicEnd(reply, outcome);
         // The presenter releases its own slot before notifying. A rejected stale
         // reply may settle itself, but must not release another active delivery.
         if (outcome != "completed" && !NativeBubblePresenter.HasPendingReply)

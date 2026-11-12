@@ -50,7 +50,7 @@ namespace LilithSetup
             install.Click += delegate { Run(delegate
             {
                 SetupCore.Require(plan != null, "LBINSTALL_CHECK_FIRST"); LastResult = InstallerCore.Install(manifest, plan, confirm.Checked); confirm.Checked = false;
-                string outcome = LastResult.NoChange ? "版本相同，未覆盖文件。" : "插件已安装并保留备份。"; plan = null; summary.Text = outcome;
+                string outcome = LastResult.NoChange ? "版本相同，未覆盖文件。" : "插件已安装并保留备份。"; plan = null; summary.Text = outcome + "\r\n" + LoginGuidance.InGame;
                 try { OpenConfiguration(); }
                 catch (Exception error) { LastError = InstallerCore.Explain(error); summary.Text = outcome + "\r\n配置器未打开：" + LastError + "\r\n安装状态已提交；请核对配置器支持的插件身份后使用“仅打开配置器”，不要当作未安装重复覆盖。"; }
             }); };
@@ -108,6 +108,7 @@ namespace LilithSetup
             plan = null; ResetRecovery(); confirm.Text = "我已核对上方安装改动，允许执行当前安装。";
             Run(delegate
             {
+                var rootReview = ExistingDataRoot.Review(root.Text); if (rootReview.NeedsConfirmation) ExistingDataRoot.Approve(rootReview, MessageBox.Show(this, rootReview.Summary + "\r\n确认这是旧插件实际资料根并继续原位使用？", "核对旧资料根", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes);
                 manifest = InstallManifest.Load(packageRoot); var host = HostCapabilities.Inspect(root.Text, Path.Combine(packageRoot, @"payload\LilithBridge.dll")); if (!host.CanInstall) { summary.Text = UserHostSummary(host, root.Text); return; }
                 plan = InstallerCore.Inspect(manifest, root.Text);
                 string latest = InstallerCore.LatestCommitted(plan.GameRoot);

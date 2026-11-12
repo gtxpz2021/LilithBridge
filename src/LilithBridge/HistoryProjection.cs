@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 
 namespace LilithBridge;
@@ -20,6 +19,14 @@ internal sealed class ProjectedHistoryTurn
     /// <summary>Index of the last stored record this entry represents.</summary>
     public int LastRecordIndex { get; init; } = -1;
     public bool IsGrouped => Records.Count > 1;
+    // A proven displayed run is not proof of the full generation's delivery or
+    // of a known user source (e.g. a proactive run may have no SourceEventId).
+    public bool IdentityGuaranteed { get; init; }
+    public bool TruncatedHeadOrUnknown { get; init; } = true;
+    public int ActualFragmentCount => Records.Count;
+    public int? FirstChunkIndex { get; init; }
+    public int? LastChunkIndex { get; init; }
+    public string Coverage { get; init; } = "independent_record_identity_unknown";
 }
 
 internal sealed class HistoryProjectionResult
@@ -32,6 +39,12 @@ internal sealed class HistoryProjectionResult
     public int GroupedReplies { get; init; }
     public bool GroupReplies { get; init; }
     public bool WindowInMessages { get; init; }
+    public int OmittedRecords { get; init; }
+    public string OmissionReason { get; init; } = "";
+    public int OversizeReplyRuns { get; init; }
+    public bool RetainedSourceRootOverflow { get; init; }
+    public string PriorWindowCoverage { get; init; } = "unknown";
+    public HistoryWindowProvenance? PriorWindow { get; init; }
     public string Mode => !GroupReplies ? "legacy" : WindowInMessages ? "grouped_window" : "grouped";
 }
 
@@ -65,7 +78,7 @@ internal sealed class HistoryProjectionSummary
 ///  - stored records, ids, sessions, the experience archive and native lines
 ///    are untouched; nothing is written back as a merged "original" record;
 ///  - only bubbles that provably belong to one reply are joined: consecutive
-///    stored records, same request id, chunk index +1, same session, and a
+///    stored records, same request id, chunk index +1, sequence +1, same source/session, and a
 ///    delivered chat record with the same model or local-fallback origin;
 ///  - unknown provenance (other requests, native lines, other speakers, gaps,
 ///    out-of-order or legacy records) keeps each record separate;
@@ -83,8 +96,9 @@ internal static class HistoryProjection
         IReadOnlyList<MemoryTurn> records = available ?? Array.Empty<MemoryTurn>();
         int budget = Math.Max(1, maxMessages);
         bool expandWindow = groupReplies && windowInMessages;
+        int boundedStart = expandWindow ? HistoryBoundary.WindowStart(records, budget) : 0;
         int start = expandWindow
-            ? WindowStartByMessages(records, budget)
+            ? HistoryBoundary.WindowStart(records, budget, keepAdjacentUserRoot: true)
             : Math.Max(0, records.Count - budget);
         List<ProjectedHistoryTurn> turns = BuildTurns(records, start, groupReplies);
         int selected = 0;
@@ -97,7 +111,14 @@ internal static class HistoryProjection
             SelectedRecords = selected,
             GroupedReplies = turns.Count(turn => turn.IsGrouped),
             GroupReplies = groupReplies,
-            WindowInMessages = windowInMessages
+            WindowInMessages = windowInMessages,
+            OmittedRecords = records.Count - selected,
+            OmissionReason = start == 0 ? "" : expandWindow ? "message_window" : "legacy_record_window",
+            OversizeReplyRuns = turns.Count(t => t.IdentityGuaranteed
+                && (t.ActualFragmentCount > HistoryBoundary.OversizeRunRecords || t.Text.Length > HistoryBoundary.OversizeRunChars)),
+            RetainedSourceRootOverflow = expandWindow && start < boundedStart,
+            PriorWindowCoverage = records is HistoryWindowRecords ? "recorded_native_aware_selection" : "unknown",
+            PriorWindow = (records as HistoryWindowRecords)?.Provenance
         };
     }
 
@@ -111,20 +132,14 @@ internal static class HistoryProjection
         while (index < records.Count)
         {
             MemoryTurn first = records[index];
-            if (groupReplies && TryReplyBubble(first, out string key, out int chunk))
+            if (groupReplies && HistoryBoundary.TryReplyBubble(first, out _, out int chunk))
             {
                 var members = new List<MemoryTurn> { first };
                 int next = index + 1;
-                int expected = chunk + 1;
                 while (next < records.Count
-                    && TryReplyBubble(records[next], out string nextKey, out int nextChunk)
-                    && nextKey == key
-                    && nextChunk == expected
-                    && records[next].Origin == first.Origin
-                    && records[next].SessionId == first.SessionId)
+                    && HistoryBoundary.SameReplyRun(records[next - 1], records[next]))
                 {
                     members.Add(records[next]);
-                    expected = nextChunk + 1;
                     next++;
                 }
                 if (members.Count > 1)
@@ -132,93 +147,39 @@ internal static class HistoryProjection
                     turns.Add(new ProjectedHistoryTurn
                     {
                         Role = "assistant",
-                        Text = string.Join("\n", members.Select(member => MemoryStore.Clean(member.Text))),
+                        Text = string.Concat(members.Select(member => MemoryStore.Clean(member.Text))),
                         Records = members,
-                        LastRecordIndex = next - 1
+                        LastRecordIndex = next - 1,
+                        IdentityGuaranteed = true,
+                        TruncatedHeadOrUnknown = chunk != 0,
+                        FirstChunkIndex = chunk,
+                        LastChunkIndex = chunk + members.Count - 1,
+                        Coverage = chunk == 0 ? "qualified_delivered_prefix_tail_unknown"
+                            : "qualified_delivered_run_head_missing_tail_unknown"
                     });
                     index = next;
                     continue;
                 }
             }
+            bool identified = HistoryBoundary.TryReplyBubble(first, out _, out int firstChunk);
             turns.Add(new ProjectedHistoryTurn
             {
                 Role = first.Role,
                 Text = MemoryStore.Clean(first.Text),
                 Record = first,
                 Records = new[] { first },
-                LastRecordIndex = index
+                LastRecordIndex = index,
+                IdentityGuaranteed = identified,
+                TruncatedHeadOrUnknown = !identified || firstChunk != 0,
+                FirstChunkIndex = identified ? firstChunk : null,
+                LastChunkIndex = identified ? firstChunk : null,
+                Coverage = !identified ? "independent_record_identity_unknown"
+                    : firstChunk == 0 ? "qualified_delivered_prefix_tail_unknown"
+                    : "qualified_delivered_run_head_missing_tail_unknown"
             });
             index++;
         }
         return turns;
     }
 
-    /// <summary>
-    /// Chooses the oldest record that still fits the message budget, counting
-    /// one message per reply instead of one per displayed bubble. Whole replies
-    /// stay together, so the oldest included reply is never split.
-    /// </summary>
-    private static int WindowStartByMessages(IReadOnlyList<MemoryTurn> records, int budget)
-    {
-        int start = records.Count;
-        int index = records.Count - 1;
-        int messages = 0;
-        while (index >= 0 && messages < budget)
-        {
-            int groupStart = index;
-            if (TryReplyBubble(records[index], out string key, out int chunk))
-            {
-                while (groupStart > 0
-                    && TryReplyBubble(records[groupStart - 1], out string previousKey, out int previousChunk)
-                    && previousKey == key
-                    && previousChunk == chunk - 1
-                    && records[groupStart - 1].Origin == records[index].Origin
-                    && records[groupStart - 1].SessionId == records[index].SessionId)
-                {
-                    groupStart--;
-                    chunk = previousChunk;
-                }
-            }
-            messages++;
-            start = groupStart;
-            index = groupStart - 1;
-        }
-        return Math.Max(0, start);
-    }
-
-    /// <summary>
-    /// True when the record is a displayed bubble of a model or local reply whose store
-    /// id still carries the request id and chunk index written when it was
-    /// shown. Everything else keeps its own message.
-    /// </summary>
-    private static bool TryReplyBubble(MemoryTurn turn, out string requestId, out int chunkIndex)
-    {
-        requestId = "";
-        chunkIndex = -1;
-        if (turn.Role != "assistant"
-            || turn.Kind != "chat"
-            || (turn.Origin != "model" && turn.Origin != MemoryStore.LocalFallbackOrigin)
-            || turn.DeliveryState != "delivered")
-        {
-            return false;
-        }
-        string id = turn.EventId;
-        int separator = id.LastIndexOf(':');
-        // Bubble ids are written as "{requestId}:{chunkIndex}" with a Guid "N"
-        // request id; anything else is unknown provenance and stays separate.
-        if (separator != 32 || id.Length <= separator + 1)
-            return false;
-        for (int i = 0; i < separator; i++)
-        {
-            if (!Uri.IsHexDigit(id[i]))
-                return false;
-        }
-        if (!int.TryParse(id.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture,
-                out chunkIndex))
-        {
-            return false;
-        }
-        requestId = id[..separator];
-        return true;
-    }
 }

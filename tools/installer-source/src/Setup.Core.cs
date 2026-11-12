@@ -170,7 +170,8 @@ namespace LilithSetup
     public sealed class EditRequest
     {
         public string ApiKey = "", BaseUrl = "", ModelName = "", ModelOverride = "", PythonOverride = "", WorkerOverride = "";
-        public bool ClearKey, ConfirmCopy;
+        public bool ClearKey, ConfirmCopy, SelectDeepSeek, ConfigureStory, SwitchExistingStory, AllowStoryModelData;
+        public string StoryFile = "";
         public RecallAction Recall = RecallAction.Preserve;
         public LocalCheck CheckedLocal;
     }
@@ -239,20 +240,11 @@ namespace LilithSetup
             Require(File.Exists(plugin), "LBSETUP_PLUGIN_MISSING");
             string pluginHash = FileHash(plugin);
             Require(pluginHash == PluginCandidate || pluginHash == Plugin062 || pluginHash == Plugin061 || HostCapabilities.IsNamedBridge(plugin), "LBSETUP_UNSUPPORTED_PLUGIN_IDENTITY");
-            Require(File.Exists(marker) && new FileInfo(marker).Length <= 8192, "LBSETUP_ISOLATION_MARKER_REQUIRED");
-            byte[] markerBytes = File.ReadAllBytes(marker);
-            var lines = new List<string>();
-            foreach (string line in Utf8.GetString(markerBytes).TrimStart('\uFEFF').Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                if (!String.IsNullOrWhiteSpace(line) && !line.TrimStart().StartsWith("#")) lines.Add(line.Trim());
-            Require(lines.Count == 1, "LBSETUP_MARKER_INVALID"); string candidate = lines[0];
-            if (candidate.Length >= 2 && candidate.StartsWith("\"") && candidate.EndsWith("\"")) candidate = candidate.Substring(1, candidate.Length - 2);
-            string data = SafePath(candidate, game);
-            if (environmentOverride != null) Require(Same(SafePath(environmentOverride, game), data), "LBSETUP_ENVIRONMENT_ROOT_CONFLICT");
-            Require(Inside(game, data, false), "LBSETUP_DATA_ROOT_MUST_BE_IN_COPY");
-            string production = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LilithAI");
-            Require(!Inside(production, data, true) && !Inside(data, production, true), "LBSETUP_PRODUCTION_ROOT_REJECTED");
+            var rootReview = ExistingDataRoot.Review(game, environmentOverride, ExistingDataRoot.ProductionRoot);
+            ExistingDataRoot.RequireApproved(rootReview); string data = rootReview.Root;
+            string markerDigest = File.Exists(marker) ? FileHash(marker) : "MISSING";
             string config = Path.Combine(data, "config.json"); NoReparse(data); NoReparse(config);
-            return new CopyContext { GameRoot = game, DataRoot = data, ConfigPath = config, PluginPath = plugin, PluginHash = pluginHash, Marker = marker, MarkerHash = Hash(markerBytes) };
+            return new CopyContext { GameRoot = game, DataRoot = data, ConfigPath = config, PluginPath = plugin, PluginHash = pluginHash, Marker = marker, MarkerHash = markerDigest };
         }
         public static Snapshot ReadSnapshot(string path)
         {
@@ -281,7 +273,10 @@ namespace LilithSetup
         public static Dictionary<string, object> Patch(Snapshot snapshot, EditRequest edit)
         {
             var doc = DataJson.Read(DataJson.Write(snapshot.Document));
-            var provider = DataJson.Map(doc, "provider", true);
+            if (edit.SelectDeepSeek) doc["llm_provider"] = "deepseek";
+            var provider = DataJson.Map(doc, "provider", false);
+            if (provider == null) { var profiles = DataJson.Map(doc, "provider_profiles", false); string active = DataJson.String(doc, "active_provider", ""); provider = DataJson.Get(profiles, active) as Dictionary<string, object>; }
+            if (provider == null && (edit.ApiKey.Length != 0 || edit.ClearKey || !String.IsNullOrWhiteSpace(edit.BaseUrl) || !String.IsNullOrWhiteSpace(edit.ModelName))) provider = DataJson.Map(doc, "provider", true);
             Require(!(edit.ClearKey && edit.ApiKey.Length != 0), "LBSETUP_KEY_CLEAR_AND_REPLACE_CONFLICT");
             var originalProvider = DataJson.EffectiveProvider(snapshot.Document);
             if (!String.IsNullOrWhiteSpace(edit.BaseUrl) && !ProviderPresets.SameEndpoint(DataJson.String(originalProvider, "base_url", ""), edit.BaseUrl.Trim()) && !String.IsNullOrEmpty(DataJson.String(originalProvider, "api_key", "")))
@@ -329,7 +324,7 @@ namespace LilithSetup
                         if (!semantic.ContainsKey(pair[0]) || String.IsNullOrWhiteSpace((string)semantic[pair[0]])) semantic[pair[0]] = pair[1];
                 }
             }
-            return doc;
+            StorySetup.Apply(doc, snapshot, edit); return doc;
         }
         public static LocalCheck Locate(CopyContext context, Snapshot snapshot, string modelOverride, string pythonOverride = "", string workerOverride = "")
         {
@@ -371,7 +366,7 @@ namespace LilithSetup
         internal static SaveResult SaveWithCommitBoundary(CopyContext context, Snapshot snapshot, EditRequest edit, ModelValidator validator, Action enterCommit)
         {
             Require(edit.ConfirmCopy, "LBSETUP_EXPLICIT_COPY_CONFIRMATION_REQUIRED");
-            Current(context, snapshot.Digest); var doc = Patch(snapshot, edit);
+            Current(context, snapshot.Digest); StorySetup.ValidateTarget(snapshot, edit); var doc = Patch(snapshot, edit);
             if (!String.IsNullOrEmpty(edit.PythonOverride) || !String.IsNullOrEmpty(edit.WorkerOverride))
                 ValidateRuntimeFiles(Locate(context, snapshot, edit.ModelOverride, edit.PythonOverride, edit.WorkerOverride));
             if (!String.IsNullOrEmpty(edit.ModelOverride))
@@ -391,13 +386,13 @@ namespace LilithSetup
             var result = new SaveResult();
             try
             {
-                NoReparse(context.DataRoot); Directory.CreateDirectory(context.DataRoot); NoReparse(lockPath);
+                NoReparse(context.DataRoot); ExistingDataRoot.EnsureApprovedDirectory(context.GameRoot); NoReparse(lockPath);
                 held = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                 Require(held.Length == 0, "LBSETUP_UNKNOWN_NONEMPTY_LOCK_FILE_REJECTED");
                 Snapshot current = Current(context, snapshot.Digest);
                 temp = context.ConfigPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { output.Write(bytes, 0, bytes.Length); output.Flush(true); }
-                Current(context, snapshot.Digest);
+                Current(context, snapshot.Digest); StorySetup.ValidateTarget(snapshot, edit);
                 if (current.Exists)
                 {
                     result.BackupPath = context.ConfigPath + ".before-setup." + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffZ") + "." + Guid.NewGuid().ToString("N") + ".bak";

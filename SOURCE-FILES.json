@@ -1,0 +1,1815 @@
+{
+  "schema": 1,
+  "files": [
+    {
+      "path": "BUILD-IDENTITY.txt",
+      "bytes": 544,
+      "sha256": "1a444ac39d5211392f4de1620bf8f4c2a0fe74a044dbe15326dd515630587b25"
+    },
+    {
+      "path": "BUILD.md",
+      "bytes": 632,
+      "sha256": "8c56c2ffd9e84270aefd317c5d2b474ca32f00e105eb3cb5edff58db6f53cdd7"
+    },
+    {
+      "path": "FEEDBACK.zh-CN.md",
+      "bytes": 564,
+      "sha256": "a05d8ba5baf1072e93016160d1cad511d6ef59c46fb090b5411b6176d69835c0"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1066,
+      "sha256": "2ba419c4f13d26b5461c483e1fa0956f6dc73daf33d60d5939cfd2a53f109b6c"
+    },
+    {
+      "path": "LICENSE-STATUS.md",
+      "bytes": 1550,
+      "sha256": "23e3bceb831de9e965c47223e8c3dc68ee4272d71c99facd614b8288d88e4bc1"
+    },
+    {
+      "path": "LICENSES/Mono.Cecil.txt",
+      "bytes": 1096,
+      "sha256": "337e09e19b9e83a660c8999c1812b45069d3b8da042d62069b36a8952fa97770"
+    },
+    {
+      "path": "NORMAL-USE.zh-CN.md",
+      "bytes": 4148,
+      "sha256": "8ab6d60cb0501902e9e225df920e84e9025ef6723e20fa4e1a7ab4eda2910d2d"
+    },
+    {
+      "path": "RELEASE-NOTES.zh-CN.md",
+      "bytes": 2253,
+      "sha256": "868c238688ac3c75e378209e2a6afc284f43f30d622f0733685c41a1f6d46c66"
+    },
+    {
+      "path": "SOURCE-IDENTITY.json",
+      "bytes": 1073,
+      "sha256": "88c7ce246f7b65ae530f95e9519a96f687f6c9a88ae1e948e365403f072791c9"
+    },
+    {
+      "path": "SOURCE-MATERIALS.json",
+      "bytes": 2406,
+      "sha256": "4dbd60a48552af1200cce8448967bf461d8bdc58e0a7c7785c37c9f988d051bd"
+    },
+    {
+      "path": "src/LilithBridge/ActionCapability.cs",
+      "bytes": 9885,
+      "sha256": "806791e0555bc266a92c4f875028233361a74e9ef578c44a0cc764e2b621ecf1"
+    },
+    {
+      "path": "src/LilithBridge/ActionCatalog.cs",
+      "bytes": 10454,
+      "sha256": "d804d47d883aef0481ddcbd164fde73532b44143783a2b7b3348b576f4adbd54"
+    },
+    {
+      "path": "src/LilithBridge/ActionDirector.cs",
+      "bytes": 3159,
+      "sha256": "f6372d566859ce7d34d91488dcd1d394be53b07f814b3a1d3976a0da5e565bc2"
+    },
+    {
+      "path": "src/LilithBridge/ActionExecutor.cs",
+      "bytes": 24899,
+      "sha256": "8aaa2f3fce3c70a8dc840a1c3648331caef4e5cb25b817f8d69ebe5c16f73faa"
+    },
+    {
+      "path": "src/LilithBridge/ActionExecutor.Waiting.cs",
+      "bytes": 3419,
+      "sha256": "c7257f6a8c2f279ca807192d1ffd105f450606990cfad44fa5670fc014a7f99b"
+    },
+    {
+      "path": "src/LilithBridge/ActionPathDiagnostic.cs",
+      "bytes": 4199,
+      "sha256": "89f30b2308e7ceec225cb0b3cb97439a3220ab249677962033b7b4337b87d5cd"
+    },
+    {
+      "path": "src/LilithBridge/ActionPoseClothingResolverAudit.cs",
+      "bytes": 9339,
+      "sha256": "83c1dbbfe5ef8ae69a4e76ac315699597fb891b606fda4dcd76f62b801647d76"
+    },
+    {
+      "path": "src/LilithBridge/AppAwareness.cs",
+      "bytes": 5922,
+      "sha256": "6287ed185c70413513dcf285735a56d853de174bd4e0160db8705a04abf44c27"
+    },
+    {
+      "path": "src/LilithBridge/AutonomousExtractionPolicy.cs",
+      "bytes": 3029,
+      "sha256": "7db022624f83c2ef34bbf51a485f1137b770df3af97b9b78af9956f0d0a48006"
+    },
+    {
+      "path": "src/LilithBridge/B1Continuity.cs",
+      "bytes": 22863,
+      "sha256": "ecbea0162b69fcbd90242376639a684c0c388d387769cfec3a6a8c96ed03cc56"
+    },
+    {
+      "path": "src/LilithBridge/B1FailureDiagnostic.cs",
+      "bytes": 392,
+      "sha256": "0b5115b0d53173d4be0294a944ffa6190540f99ba3466a23a06f3268536cda56"
+    },
+    {
+      "path": "src/LilithBridge/B1ProjectionBudget.cs",
+      "bytes": 5279,
+      "sha256": "249b44cb5fab6b2a52325f4f5fbcc279a9ee5385dca52f6aa3ff0eea7e98a0c1"
+    },
+    {
+      "path": "src/LilithBridge/B1ReadableView.cs",
+      "bytes": 19458,
+      "sha256": "3c5aff207bd4eb3064376e583f34aa40e405fe97ba563c7afa7013b8cc717b55"
+    },
+    {
+      "path": "src/LilithBridge/B1SelectionSession.cs",
+      "bytes": 15031,
+      "sha256": "733d792cc4df02a100b66ed15fbbd8caefc2926bcdb9693b896f0f81d4037038"
+    },
+    {
+      "path": "src/LilithBridge/B1Sqlite.cs",
+      "bytes": 6491,
+      "sha256": "7de4627cabcffc462456c3637e4adc7da69d6c5eac861024fa84bbe17d45397a"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.B1Reflection.cs",
+      "bytes": 10488,
+      "sha256": "3484ca3f5272e9958e0e749ed63bacfdea982236c19f712ed1d18a2d26aad42c"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.B1Selection.cs",
+      "bytes": 1329,
+      "sha256": "c47b05ba7701c59f0d0d1f59b5a6d86e5f37f9a34ded4e7a5548ce11c12e977b"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.BackgroundWrites.cs",
+      "bytes": 9155,
+      "sha256": "ac32eca5ae3b4fe37b09364d2ef666264232cb451cc95692181c46902251ec8a"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.ContextRelevance.cs",
+      "bytes": 3692,
+      "sha256": "fe33d8c26efe46142c4ace9aa8646dd07e2c8c5452b8f047b8d5e763d8c2822b"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.cs",
+      "bytes": 139122,
+      "sha256": "65ff262cec611bdcaff1a5bf97d4cbb90b68682bb9f3f7fc0d7ce66c2ec4bf10"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Delivery.cs",
+      "bytes": 25451,
+      "sha256": "3a6758f103391f63913c4e85dd286e363a50b215d2a74193342cb897507e8df8"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.DisplayHandoff.cs",
+      "bytes": 2151,
+      "sha256": "664d7c66ea7b55f7d79bf1a751a909ebede1c2ad05828e0336ab076939cef7f0"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.FinalExpression.cs",
+      "bytes": 869,
+      "sha256": "aa00ba557a5a76ba0e21dc5c812703ad1e00deefa83c0be16826cab74bfada7c"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.FinalProgress.cs",
+      "bytes": 1357,
+      "sha256": "4d0ceba597d83f5e4805c190dbfe6ee20dfeea9523f04f314096cecd3d721262"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.InputSubmission.cs",
+      "bytes": 4139,
+      "sha256": "36c21d907e56209f514b85ef25886cbdd21c2a20ef3e14c3091d10b627217349"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.MemoResult.cs",
+      "bytes": 7417,
+      "sha256": "a661aaeca49b244e2b12eb5efeb51c5bc86f76869c7bf6c99fcb0f4e099a908b"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.MemoryCommands.cs",
+      "bytes": 2416,
+      "sha256": "4f0d319d9fb88d29b23e9055c73870bb523622d136b32d250722c88ae85de222"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.NativeConversation.cs",
+      "bytes": 2719,
+      "sha256": "645f71d184a90356addd0d34a4d64ffad13339c6e7cb09c6d1647be269a09aaf"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.NativeLinkage.cs",
+      "bytes": 12761,
+      "sha256": "40304e187e105b161658736443f86e385d745ee4e1a57180d2758dc27dc37688"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Paper.cs",
+      "bytes": 8085,
+      "sha256": "3a16bcd67d3dd83e0a6aec283debb1afdd5170b9446b89613700dfed1a1980eb"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Participation.cs",
+      "bytes": 2118,
+      "sha256": "b95d3502f02626eebcf67c9ff2862b6641a0009957c28e9a09ae070ada91c344"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.PreparationObservation.cs",
+      "bytes": 2959,
+      "sha256": "05846fea2c4c1082f4d995f16fd6cc2d3bff33119f5cd24f0965d380fe9a83c8"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.RecallFollowUp.cs",
+      "bytes": 2675,
+      "sha256": "1680113d533ca320e62b30be6ac6192b01f3cb6bd92611db21e50c7e5e717dbe"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.ReflectionCadence.cs",
+      "bytes": 6571,
+      "sha256": "d5c53754b34de03d06ba7c6386ef7d076079d888f0a8c00cedde7a9fdd10c6c8"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.ReflectionPreparation.cs",
+      "bytes": 15386,
+      "sha256": "73838ecf55bdedf81ba710197544710a632c4a0944aa5fa8357e5bf2136160e1"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Screens.cs",
+      "bytes": 6814,
+      "sha256": "3c1c6e2c03e7bb319069d103e1c04ed53b9f7eba981b95b46403c2b0450353e9"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.SemanticRecall.cs",
+      "bytes": 15423,
+      "sha256": "df3b326005435707dccb218215a286a10eb2c4d12a3400171e47d882f79267e9"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.SharedActivity.cs",
+      "bytes": 5434,
+      "sha256": "016499edadb4861cb7fc19dc4a63af963fd84d55d74be8d0d613671079a28523"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Submission.cs",
+      "bytes": 14879,
+      "sha256": "2e12016be2a1e3868fd22ba91761c265a9eead19036335ccf0c771a5dad365e9"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Work.cs",
+      "bytes": 5583,
+      "sha256": "7ba489f4c682eac12fe7951944d45e01f6911554cfe4f5b2fb1cbaa70fb43e13"
+    },
+    {
+      "path": "src/LilithBridge/BubbleChunks.cs",
+      "bytes": 13837,
+      "sha256": "c41f3b179861e7dc74e84fe5aaa40e44f0eede31039fd9f8bbaa951508dd1295"
+    },
+    {
+      "path": "src/LilithBridge/CausalRecall.cs",
+      "bytes": 2020,
+      "sha256": "3ac12c91c844a13dde407bdd43d3c5c537e27549e5da41d1246bd7604f0a35b6"
+    },
+    {
+      "path": "src/LilithBridge/ChatGPTAuth.cs",
+      "bytes": 22459,
+      "sha256": "ac2ebb125f55387671f83e49e14aba5f296c7f469e5d06d086f0ab363fcd01e6"
+    },
+    {
+      "path": "src/LilithBridge/ChatGPTCredentials.cs",
+      "bytes": 5138,
+      "sha256": "eb417b92436f1831c69435d32019ba290dbf2842475b8f7ad98bce6c5dacb869"
+    },
+    {
+      "path": "src/LilithBridge/ChatGPTProtocol.cs",
+      "bytes": 3311,
+      "sha256": "d6d30bc1e3c49cea355037fb68da9853eb776cef4ccb647acbbd7c6c5cde1d97"
+    },
+    {
+      "path": "src/LilithBridge/ChatGPTSettings.cs",
+      "bytes": 5556,
+      "sha256": "2f2f70ddea4d1f1af4563b410b2f2226f62b798dd119424a01d78d06204ce88e"
+    },
+    {
+      "path": "src/LilithBridge/ChatGPTSignInDiagnostics.cs",
+      "bytes": 3234,
+      "sha256": "ab6dfc1ee101bdae1541fb5d7cc9d543401a87c94710f4382971d12d6c8d11ac"
+    },
+    {
+      "path": "src/LilithBridge/ChatGPTSignInLifetime.cs",
+      "bytes": 4720,
+      "sha256": "5ffdfce540a8db28a1c47a6ea4b47c3b6f9ef4360637c04c144c211fc362829d"
+    },
+    {
+      "path": "src/LilithBridge/ClaimObservation.cs",
+      "bytes": 2924,
+      "sha256": "02713d15407c2401162163ccde99415d72d7a9d100f50a5b7d728e6713a51758"
+    },
+    {
+      "path": "src/LilithBridge/ConfigStore.cs",
+      "bytes": 73431,
+      "sha256": "3999c2fb74460d13102407ce3d12580921f885580d72cecc71d83d06223f9ff7"
+    },
+    {
+      "path": "src/LilithBridge/ConfigStore.DeepSeek.cs",
+      "bytes": 1925,
+      "sha256": "10cd9871517d436bdf4b71b5da0bef72cf18d63053e3b334fe109bcc6f23a932"
+    },
+    {
+      "path": "src/LilithBridge/ConfigStore.DialogueProvider.cs",
+      "bytes": 4060,
+      "sha256": "4a71c1d0e39a09a9e4bcb15e48219b45dad246b31267fe47e15c95f65adbbadc"
+    },
+    {
+      "path": "src/LilithBridge/ConfigStore.DialogueWork.cs",
+      "bytes": 1761,
+      "sha256": "eb7aa0d26352dfadbe9797204c9c5cff1e0be31fa1c4e6ef5ae50daf9bc48b9f"
+    },
+    {
+      "path": "src/LilithBridge/ContextBuilder.cs",
+      "bytes": 62132,
+      "sha256": "a98377c42a0660770317b1680ae09e7b7f64e8ea79ab30a12fa6ee788ce2e83d"
+    },
+    {
+      "path": "src/LilithBridge/ContextDiscovery.cs",
+      "bytes": 6857,
+      "sha256": "5f044a27c268393b2b092ce3ef9fdb009f3ab2a5a663065830f7e893ed0438f4"
+    },
+    {
+      "path": "src/LilithBridge/ContextMaterialSelection.cs",
+      "bytes": 14415,
+      "sha256": "5b7e83bfbbfb4a8bea809c1fa7a616c385842e3be4d373da14209249631359c4"
+    },
+    {
+      "path": "src/LilithBridge/ContextRelevance.cs",
+      "bytes": 12770,
+      "sha256": "7b8a5f9e0c454a531e15774d70dd380d7e41ea0596924661edcf93db32481ff8"
+    },
+    {
+      "path": "src/LilithBridge/DataPaths.cs",
+      "bytes": 8604,
+      "sha256": "ce0bb739f32d2c35eb2d178342d767bea06c815df7dccdc7710e1f5e17200aec"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.B1Reflection.cs",
+      "bytes": 3570,
+      "sha256": "cb8df91c77216fee6695fc60ed0a4cccc7e99b602f25f8ef3bfbfb7f0d6174aa"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ChatRelationshipHistory.cs",
+      "bytes": 15150,
+      "sha256": "d72a7892823d8798540f6bf3125323522bc08864b0b95d7413870b66b69bfba6"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ClaimBoundary.cs",
+      "bytes": 1330,
+      "sha256": "9a605739ff0886f486030e5a924cd3816c9c50e9f6aa0f73b9e59a6ba7a94190"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ContextDiscovery.cs",
+      "bytes": 5224,
+      "sha256": "305dfdc5b8c299ff40ffaf1f8829755228aab6be24ac33ccaa17c961b273ee7a"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ContextRelevance.cs",
+      "bytes": 1715,
+      "sha256": "1d5265992424006cc8eede6211d26d76150842e3878f5cdadbaeddc78ddb4c58"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.cs",
+      "bytes": 120164,
+      "sha256": "f78e8d7b5c650f8ae9eb054a43e484b75bd974c94cf5f91442b9e435ccdcfb97"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.DayArtifactRead.cs",
+      "bytes": 5987,
+      "sha256": "9a636d171efffe39d6e59ed2b182f843fc9aa46b12df59168b1ca85ef975ce64"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ExpressionYield.cs",
+      "bytes": 5838,
+      "sha256": "feb6de9005767ff24f2c709606764ff7de524196c721d30e9aa54df8d59470e5"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.GeneratedReplyRead.cs",
+      "bytes": 5689,
+      "sha256": "91cf62c69640bff3a01bbf304a417e26ab74012fcf3013f4953bec5a7ae85401"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.HistoryBudgetContinuation.cs",
+      "bytes": 2084,
+      "sha256": "9316947749e155c4f1d9f880ad72ef3524a88c06c0e994b9665ccad4283db2de"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.LegacyArchive.cs",
+      "bytes": 5843,
+      "sha256": "0b59e5d02e581e7c222bc02d195c5f416057c5f83b587ab17397e641be5ca7f6"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.LogicalMessageFit.cs",
+      "bytes": 2694,
+      "sha256": "b79cd49d03ebf85a67d0526d7fd31da9ec869d6c76c2d002e9cea30efaab9081"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.LogicalMessageRead.cs",
+      "bytes": 2214,
+      "sha256": "6cce6ee6c5f31afd86245002d262aa14d9594980f4837596ca4b522bdd88825e"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.Methods.cs",
+      "bytes": 13163,
+      "sha256": "dbe917b92f2e4382a6206f2ed162572613e7f3f02c26376a00630f2a2103f6f9"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.PublicExpressionArchive.cs",
+      "bytes": 3337,
+      "sha256": "39d372a82e2c4da24128b43ff13b0bca9b675dab6b7c29dbc25cc37d85f4812a"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.PublicItemStream.cs",
+      "bytes": 4960,
+      "sha256": "5ac12fc0e5234da650b3add70654a5851de9ccc5d6744f526f2fb753a7a8b0f6"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ReflectionDiagnostics.cs",
+      "bytes": 10115,
+      "sha256": "7ee18bfcd2bd4af5e89f370f4a95264722bfb645e9d30f4bd5e9c162d03a2802"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.Response.cs",
+      "bytes": 32571,
+      "sha256": "d934b8d93e275e3b0d9d04b7217f6518727eaa10a7c2c8d889230279df694206"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ReviewTool.cs",
+      "bytes": 32872,
+      "sha256": "5995dbf9d626df2ab63b51ea8be2a88ebb300f3c72e44478e8e45a10bcaa1747"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.Selection.cs",
+      "bytes": 3089,
+      "sha256": "d9c16274f544ebf687511bfc7f463fd1c903e26a623c494d400867e279842ec3"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.SharedActivity.cs",
+      "bytes": 2644,
+      "sha256": "1cc9b746548b245e47847a4620ca15a4d7e73cb5f80247015edebd7c4e4cb90c"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.SourceBodies.cs",
+      "bytes": 3267,
+      "sha256": "0076d8be8268764fb39d488eab34685807987b51e4ee50b561f5d2262959cace"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.ThoughtBoundary.cs",
+      "bytes": 4326,
+      "sha256": "605bab3a3d6cc85c9fa4adab1b208a4b9f2361738ed526307d3df55a8883db15"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.Tools.cs",
+      "bytes": 51262,
+      "sha256": "699c6ea9b5ca9a4deb61ba6d5cecb3e1b007533ab279317c733ffcb2c385371f"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.TransportRecovery.cs",
+      "bytes": 14720,
+      "sha256": "7b4d6d3ff5545acb441d2559b4ba5669fc44869cc87c05146d25f9ca2184165c"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.WorkPrototype.cs",
+      "bytes": 4898,
+      "sha256": "60932066a7d47c0542e68664c7e7c56e15bbdf15cc76fe2d97f0efee342b6343"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekClient.WorkReference.cs",
+      "bytes": 8170,
+      "sha256": "5e98b9154df5d93651cb8a0ee35bbfe254356010356d68d6832e112926ece06f"
+    },
+    {
+      "path": "src/LilithBridge/DeepSeekModels.cs",
+      "bytes": 1283,
+      "sha256": "7b60d599ecba04410fcb49e94dd20f8599f22e6ea28c7cb3595cdf3a47364c18"
+    },
+    {
+      "path": "src/LilithBridge/DesktopArrangePolicy.cs",
+      "bytes": 3924,
+      "sha256": "c31534f50cefc5b69d558c31bb4452be8e55d21cba6426de0a8f9cbae811db06"
+    },
+    {
+      "path": "src/LilithBridge/DesktopArrangeService.cs",
+      "bytes": 19413,
+      "sha256": "3ca240852cac72a4bb2aa03a4b7eabb198877bbf5921f50825f0e50090ea5dbe"
+    },
+    {
+      "path": "src/LilithBridge/DesktopFolderViewInterop.cs",
+      "bytes": 16477,
+      "sha256": "9773ca6f22dfd2156ddc43d169759e9d47151e098acfe8c8481630fab694b23e"
+    },
+    {
+      "path": "src/LilithBridge/DialogueHistoryView.cs",
+      "bytes": 9923,
+      "sha256": "bf96606e91ec1b8ba604c52651f79d606c67f0b4a0dfe0a42cfe8a852defe913"
+    },
+    {
+      "path": "src/LilithBridge/DialogueMaterialEnvelope.cs",
+      "bytes": 7705,
+      "sha256": "b1437882f8c38276739b94805ac03d5ce68cb391c54d7790fd7ba6b7211ad05b"
+    },
+    {
+      "path": "src/LilithBridge/DialogueProviderOptions.cs",
+      "bytes": 2264,
+      "sha256": "77b5cf49e4798e4693ea8309f2327f8c27aa77140082b0445d535ed4c287baee"
+    },
+    {
+      "path": "src/LilithBridge/DialogueRequest.ChatRelationshipHistory.cs",
+      "bytes": 2599,
+      "sha256": "f20d924d45d07871d14a44aa4bbbe1d87ca384f636fa4dedeefe7292f97e07ee"
+    },
+    {
+      "path": "src/LilithBridge/DialogueRequest.ContextBodies.cs",
+      "bytes": 5823,
+      "sha256": "38e507935676cfde938e94fe2748ba994d1e136bb6df8bfe58273b3ffb3bddf2"
+    },
+    {
+      "path": "src/LilithBridge/DialogueRequest.cs",
+      "bytes": 34371,
+      "sha256": "0791a9978c654b8e263d9f7d4aa3235e5357bca3ff01d8a5f4554b74e9e2becd"
+    },
+    {
+      "path": "src/LilithBridge/DialogueRequest.SceneBodies.cs",
+      "bytes": 1058,
+      "sha256": "6cabb94ccbfd692d81e2a4b53733ae7edb95c1fc7a3d675de9fe3a8b8ab346e6"
+    },
+    {
+      "path": "src/LilithBridge/DialogueUiFocus.cs",
+      "bytes": 389,
+      "sha256": "fa7b70b2dce49676e6c472316b0dc98d8fb44d10853e1d8003ce82f4b453d46e"
+    },
+    {
+      "path": "src/LilithBridge/DialogueWorkSession.Archive.cs",
+      "bytes": 2470,
+      "sha256": "ffc29811fc9ab7cdb0403d2f0679c1badb639fc4ff161505707a9278433f6fab"
+    },
+    {
+      "path": "src/LilithBridge/DialogueWorkSession.cs",
+      "bytes": 16861,
+      "sha256": "bda9eaddb84431ec0e69464c59cee2859b8b547c4a41c400196a31219615b923"
+    },
+    {
+      "path": "src/LilithBridge/DialogueWorkSession.Progress.cs",
+      "bytes": 3084,
+      "sha256": "8bbb4fae2d490e5a381a9ea63cca1b346bd21185ae3e6a4965976fcc9fff5401"
+    },
+    {
+      "path": "src/LilithBridge/FinalOutboundObservation.cs",
+      "bytes": 12980,
+      "sha256": "12c6b29371556eae0975bbdd57ec9caf2c4a20300500a67a6a66463993b8a022"
+    },
+    {
+      "path": "src/LilithBridge/FinalOutboundObservation.Structure.cs",
+      "bytes": 13442,
+      "sha256": "c01635844a1babfe4e117cfaa0b7f910828d8b142f5576984001c12056dd89ba"
+    },
+    {
+      "path": "src/LilithBridge/GeneratedReadableView.cs",
+      "bytes": 15442,
+      "sha256": "cfd5d5dd1593d555508617e761fed44cb0cb23e8cef436ce7e6eb8f7e80aa72e"
+    },
+    {
+      "path": "src/LilithBridge/GeneratedReply.cs",
+      "bytes": 6615,
+      "sha256": "041773317955e9c90053e49cedd0fded4b7e41bc6bd7fb6f0ebd264edfba4ef0"
+    },
+    {
+      "path": "src/LilithBridge/GeneratedReplyMaterial.cs",
+      "bytes": 24241,
+      "sha256": "add9911bae315f8bd274bbc55c931f3cb2c004aa444667023a087536572537f9"
+    },
+    {
+      "path": "src/LilithBridge/global.json",
+      "bytes": 74,
+      "sha256": "f9f131c1b21eb83ab9aeac0230e8d5ef652aafc186a27ed57aab457329920415"
+    },
+    {
+      "path": "src/LilithBridge/HistoryBoundary.cs",
+      "bytes": 6886,
+      "sha256": "8ad21fc91a1dc070043e2f279f38e2723fe4b49acd5e5a8e76b5658bfeaa8379"
+    },
+    {
+      "path": "src/LilithBridge/HistoryCompressionPolicy.cs",
+      "bytes": 7193,
+      "sha256": "a082d38a65aef05538793c74910ae649cbe2215cd340a02e30809980e13fc760"
+    },
+    {
+      "path": "src/LilithBridge/HistoryCopyGesture.cs",
+      "bytes": 1954,
+      "sha256": "68d430abfed70e7c2d838aaf91e23cc27078f076bea2eabdc8b0c821da048deb"
+    },
+    {
+      "path": "src/LilithBridge/HistoryProjection.cs",
+      "bytes": 8796,
+      "sha256": "279f6b77f48d908692311d0870a2b6f39e83996a247d4993791d72252ccc1426"
+    },
+    {
+      "path": "src/LilithBridge/InitialExperienceAuto.cs",
+      "bytes": 17557,
+      "sha256": "88cc9ab6de1dcdbb5e25299ebf04a3b06a26a7d90718e75d4aea5c5b2fb95d94"
+    },
+    {
+      "path": "src/LilithBridge/InitialExperiencePacket.cs",
+      "bytes": 19933,
+      "sha256": "f26f071759ace8ba337eeff608f282ca61533fb9bff4542d9be9d43df0509f0b"
+    },
+    {
+      "path": "src/LilithBridge/InitiativeSource.cs",
+      "bytes": 5155,
+      "sha256": "538b069209d61eeb369aed14236b1933c98134ff79c5dde6247e6ff320c0919a"
+    },
+    {
+      "path": "src/LilithBridge/LastSceneBodySupply.cs",
+      "bytes": 8032,
+      "sha256": "57b1e0b74572b235911a195a6ffd73ed7112cc133bfdd944dd3a3a99ee1bf666"
+    },
+    {
+      "path": "src/LilithBridge/LastSceneSummary.cs",
+      "bytes": 2340,
+      "sha256": "c0a9dbeba8c03acaf10573a9eb4188a71aca2d27b712e458ac95d4ccda99ae13"
+    },
+    {
+      "path": "src/LilithBridge/LegacyRecallFollowUp.cs",
+      "bytes": 3050,
+      "sha256": "85d7670a3d78fdf91d5af964ca0c35f5a1d6978a2897eabaf7f723e29a4c607a"
+    },
+    {
+      "path": "src/LilithBridge/LilithBridge.csproj",
+      "bytes": 4824,
+      "sha256": "a887e8eb5e2e9410347f306a73063c552c5e8019ce634b132473db3dd87adb0e"
+    },
+    {
+      "path": "src/LilithBridge/LilithSceneEvent.cs",
+      "bytes": 1240,
+      "sha256": "50420a86dce94d89bc6ba9adf8d93ba45991d7f94bb473e2653e863fb6b7eba9"
+    },
+    {
+      "path": "src/LilithBridge/LogicalDialogue.cs",
+      "bytes": 15180,
+      "sha256": "1875debb88b71a889c286f01e6586b3a3ad133df44695534b3cb645b0a9b05ec"
+    },
+    {
+      "path": "src/LilithBridge/LogicalMessageRead.cs",
+      "bytes": 20486,
+      "sha256": "5214e1f0d7a804a19b25473341d13ed2cb89871bbd1251e6ab470cad3f419fa7"
+    },
+    {
+      "path": "src/LilithBridge/MemoryAuthorityPhase1.cs",
+      "bytes": 13457,
+      "sha256": "03cde7a3d183e575a806f210341a5f3b1c86511ffeb0f57157d0cf6a3914c3c3"
+    },
+    {
+      "path": "src/LilithBridge/MemoryLifecycle.cs",
+      "bytes": 13326,
+      "sha256": "39f704a4334c7be9e5248901bfc5c921226ddfd62a10fe6226edcb377f56590a"
+    },
+    {
+      "path": "src/LilithBridge/MemorySemantics.ContentQuery.cs",
+      "bytes": 6067,
+      "sha256": "8890e07b4ddb087596544865552c00e110401f5e9bdab841e0e4022cf542034b"
+    },
+    {
+      "path": "src/LilithBridge/MemorySemantics.cs",
+      "bytes": 20535,
+      "sha256": "1b3200df8089821d4233790783ee2810d72134efd376379ced5bdf76a1864c3e"
+    },
+    {
+      "path": "src/LilithBridge/MemorySemantics.RecallScope.cs",
+      "bytes": 19588,
+      "sha256": "2f9f1148e06dbb2e486be607f2996e636cd39a7c29ddc14e89473eb7c2ec6025"
+    },
+    {
+      "path": "src/LilithBridge/MemorySemantics.SpeechRelative.cs",
+      "bytes": 2180,
+      "sha256": "c04e649b9815eb7ff3085e07761fb6d0f0d8488254f9568d5bb6375c83b183af"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.CreatorRecovery.cs",
+      "bytes": 6372,
+      "sha256": "f228008db2243caff739ae43a998b3d91b2a6bea40cf0aa6306b22390a8d1d03"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.CreatorSelection.cs",
+      "bytes": 6897,
+      "sha256": "0af471b1179bf0944334cca197e2c4d2791c643668fa05056fc02d7d2206f508"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.cs",
+      "bytes": 40779,
+      "sha256": "7b1fa1973e08eb451b7db24a9f9dbd76d64aaad8214fa73bf7787451c0496e1f"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Discovery.cs",
+      "bytes": 8192,
+      "sha256": "f0f955555195fc6236e20f21b7319088125ab33807fe611f67c6457378ae2fc6"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.ExactReview.cs",
+      "bytes": 7509,
+      "sha256": "7ab4f89866f98b53934bce391160241454134ad94a56753dbe02bf08b08fa57b"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Exchanges.cs",
+      "bytes": 4415,
+      "sha256": "72404acb5a8f23cdc703ebecb6a7ec3086749c246fc76e226396d3b6b0ddf79f"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Late.cs",
+      "bytes": 7584,
+      "sha256": "7dbab60baa26504d8d979d7c84f41f521b22d5682c3688609438a641c98c6411"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Management.cs",
+      "bytes": 17666,
+      "sha256": "bc38c09d602b2c013452d1e25bea412fc278e0d5dc7fbc4d618b665ffae916e8"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Projection.cs",
+      "bytes": 30197,
+      "sha256": "fd00b48c0f902e9c2b3a6bf20dc0ffabb740ad61a9eb671c8e719e5f37e7a45d"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Reconsideration.cs",
+      "bytes": 12914,
+      "sha256": "cbe2f66a065b5f6675ebea239af4875bd2ae232d0a6b93637b045092e8b336eb"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.ReflectionFlow.cs",
+      "bytes": 16511,
+      "sha256": "88f2cfd9d4b1b40ef0dc1e27ad52d9e007f490156284743c398c74876b77e8f8"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Review.cs",
+      "bytes": 4001,
+      "sha256": "0ada6c534df622e634fcca22c22d812caa86c12b6c6b5838f016a5c458f7caf1"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Selection.cs",
+      "bytes": 17591,
+      "sha256": "79e84a5fac8e9ff37de9d1d43d0e0b48e6429847a94caba7f93ac305d6b19c02"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.B1.Storage.cs",
+      "bytes": 32271,
+      "sha256": "e068236e3947bcebfbb7f79b423e7293abbc0eec24fa039527fd2f23733924e1"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ChatRelationshipHistory.cs",
+      "bytes": 49866,
+      "sha256": "86a1169d256eb741b3145248e5fe7e371ac257111fb693a5f6f88e9a36cb0cd2"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ContextDiscovery.cs",
+      "bytes": 11457,
+      "sha256": "6140ab5802d9181a51d0230fec4dd173b0eb5c6ee57226d075c3b9a2104ddb7d"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ContextRelevance.cs",
+      "bytes": 16105,
+      "sha256": "c3ec90993884b09347780f62d6308856bfd4545a16bc97e6b4a58e215f83b729"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.DayArtifactRead.cs",
+      "bytes": 11789,
+      "sha256": "355be956aab02b6dc712172a9963c9dc89220a3a377880b9814cd52500d469e2"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.Days.cs",
+      "bytes": 28496,
+      "sha256": "3bf9b3ef3c7d5c02b88a69a4873a32f29bf63724e71413423c4192b11c5ce4a4"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ExperienceMatching.cs",
+      "bytes": 1687,
+      "sha256": "7abec9bb61c5273def369f3df83128557cb7e4fe861b29e82e08c1bbfd42e4a6"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.Experiences.cs",
+      "bytes": 26923,
+      "sha256": "6459867d4637ca42dd0d98b4f135f510543e6ea8c9b87d78f0ac1f9f15316a21"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ExperienceTraversal.cs",
+      "bytes": 18816,
+      "sha256": "4a1372f4b9b7eb18773532c371370d9316ee5c046c705f28527399458ed19973"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ExperienceValidation.cs",
+      "bytes": 7373,
+      "sha256": "a0aa6f3bc3435a07bc4d5559d50838c8458d695c8aac3109b3e15a1e264f7ba6"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.FinalProgress.cs",
+      "bytes": 2760,
+      "sha256": "1953efdf444850ca2748f8b5ed3f2b05c973ea6c4f6e0b6ba73b6aaa51a5c8ce"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.GeneratedReplies.cs",
+      "bytes": 26937,
+      "sha256": "bb96b4adaa48379252c633dca8bcfffbabb7fa6965299737017bd31cd406f3ae"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.LegacyArchive.Context.cs",
+      "bytes": 5686,
+      "sha256": "f8b8c6e6d60169f159f4b023cb9854583a13c5c62930963845eb0637c51c0d6b"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.LegacyArchive.cs",
+      "bytes": 22406,
+      "sha256": "c756d7371b96e7393ab0b7acc7d31bdfef4cb096d1ab2059c0e43d26556da583"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.MaterialSelection.cs",
+      "bytes": 6983,
+      "sha256": "efc8bdf4cb19d09f7db3b576128042c2cfebe01cfb63bb911b0bfbe1bfadc817"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.MentionBoundaries.cs",
+      "bytes": 12067,
+      "sha256": "4c896180822aecefe979a2cf58607dfa2d0df0f6c2e666b53166c211202dfc12"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.MethodSources.cs",
+      "bytes": 15916,
+      "sha256": "83c69678351368d5d14ca61c51436c52b361c72338d11421fe678474bfba28f0"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.NativeDialogueSupply.cs",
+      "bytes": 16413,
+      "sha256": "033059eb8013e2c583c5b9913f3b709c31e0965469004a02d5e204e256fd939c"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.NaturalCorrections.cs",
+      "bytes": 8852,
+      "sha256": "6a97fec20b33bbc019f3a382c0c8e56f38d815f2ada8af493b26226c24a334eb"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.PaperSources.cs",
+      "bytes": 2521,
+      "sha256": "383041780840dc11c26ca99fc58918cd2f9a0e5f554fe121a9471f42efa90e16"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.PublicExpressions.cs",
+      "bytes": 23516,
+      "sha256": "04a98229f749d12bfc8d1ecc239d9508169b368823794990811adc3a04df73d0"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.PublicItemStream.cs",
+      "bytes": 1814,
+      "sha256": "942e93bf3747c039c7a7b7c5b6e6c66813371e373914ae21c8e4aea1f80d3fa8"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReadableB1Sources.cs",
+      "bytes": 2612,
+      "sha256": "fa001f6e660368a815c9553715434fe5b50d52367d47c8e35331c831e815e7f9"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionDeletion.cs",
+      "bytes": 5244,
+      "sha256": "4c7511a8bb934bbc8e2219ca8fc9338422f2a62fc9dceb2e039f9ed9241bd07b"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionDelivery.cs",
+      "bytes": 9343,
+      "sha256": "65cb831cb46d02a262d8919114bb16777f728d2d6f5d9bef3d612c72a3b714c1"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionGenerated.cs",
+      "bytes": 18397,
+      "sha256": "2c41fc8b97c796028dbdef936c9a9684194ae0cc920b729486c0b93eaf82fd66"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionPurpose.cs",
+      "bytes": 13439,
+      "sha256": "281f023f74f81544fc96ae0e5d83b56fd597e8b344115d9689070236795db4fc"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionReasonBasis.cs",
+      "bytes": 8985,
+      "sha256": "d2da0021e855b60c6c5206fa6d814bbb24d6e1570a60a735a134822800e63b80"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionRecovery.cs",
+      "bytes": 5944,
+      "sha256": "46b764874bcd49ce31afb6bb715e4980ac680d25e4e7122bb31ec1514839a238"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionRequestOrigin.cs",
+      "bytes": 6384,
+      "sha256": "5414203ea5a9702bebaddadeaec2c2af7657ad20b6051c1747371123d90ec88c"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.Reflections.cs",
+      "bytes": 90648,
+      "sha256": "bee2f8c7299b49dd86e19f5304edd29c95a2698797b681c80d05456856ae683a"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionScheduling.cs",
+      "bytes": 25613,
+      "sha256": "5c76e6d05d53e881fbc71349b0e50c673500f30312ec376d45515ec0170434ad"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReflectionTransfers.cs",
+      "bytes": 2724,
+      "sha256": "a11e47c2fd5b95db6cb7ed6e549b37648031e10047f675e06d74de568c77a09e"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.Review.cs",
+      "bytes": 12393,
+      "sha256": "802395550bc1f1b2355ae66a195fe353eeb1ee8a0d7323a8b4f53756cd911c10"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ReviewReadVersion.cs",
+      "bytes": 1077,
+      "sha256": "2048c927523546467e3b6a0475d66f4650f736bb18b8499240f553ae5cada8ba"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.SemanticRecall.cs",
+      "bytes": 17929,
+      "sha256": "e25f40c42a1be65f465d54b1c283cd5a707ebc9fe1539b8c285664d2654c57a5"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.SemanticRuntime.cs",
+      "bytes": 5185,
+      "sha256": "b49a352928b244caa8a226c476f4a7ba2862210472389d27f333d676519c5053"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.SourceAttribution.cs",
+      "bytes": 1993,
+      "sha256": "3e4ea6b07f0ca3b42e9d00a5edbbd5a6648531315d5c15d936ecee251a2ae113"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.SourceCorrections.cs",
+      "bytes": 10007,
+      "sha256": "9c44cfad5b946442d0a71ae4cbe7326ef5740f2c612a97fd3d892aab32fdf1d3"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.SourceValidation.cs",
+      "bytes": 6151,
+      "sha256": "b880d23df5598c3d0f8f401dc927abebf98128d54d4ef29691e8adb07173b5ab"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.SupplyContract.cs",
+      "bytes": 19518,
+      "sha256": "e1d103e364ea094b77ddcd60f123aa121c16bb772a72ffdde10a805a4eed4730"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.ThoughtLedger.cs",
+      "bytes": 2093,
+      "sha256": "b6f2fb389be339d08e442a52bb5026840e51435ce410d9b0aafbffa87f3b39c9"
+    },
+    {
+      "path": "src/LilithBridge/MemoryStore.UserOperations.cs",
+      "bytes": 44993,
+      "sha256": "168ac29e5d1927011ce8edd0d5b2793eff70693c1f5388566d304618a9c0c399"
+    },
+    {
+      "path": "src/LilithBridge/MemoTextAccess.cs",
+      "bytes": 1848,
+      "sha256": "924e3e118674568f7d21bc3a35c9f1f525d704d0091f77c317163585ce0027b0"
+    },
+    {
+      "path": "src/LilithBridge/MicroReactionDirector.cs",
+      "bytes": 5524,
+      "sha256": "03d6d8773bc4ed0de55833133e907331394e856ffb18ceeda1d3a13fa360d2dd"
+    },
+    {
+      "path": "src/LilithBridge/NativeActionInventory.cs",
+      "bytes": 8108,
+      "sha256": "bf8dd1ba3c7578ebbcc68ff8c5d444312b9e4132834a595aa1eff124c1721fcf"
+    },
+    {
+      "path": "src/LilithBridge/NativeActionSuggester.cs",
+      "bytes": 5710,
+      "sha256": "50a27e186d4410be44e7c874ade68138d738b97c7561826c53bf93ba1aead89e"
+    },
+    {
+      "path": "src/LilithBridge/NativeAnimationCatalog.cs",
+      "bytes": 2461,
+      "sha256": "2ef75b3994d6dc5cffbbd4646bdfe037c3d4bb3afb39a5f51c6f7b8d1ace6494"
+    },
+    {
+      "path": "src/LilithBridge/NativeB1SelectionWindow.cs",
+      "bytes": 13395,
+      "sha256": "b30a82da9ec38d756fe31560f29322b5831797c2bf8115dda4cc82a6de59fbc2"
+    },
+    {
+      "path": "src/LilithBridge/NativeBubbleAppearance.cs",
+      "bytes": 4572,
+      "sha256": "1830deb5842e3637fc7149dee348bf28fb17e5bce1c548837ca892741f3d7ad7"
+    },
+    {
+      "path": "src/LilithBridge/NativeBubbleEndpoint.cs",
+      "bytes": 203,
+      "sha256": "fa1850a1aebe000bda89f750cea7e5e87979c5233bb703aacfbe68ced9c31c21"
+    },
+    {
+      "path": "src/LilithBridge/NativeBubblePresenter.cs",
+      "bytes": 29148,
+      "sha256": "af04acdbd94170e9ded58a1642a9c8aafb15efa7e43fc26f31809f7531c23204"
+    },
+    {
+      "path": "src/LilithBridge/NativeBubblePresenter.Effects.cs",
+      "bytes": 3567,
+      "sha256": "64c28e002ad7119a6fb9bfefda7971c69a092659a573aa02d9268012f1d08ab8"
+    },
+    {
+      "path": "src/LilithBridge/NativeClockFields.cs",
+      "bytes": 716,
+      "sha256": "0a6b0cd0d1c4f55af98fe633b7c3647016d3c2b0fc5eccf8625e0bb4942ff0fe"
+    },
+    {
+      "path": "src/LilithBridge/NativeHistoryWindow.cs",
+      "bytes": 12437,
+      "sha256": "dd97962c6b97a87ee6136e09d70dd0a572de330c3aa117365eb7ae2abacec3a6"
+    },
+    {
+      "path": "src/LilithBridge/NativeHooks.cs",
+      "bytes": 26464,
+      "sha256": "3b852621eccd55d5d498b787aea21028a27310a93de69d9e4db1e0a0e6fb3b53"
+    },
+    {
+      "path": "src/LilithBridge/NativeIdleAnimation.cs",
+      "bytes": 4327,
+      "sha256": "8c4aa4e6a4f9ee83b6463310ff9ab7bc1d371b6c01ceae838b38cd0fd223f013"
+    },
+    {
+      "path": "src/LilithBridge/NativeInput.cs",
+      "bytes": 6845,
+      "sha256": "6b7bb62716322201a3001de5cab246a35bd4fcfed7e85022cfda4c0713f8d1a6"
+    },
+    {
+      "path": "src/LilithBridge/NativeInputField.cs",
+      "bytes": 19141,
+      "sha256": "de0678bdc5172a6d252c686bbf92e0cac29ce1e66ec85d5bffe777efd41d0e7a"
+    },
+    {
+      "path": "src/LilithBridge/NativeInputField.Submission.cs",
+      "bytes": 533,
+      "sha256": "b6b881ea2efac8e9535c7c017fea750ba9c3a8fa975164106beba70b8ecdf687"
+    },
+    {
+      "path": "src/LilithBridge/NativeInteractionSubscriber.cs",
+      "bytes": 4385,
+      "sha256": "e8de0fb926b5f532fd67f67b293dd0c00ce297d5aebc350684c6d503e0d891a9"
+    },
+    {
+      "path": "src/LilithBridge/NativeMemoContext.cs",
+      "bytes": 7936,
+      "sha256": "b17e36b3f4a898a7e3786628b373d3641dcc13d4e6900069b5caf47589e563db"
+    },
+    {
+      "path": "src/LilithBridge/NativeMemoReplySegments.cs",
+      "bytes": 1854,
+      "sha256": "c4093a06e7db04eaa79c24c25b36e818b614be8a4496ae6a2d0c480fff85ed9f"
+    },
+    {
+      "path": "src/LilithBridge/NativeMemoResultInput.cs",
+      "bytes": 4651,
+      "sha256": "64ac108e8c0fa0aca4057f25d2451c4628d2b89c2dcea57a16b0b9f9121d9a92"
+    },
+    {
+      "path": "src/LilithBridge/NativeMemoTarget.cs",
+      "bytes": 4771,
+      "sha256": "0b9725729fcfa5e9e07bef21397ba4c002421c5d09bc9e566b7eaed6c92b5125"
+    },
+    {
+      "path": "src/LilithBridge/NativeMemoWriter.cs",
+      "bytes": 6000,
+      "sha256": "856df8d72c60b208495b07224978d0457b4c8ab82e85f838100085ab551a5988"
+    },
+    {
+      "path": "src/LilithBridge/NativeMenuStyle.cs",
+      "bytes": 1493,
+      "sha256": "6800acb62a70cde7b1eba671aa5730d8d8c428ac8a41a502d1fd98970a084200"
+    },
+    {
+      "path": "src/LilithBridge/NativeNoteSupplement.cs",
+      "bytes": 3320,
+      "sha256": "c1b3a80247075d95fbf7538e0ccc356cf4287a39bfe2721f9a73fe363ed48dd5"
+    },
+    {
+      "path": "src/LilithBridge/NativeOpenAISettings.ChatGPT.cs",
+      "bytes": 13066,
+      "sha256": "d2de2424dc42adb5d6c1a41e980207a73ce4fc5a55826f14a87f7528ff266fb9"
+    },
+    {
+      "path": "src/LilithBridge/NativeOpenAISettings.cs",
+      "bytes": 28376,
+      "sha256": "27445305dcae7671e870c7f9a44e4187180b1869be1564be6525b9e8357e79a1"
+    },
+    {
+      "path": "src/LilithBridge/NativeOpenAISettings.NormalUse.cs",
+      "bytes": 5105,
+      "sha256": "6483736ebf014ec0bf12d6ffceaadc7d3b192dd462bac080c69f2c9b8a6a23fb"
+    },
+    {
+      "path": "src/LilithBridge/NativeOptionsMenu.cs",
+      "bytes": 9646,
+      "sha256": "e137ad90b8b6b743a9e7d39be5998324b495d62e7b04bd2456421eb3e4a3fc52"
+    },
+    {
+      "path": "src/LilithBridge/NativePoseGate.cs",
+      "bytes": 3777,
+      "sha256": "761ad089d1c9adb44ac891df308e66e35c1973880e5db3a6976a678ac64b9b39"
+    },
+    {
+      "path": "src/LilithBridge/NativeReadReceipts.cs",
+      "bytes": 3793,
+      "sha256": "cf9edc728b9ad53e998b4522a2b482df426ea3ba1bb50feb1dd93af980538e19"
+    },
+    {
+      "path": "src/LilithBridge/NativeReadReceipts.WorkMaterial.cs",
+      "bytes": 5531,
+      "sha256": "e88483777c90ba8c28e3f0e8dc5ab2b48aeedf34a643a6b4810b3532bed11a63"
+    },
+    {
+      "path": "src/LilithBridge/NativeRequestStatus.cs",
+      "bytes": 3229,
+      "sha256": "eab76d8bcf23b7d838c1ad1a47984865b97fdd538cd4f9bdfa387d4d9c12ea19"
+    },
+    {
+      "path": "src/LilithBridge/NativeSaveStatus.cs",
+      "bytes": 4869,
+      "sha256": "e71b4345142f1c3e96b3e90fc8c6c9eb5274e6f84cfea86f7319685944f5d511"
+    },
+    {
+      "path": "src/LilithBridge/NativeSharedActivityWindow.cs",
+      "bytes": 16119,
+      "sha256": "988ac578800c4f48998c3d40c49bb3cf92cafc5b9865d92e8506bcc947a2fb51"
+    },
+    {
+      "path": "src/LilithBridge/NativeSnackStatus.cs",
+      "bytes": 1671,
+      "sha256": "b907a8bdc450eeb84838ecd56e4825516993739b105ba026bfd48755b42fa4e5"
+    },
+    {
+      "path": "src/LilithBridge/NativeState.cs",
+      "bytes": 85545,
+      "sha256": "b428b7e4e6ea32153d379e40594dffea092d864995ec32cd3594d184979ea01d"
+    },
+    {
+      "path": "src/LilithBridge/NativeStateInspector.cs",
+      "bytes": 8335,
+      "sha256": "769471f9dab70569bfc52576d06182360f4fe71519bb71541ebbcb2977ae2d53"
+    },
+    {
+      "path": "src/LilithBridge/NativeUiInputGate.cs",
+      "bytes": 296,
+      "sha256": "d9ed1f4e4103503f4959c04f875842cb8f7dd5b5c91df33f1e384e4a229024b8"
+    },
+    {
+      "path": "src/LilithBridge/NativeUiMonitorLease.cs",
+      "bytes": 2385,
+      "sha256": "9836a94c5c4beabddd388bb290b99351d5f7b602c2eaf2a21b09ba30daf938b6"
+    },
+    {
+      "path": "src/LilithBridge/NativeUiViewport.cs",
+      "bytes": 3205,
+      "sha256": "bb95526bb8fb7f3702c129fb9294ba74325b41a164a3e4983191d5d00e53c7ed"
+    },
+    {
+      "path": "src/LilithBridge/NativeWindowPeekDirector.cs",
+      "bytes": 13156,
+      "sha256": "0f418511e34c7e4b2eaef8971311aadc82ce7023435434fd0867bc28fa616e91"
+    },
+    {
+      "path": "src/LilithBridge/NativeWorkPlayback.cs",
+      "bytes": 8017,
+      "sha256": "3f82b6d0b3fb601ede8458cac2428403490ac41a5ef9c60f760d11f5d08de04d"
+    },
+    {
+      "path": "src/LilithBridge/NaturalMemory.cs",
+      "bytes": 15934,
+      "sha256": "729f3252a806959ac5bfc2740f9aefd8b12835b7fbf18255a8f2e2cea5d11248"
+    },
+    {
+      "path": "src/LilithBridge/NormalUseSetup.cs",
+      "bytes": 8123,
+      "sha256": "e4e02b7677151a3a0184582869fc2943e0340e8ed002bc66e2359188cb59442b"
+    },
+    {
+      "path": "src/LilithBridge/OpenAIProtocol.cs",
+      "bytes": 24260,
+      "sha256": "bb10bd2c0f7a10b48a7a8518cb6d9b6f7d1999e98d6b0fc28b3dd401823d8a1c"
+    },
+    {
+      "path": "src/LilithBridge/OpenAIPublicItemStream.cs",
+      "bytes": 8284,
+      "sha256": "3e86c4745b24d48d224f59e634b064d09299776342a4927dac90b16f4ffad9ed"
+    },
+    {
+      "path": "src/LilithBridge/OpenAISettings.cs",
+      "bytes": 15738,
+      "sha256": "92389d57bddd6c4a71e576a99e82266042b1ad42d79ab17c425c2a4a5b45700c"
+    },
+    {
+      "path": "src/LilithBridge/OpenAITaskPolicy.cs",
+      "bytes": 3323,
+      "sha256": "5b402a4886e205fffbd0e3e6f83dc01f0bc50f69d2c7788d76ea09c42cee3243"
+    },
+    {
+      "path": "src/LilithBridge/ParticipationPrompt.cs",
+      "bytes": 1665,
+      "sha256": "5a18bba1af23c9cba1bf85820f58239e8bee372e66fb6085fcb655bc4ccab2d5"
+    },
+    {
+      "path": "src/LilithBridge/PersonaDefaults.cs",
+      "bytes": 5078,
+      "sha256": "d0223d2d9d035412c001f2546531dce91fef87f9ca8311927dfd0b56175852a0"
+    },
+    {
+      "path": "src/LilithBridge/PersonaRuntime.cs",
+      "bytes": 5438,
+      "sha256": "7e734f0ab0300d32d078cf94ba2331ff19e170d44b4543d6cbf867f25c06fe81"
+    },
+    {
+      "path": "src/LilithBridge/PersonaStateEngine.cs",
+      "bytes": 10995,
+      "sha256": "7a65ba3b14cfb2223121baa3929230e990c9f1f8ecea8c901260199c4d01691c"
+    },
+    {
+      "path": "src/LilithBridge/PersonaStateMigration.cs",
+      "bytes": 6079,
+      "sha256": "dcadfb01962739411fe8945ae76ab1315a9126fbeff7d71651f4d87514780a9b"
+    },
+    {
+      "path": "src/LilithBridge/PlatformInfo.cs",
+      "bytes": 77,
+      "sha256": "51e45c062042bf67832fc053e98e20a80468babe448dbab0e7a2565f2fe3f8ac"
+    },
+    {
+      "path": "src/LilithBridge/Plugin.cs",
+      "bytes": 4533,
+      "sha256": "4615b015a38362597c30a2277be2790847b2e62aebdf63d34f696b3cdffdbe27"
+    },
+    {
+      "path": "src/LilithBridge/PreparationTiming.cs",
+      "bytes": 4775,
+      "sha256": "92a005aecf61ab60f7d49de371ea33c0afa60d3dcd7e033c6353aca68cbb2d29"
+    },
+    {
+      "path": "src/LilithBridge/PreviousStoryArchive.Collection.cs",
+      "bytes": 11967,
+      "sha256": "c08e128bbe27fc487f0f55445f123bea5bf49dc42cbc743bad297a7672e67e8a"
+    },
+    {
+      "path": "src/LilithBridge/PreviousStoryArchive.cs",
+      "bytes": 12278,
+      "sha256": "9d51f0ef2afa88b6854ed595fc747838cbf4f3e1129ca0bfeebf0c89c8381673"
+    },
+    {
+      "path": "src/LilithBridge/PreviousStoryArchive.Permission.cs",
+      "bytes": 2449,
+      "sha256": "ce44ae4b5a28027fe67eb8b4e08feb845caf03305b78469f3005616b9bbcc737"
+    },
+    {
+      "path": "src/LilithBridge/PreviousStoryArchive.Ranking.cs",
+      "bytes": 3917,
+      "sha256": "fe0cd8b0c91790a5c8dfb496997f5dfdc8d73024ab18c514e3b104cf0f0b245a"
+    },
+    {
+      "path": "src/LilithBridge/PrivacySafety.cs",
+      "bytes": 3722,
+      "sha256": "f7647d2501ab843df84cb7e296139f82f08753f0c273c51c8b5b8999061cb2f2"
+    },
+    {
+      "path": "src/LilithBridge/ProactiveB1Supply.cs",
+      "bytes": 3532,
+      "sha256": "fed23f1b67ebda4c49cc5a9a532fc4c0faccf572d99382db92e7aca55a2c1cd6"
+    },
+    {
+      "path": "src/LilithBridge/PromptDumpSink.cs",
+      "bytes": 10905,
+      "sha256": "8464749d2db75cc9e11c9e168ac86ae47031a3703493262f780077dad88c2bda"
+    },
+    {
+      "path": "src/LilithBridge/ProtocolMigrationMonitor.cs",
+      "bytes": 24991,
+      "sha256": "b20720f7c8464e71cc0f34d4db1040122bfac6f1418ff8d86c487e23af455b67"
+    },
+    {
+      "path": "src/LilithBridge/PublicBuild.props",
+      "bytes": 385,
+      "sha256": "ec30e6bb028dbb2e0ab9e96e404dd6a32d7b4ad3845651179ff58f7f22eb8c35"
+    },
+    {
+      "path": "src/LilithBridge/PublicExpressionArchive.cs",
+      "bytes": 3118,
+      "sha256": "6a81ef7fadbbdd65f821c612335624192371d6a9c504a339f3147bc2aea6180a"
+    },
+    {
+      "path": "src/LilithBridge/PublicExpressionProjection.cs",
+      "bytes": 4171,
+      "sha256": "a4f9d1ff583f505afdb29769259511805341bdd8851175d4dbc248e9e90f708b"
+    },
+    {
+      "path": "src/LilithBridge/PublicFinalDraft.cs",
+      "bytes": 12486,
+      "sha256": "2e47d4954d997dd45dbeadfd93130e2d3885e94bbca6acd52be1a94d13ef0456"
+    },
+    {
+      "path": "src/LilithBridge/PublicFinalHandoff.cs",
+      "bytes": 1626,
+      "sha256": "d72935c1c1fcc124302cd1c04cd1655dc5240336e44fb93e4d12c8c9b3f21665"
+    },
+    {
+      "path": "src/LilithBridge/PublicFinalProgress.cs",
+      "bytes": 799,
+      "sha256": "7fa72c2d65dbcf9fffa3ba70dfc679a5b0247172a03c15f8172fe71e6b5deb6e"
+    },
+    {
+      "path": "src/LilithBridge/RawAnimationProbe.cs",
+      "bytes": 8648,
+      "sha256": "f192100f0a5ba5670e3cb5b4e833a133b0071c28c88736d0f4fc5707ba23d4db"
+    },
+    {
+      "path": "src/LilithBridge/RecallSupplement.cs",
+      "bytes": 1028,
+      "sha256": "69d7b53ee32113e649d28714db6377369af5df93af5795aeca127726c89a1f45"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionExpressionBasis.cs",
+      "bytes": 1466,
+      "sha256": "b6b7c1bdca364bcd1861515998a97300e8b4cfc037dfa57d5026249eb67a8b32"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionFailureEvidence.cs",
+      "bytes": 10062,
+      "sha256": "de9b701a78b4356b30fa7b410a71c3246eef99e7b2a7ecdcbd8648a2c9a8d803"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionIdleCadence.cs",
+      "bytes": 2497,
+      "sha256": "84ca79040b2326772a70613aba33321f5f9c189e64fe3e322dd99c6e3121466f"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionIntentTrace.cs",
+      "bytes": 9493,
+      "sha256": "4f7db0ab841bcad12937ac2fee2754a71dfcbbaff78a480312dd800d4cce8edb"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionPreparation.cs",
+      "bytes": 9503,
+      "sha256": "071b9b4e73e0beb30ca0b66f3c1bf7806e4e6eafd5a585d981465fa52625765f"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionProgressiveCadence.cs",
+      "bytes": 2164,
+      "sha256": "add553c1c3e7506e7c7de3514e0df59d395d4747a4b3200e0bd6d0e441360e38"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionProjectionObservation.cs",
+      "bytes": 6349,
+      "sha256": "82a7da641f2a673964114472a8bb15891cea70a103842b0a0b797f42e8006e40"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionResponseShape.cs",
+      "bytes": 3051,
+      "sha256": "1e194ff7d71398b27a012d5e040fb0b8c57c10f0f0805be6eaaf13cfba806c88"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionSerialJsonConverter.cs",
+      "bytes": 2700,
+      "sha256": "70d2a302cc6fe631b1e43c745f164729b3b7d8580a4bfa432940b93913bdef58"
+    },
+    {
+      "path": "src/LilithBridge/ReflectionWindow.cs",
+      "bytes": 8701,
+      "sha256": "094b1f9d89797d2c7a99b628832e91b19528bb5079cd03ed6957c79cc8136bba"
+    },
+    {
+      "path": "src/LilithBridge/RelationshipHistory.cs",
+      "bytes": 8891,
+      "sha256": "033ea5ed25c66b624037d1f56814d5d23e21964371b2ab683f98da08387b678f"
+    },
+    {
+      "path": "src/LilithBridge/ReplySanitizer.cs",
+      "bytes": 9895,
+      "sha256": "0643d4899f59f5af409da00d1c5fe28715875c921c70caaf28e11610d3b90c8d"
+    },
+    {
+      "path": "src/LilithBridge/RequestSendPermission.cs",
+      "bytes": 4179,
+      "sha256": "527efde3b893b51b1c26ef2ead64223bd60d02e7232165effeea23cab1895469"
+    },
+    {
+      "path": "src/LilithBridge/RequestSourceBody.cs",
+      "bytes": 2148,
+      "sha256": "323b44d4a23c86c5a43d2e5913ac6a99e0d3434051e6bae5ff543bffdab50d7c"
+    },
+    {
+      "path": "src/LilithBridge/RequestWaitStatus.cs",
+      "bytes": 5577,
+      "sha256": "ba47efcadf2ba7f2abeaa6f9c3bdc1587efefa27f4c966c7c3caf91f5f576e9f"
+    },
+    {
+      "path": "src/LilithBridge/ResponseObservationSink.cs",
+      "bytes": 7941,
+      "sha256": "cd44d77ef42f13f88bfb2c4dd0e67eea5b6afdd592bddf615eac5a329b87ba75"
+    },
+    {
+      "path": "src/LilithBridge/ReviewContext.cs",
+      "bytes": 24558,
+      "sha256": "9cf343123cdfe90e393353c697a8da3f33de36067ac722e695ad00cf48c0aa5a"
+    },
+    {
+      "path": "src/LilithBridge/ReviewHandoff.cs",
+      "bytes": 21247,
+      "sha256": "3ef0d485990d7d20adc6965276a10c652010eeab9311113b74d0550d16b9e1c7"
+    },
+    {
+      "path": "src/LilithBridge/RuntimeActionCapability.cs",
+      "bytes": 5589,
+      "sha256": "c8f70cfd2c460ede75231531c699939073d7fd927669467ef65ed9a137d9b833"
+    },
+    {
+      "path": "src/LilithBridge/RuntimeDirector.cs",
+      "bytes": 7766,
+      "sha256": "7e7db0e578a7779702afd3402b79677bab886b499b82cf67d129e7e4568461e0"
+    },
+    {
+      "path": "src/LilithBridge/RuntimeMemoryPipeline.cs",
+      "bytes": 9031,
+      "sha256": "dfa2d4e0186f55d4de00506894f332efc43f7dc6f01accad3598cadfdb2a7448"
+    },
+    {
+      "path": "src/LilithBridge/RuntimeProtocol.cs",
+      "bytes": 6711,
+      "sha256": "f497dc25cff41dad8c945e3aaa407d677ccb2e11a973fe053c2ddafe18ed529d"
+    },
+    {
+      "path": "src/LilithBridge/SaveFailurePresentation.cs",
+      "bytes": 3405,
+      "sha256": "c158309b3a6cb22a12c1eb465229e4b69fee40e115c1f1c1999c9037ad6f9735"
+    },
+    {
+      "path": "src/LilithBridge/SelfPositionGate.cs",
+      "bytes": 2796,
+      "sha256": "3e1fbb8ee8c173b1c3bc45e0fb9c9ce23f14c292b0dfb743e90cddd861e77252"
+    },
+    {
+      "path": "src/LilithBridge/SelfPositionView.cs",
+      "bytes": 8866,
+      "sha256": "08e211d779bedc099ea2c8fb298b988b456c38122d537e44db262efda4a2ea7e"
+    },
+    {
+      "path": "src/LilithBridge/SemanticDiscovery.cs",
+      "bytes": 5239,
+      "sha256": "ab2c0d3e38cba330294eae5ab2943a94b5fc706abafd3098c91201575f250271"
+    },
+    {
+      "path": "src/LilithBridge/SemanticRecallWorker.cs",
+      "bytes": 21590,
+      "sha256": "e3f5f65761922fe8ecbdcb77527609f8327dcce0d0c5d94779b506d680f380c0"
+    },
+    {
+      "path": "src/LilithBridge/SemanticRequestMaterial.cs",
+      "bytes": 7296,
+      "sha256": "5c40267aa50cad7894c4998622a0879cd927cb6e7f58d466f2e56113416570ac"
+    },
+    {
+      "path": "src/LilithBridge/SessionReadMethods.cs",
+      "bytes": 8371,
+      "sha256": "e35e67b846868c01af4a48e3e2a006ea3c8d7b4ed072717f766ada8298a4e39a"
+    },
+    {
+      "path": "src/LilithBridge/SessionState.cs",
+      "bytes": 28227,
+      "sha256": "9b61d4b734e1b52f4b96cb32ee86b903921f91d6b9a3458d52b9445ae955d4ae"
+    },
+    {
+      "path": "src/LilithBridge/SharedActivity.cs",
+      "bytes": 24103,
+      "sha256": "73f23e36a74a8f0bd7e90fd182df30069f459a95e663b83e912a576cfdbd069e"
+    },
+    {
+      "path": "src/LilithBridge/SharedActivityB1Supply.cs",
+      "bytes": 7218,
+      "sha256": "d8e3fbec2d15720e8a2003fe35191b65e11042bc9c49862bc0146e149bb5dcf8"
+    },
+    {
+      "path": "src/LilithBridge/SharedActivityPrompt.cs",
+      "bytes": 3947,
+      "sha256": "6ef22f9a74cb6ad48d9abcebb8be14acae85fb2e86b4f260e245d77b5a7226d2"
+    },
+    {
+      "path": "src/LilithBridge/SharedActivityStore.cs",
+      "bytes": 1751,
+      "sha256": "20be5e07f45b653a47a0651d7124036c93f4c8cad2e31ba77df90574be9e58a6"
+    },
+    {
+      "path": "src/LilithBridge/SteamOfflineGuard.cs",
+      "bytes": 1895,
+      "sha256": "8e316fac2d1c74a1208dafe7b2b7f901f3747d407449c2b4d3cf271e486c0958"
+    },
+    {
+      "path": "src/LilithBridge/StorySettings.cs",
+      "bytes": 2832,
+      "sha256": "df529c4b0e148c50d5f5fd67bd36a3fe2dd09f1acfb69ec82d550dc16a17cfe3"
+    },
+    {
+      "path": "src/LilithBridge/SubmitEnterGate.cs",
+      "bytes": 785,
+      "sha256": "eef3f2c8aa2814916600e005e03cf034a0f2444e47296894541df842e1df4801"
+    },
+    {
+      "path": "src/LilithBridge/SubmittedMaterialBinding.cs",
+      "bytes": 614,
+      "sha256": "b430547caadd8a83d0680a554c00a54acb2044736b076e380ee2caaddeef4753"
+    },
+    {
+      "path": "src/LilithBridge/SystemPromptSlim.cs",
+      "bytes": 7095,
+      "sha256": "4fe4a50bd7d8be0723073bc67802723790a1726bc3df27382208c8d5666e15ce"
+    },
+    {
+      "path": "src/LilithBridge/TransportFailurePresentation.cs",
+      "bytes": 1834,
+      "sha256": "f56097201326229db3df7802daa8081cc945074cce8e45a0f96aaa6f58485516"
+    },
+    {
+      "path": "src/LilithBridge/UtteranceAttribution.cs",
+      "bytes": 3618,
+      "sha256": "feb5e19aed50bd96f2f75c7e13cf040098f5da8be45b3ff1f3c0b9bc7050358c"
+    },
+    {
+      "path": "src/LilithBridge/VisionCapture.cs",
+      "bytes": 8240,
+      "sha256": "f86f98b08e678bc4f2351a942b2942fb89d01b52944751769fcc31bae6985fb6"
+    },
+    {
+      "path": "src/LilithBridge/VisionRows.cs",
+      "bytes": 1642,
+      "sha256": "96d6e7fe91c0215e310cb23c8b507552d1fd096c667d191f35d24874291e4723"
+    },
+    {
+      "path": "src/LilithBridge/WorldBelief.cs",
+      "bytes": 1584,
+      "sha256": "ca17af98b82c91942e6fe31c2fb46c246ab3ddc788edd587bb7852a0a581f815"
+    },
+    {
+      "path": "THIRD-PARTY-NOTICES.md",
+      "bytes": 1743,
+      "sha256": "54e3637353977e2fe43fbda6681ce91ce280ddea38bc1efea2d9fbc8fa7eb05c"
+    },
+    {
+      "path": "tools/installer-source/Build-Installer.ps1",
+      "bytes": 1834,
+      "sha256": "c0f6eb848b6ddad78a914287f95c22aac2f6832aa6be137faacd071271da082d"
+    },
+    {
+      "path": "tools/installer-source/handoff/HandoffProgram.cs",
+      "bytes": 566,
+      "sha256": "8d3d56cdb0373af9ed6b794ce8e105dab3703e1906b48a56a5f203e90230cd57"
+    },
+    {
+      "path": "tools/installer-source/src/app.manifest",
+      "bytes": 581,
+      "sha256": "c7fe4046853063fbd8538cff3e328b72e586f76593334b516db3228120f7d149"
+    },
+    {
+      "path": "tools/installer-source/src/BundledStory.cs",
+      "bytes": 3246,
+      "sha256": "6cfa9da69ced7bc2b7afea9d5209deb0acf2650f6b10f9cf32eaae68d12f1d10"
+    },
+    {
+      "path": "tools/installer-source/src/ConsoleStartupSettings.cs",
+      "bytes": 4465,
+      "sha256": "c2bd9c5530319fb548aafe80b0dad22e474ada1f152d6709b4335382f75f8290"
+    },
+    {
+      "path": "tools/installer-source/src/ExistingDataRoot.cs",
+      "bytes": 7314,
+      "sha256": "cc3571a82816db57bd88f0a45badf79e7623aa5becbb58d9ec3a90481e63c016"
+    },
+    {
+      "path": "tools/installer-source/src/HostCapabilities.cs",
+      "bytes": 13140,
+      "sha256": "a5e16922b0ba8553e0d91bcd2e1bdac5d9befb44420b506b902158d889279f05"
+    },
+    {
+      "path": "tools/installer-source/src/Installer.Core.cs",
+      "bytes": 45566,
+      "sha256": "d568bff5c81fae08b33e5d37acd09e3be1b02bc9f551db22e6b3de4efbdf7590"
+    },
+    {
+      "path": "tools/installer-source/src/Installer.Form.cs",
+      "bytes": 16004,
+      "sha256": "1e76cf3bf0c9a360126e54084e98733a952aa7cfc3563152a87faf970a0ba8c4"
+    },
+    {
+      "path": "tools/installer-source/src/Installer.Handoff.cs",
+      "bytes": 16340,
+      "sha256": "ce1e37d2c443c7ab8313942d1d4fdca9e980226f43942e80015ea647ce0c8642"
+    },
+    {
+      "path": "tools/installer-source/src/InteropConfiguration.cs",
+      "bytes": 3307,
+      "sha256": "86b85e184014dd2139334416ab1135d1be1819062ebe05e815a343980d69c295"
+    },
+    {
+      "path": "tools/installer-source/src/LegacyEntryRetirement.cs",
+      "bytes": 3368,
+      "sha256": "16bb5d950825ef8afb6d855b0f9cf85cdfbab50cd15637cab5fe8b2df0c376ed"
+    },
+    {
+      "path": "tools/installer-source/src/LoaderPreparation.cs",
+      "bytes": 10054,
+      "sha256": "3112644fdb61270d3b6f5d1552143cf05a7884094ee21de3c27a8b2130c01385"
+    },
+    {
+      "path": "tools/installer-source/src/Network.Diagnostics.cs",
+      "bytes": 13312,
+      "sha256": "0eb6f8d1ef2e1fe46e02bbd06770a2e17555b69f808762b6ff7db18580a0be52"
+    },
+    {
+      "path": "tools/installer-source/src/PersistentStateCompatibility.cs",
+      "bytes": 4992,
+      "sha256": "7ff2c3af9f2fc19561d589db30977a9792603e0b6b4723664ee015c173c92553"
+    },
+    {
+      "path": "tools/installer-source/src/Program.cs",
+      "bytes": 1929,
+      "sha256": "2669df7aab5094a89e10071a9288d1b3a9b67e0e2d8fd35695720556f48c71ca"
+    },
+    {
+      "path": "tools/installer-source/src/ProviderPresets.cs",
+      "bytes": 2090,
+      "sha256": "d6a90fee90e3e8a42671f80029a3d396df9a09a9150346dfc5fbe2ed4db95b6a"
+    },
+    {
+      "path": "tools/installer-source/src/ReflectionWorkCompatibility.cs",
+      "bytes": 18045,
+      "sha256": "84805abd3eb94b7044150972ef173e4742d359a1eba97a3f1fe0afce65691f89"
+    },
+    {
+      "path": "tools/installer-source/src/Setup.Core.cs",
+      "bytes": 33582,
+      "sha256": "61860332445bb92533c10bf8c8b565f1a864c8d4a1f6926dcf24c3293bd05e49"
+    },
+    {
+      "path": "tools/installer-source/src/Setup.FileIdentity.cs",
+      "bytes": 1200,
+      "sha256": "0d7935984cb288c693b088b57b8691cc1982970106b22ada79e94cf3be01269e"
+    },
+    {
+      "path": "tools/installer-source/src/Setup.Form.cs",
+      "bytes": 26818,
+      "sha256": "007c68748a07ec3845df269a6363d08a30cb854b6ec3fcb8fe69fe7bf51e0de1"
+    },
+    {
+      "path": "tools/installer-source/src/StorySetup.cs",
+      "bytes": 5003,
+      "sha256": "30bdffc187701ca5273394df2ca44e7e118eae453c98c4d57acdba3c4d7a905c"
+    },
+    {
+      "path": "tools/installer-source/src/TrustedDownloads.cs",
+      "bytes": 9221,
+      "sha256": "cec7dc3deba6400b6d72a0dc2d45fe227bf7176974c75c5efba7f1e603169949"
+    },
+    {
+      "path": "tools/installer-source/src/Wizard.Core.cs",
+      "bytes": 29600,
+      "sha256": "06993335302e28d07be89cf14808a65eb75ccd9d4202c7e3a66ad3633c35ab1a"
+    },
+    {
+      "path": "tools/installer-source/src/Wizard.Form.cs",
+      "bytes": 29674,
+      "sha256": "034343aaf405779680eff5e765e833e7d8518ceb5685290c0316c4b83e65a798"
+    },
+    {
+      "path": "tools/installer-source/src/Wizard.Planning.cs",
+      "bytes": 5621,
+      "sha256": "cef6499d505d1e9714638704672431796117d25606a4bbd72843186bcaa56d5c"
+    },
+    {
+      "path": "tools/installer-source/src/Wizard.Provisioning.cs",
+      "bytes": 11044,
+      "sha256": "a8b783c30dca99f46644d31d98cc7205d94ce24f7c256b0708631e43f88696c4"
+    },
+    {
+      "path": "tools/installer-source/src/Wizard.Session.cs",
+      "bytes": 3626,
+      "sha256": "1545b9a9122714f0b758845f4953f23acba89c0b98696958c1e56b70023dcd34"
+    },
+    {
+      "path": "tools/setup/install-manifest.json",
+      "bytes": 5346,
+      "sha256": "f1590d8a496eb08c4761a66ddf57e28a574530df0c4fa1d4b731861f4c8ef979"
+    },
+    {
+      "path": "tools/setup/LilithBridge-Handoff.exe.config",
+      "bytes": 219,
+      "sha256": "2188f717db936d99cd37cf9ee0e9b1a2d457bc02efc60d4fb14095e7bc9c281d"
+    },
+    {
+      "path": "tools/setup/LilithBridge-Installer.exe.config",
+      "bytes": 219,
+      "sha256": "2188f717db936d99cd37cf9ee0e9b1a2d457bc02efc60d4fb14095e7bc9c281d"
+    },
+    {
+      "path": "tools/setup/loader-files.json",
+      "bytes": 47222,
+      "sha256": "184d4d8aacfd3bbf224ecaaf548d1c3c1fab7996624d565b69e0839cd1c368ce"
+    },
+    {
+      "path": "tools/setup/model-manifest.json",
+      "bytes": 2083,
+      "sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/INTEGRATION.md",
+      "bytes": 2307,
+      "sha256": "596af364f49b5b11ba137860d0c4602ed74dde024aba7094f3cb34c83ff80172"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/MODEL-ACQUISITION.md",
+      "bytes": 1891,
+      "sha256": "70eff1969c91dc67e58528c3304caf840bccd4c35a933b1cf90854fbc103a908"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/model-manifest.json",
+      "bytes": 2083,
+      "sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/NOTICE-REFERENCES.md",
+      "bytes": 1320,
+      "sha256": "6e66a0e8816a7275d225e44945cf1042d87a3f2b2200b2f1c3fbc88711bc3095"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/README.md",
+      "bytes": 2247,
+      "sha256": "c4d5470cdb6d07066b3ec897b7c47cddbadc693b5058a8c546a743b28e1a3c66"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/semantic_worker.py",
+      "bytes": 8845,
+      "sha256": "6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/Start-Worker.cmd",
+      "bytes": 609,
+      "sha256": "7e11d93dcb658d9762dfb9ff9948bac89e9acc1d3a3ef5bef3e984ff0b459d44"
+    },
+    {
+      "path": "tools/setup/optional/semantic-worker/verify_model_files.py",
+      "bytes": 1425,
+      "sha256": "21b735cc9645b1f90d483a11d11268daf56b701a660751f4cd959160b3aa5a37"
+    },
+    {
+      "path": "tools/setup/optional-recall/probe-fixture/identity.json",
+      "bytes": 192,
+      "sha256": "d27a1cf5149cbb01bfa031a804bdbc68755d320263840165f6bf51e560bfd7ee"
+    },
+    {
+      "path": "tools/setup/optional-recall/probe-fixture/model-manifest.json",
+      "bytes": 2083,
+      "sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17"
+    },
+    {
+      "path": "tools/setup/optional-recall/probe-fixture/semantic_worker.py",
+      "bytes": 8845,
+      "sha256": "6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036"
+    },
+    {
+      "path": "tools/setup/optional-recall/requirements-cpu-win-x64.candidate.lock.txt",
+      "bytes": 8175,
+      "sha256": "c4528f2c10000ece56f46b9378de1525cd30fdfebb635f4c4418a844153f7f88"
+    },
+    {
+      "path": "tools/setup/optional-recall/runtime_setup.py",
+      "bytes": 12435,
+      "sha256": "5845e9ae02464ed2dca09c7eb3b80d1b7be78044303c31180ceeaa1e510e8f0a"
+    },
+    {
+      "path": "tools/setup/optional-recall/synthetic_worker_launcher.py",
+      "bytes": 1396,
+      "sha256": "a7cdcbe8f720053d2d2fb6a49ac524496f2b09d78b4f3b237737bffbb15b381a"
+    },
+    {
+      "path": "tools/setup/optional-recall/verify_local_recall.py",
+      "bytes": 4665,
+      "sha256": "e292ec02a884c48f5ea58acb31d3532f344fdbfc7fd8e81812c831af9d4944f3"
+    },
+    {
+      "path": "tools/setup/optional-recall/verify_runtime.py",
+      "bytes": 7020,
+      "sha256": "bb63a18aeeee311c05e4fdc35bfb96b06533ab27202af9638774cfadc9e8f7de"
+    },
+    {
+      "path": "tools/setup/optional-recall/wheels.lock.json",
+      "bytes": 13814,
+      "sha256": "17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891"
+    },
+    {
+      "path": "tools/setup/story/README.md",
+      "bytes": 3261,
+      "sha256": "fc6473bfe5d01c6d9d4bcf837abc29efaf5e51cb2a0bc39fb94b1fe1316b6b32"
+    },
+    {
+      "path": "tools/setup/story/SOURCE.json",
+      "bytes": 1862,
+      "sha256": "0c28a733af1cd5cb0e7770e717f441c959125301534e8cfe5e3fe4655532bd8d"
+    }
+  ]
+}

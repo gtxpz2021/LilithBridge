@@ -48,8 +48,9 @@ namespace LilithSetup
     }
     public sealed class InstallPlan
     {
-        public string GameRoot, DataRoot, OldPlugin, OldMarker, PayloadHash, ManifestDigest, RetainedDataStamp;
+        public string GameRoot, DataRoot, OldPlugin, OldMarker, PayloadHash, ManifestDigest, RetainedDataStamp, RootStamp;
         public bool CreateMarker, NoChange;
+        public string LegacyEntryStamp;
         public readonly List<string> Changes = new List<string>();
     }
     public sealed class InstallResult
@@ -91,6 +92,7 @@ namespace LilithSetup
             }
             catch { if (held != null) held.Dispose(); throw new SetupException("LBINSTALL_HOST_STOP_GUARD_UNAVAILABLE"); }
         }
+        internal static void PrepareOwnedDataWhileStopped(string game, Action action) { using(Lock(game)) using(HoldStopped(game)) action(); }
         static void CheckPe64(string path)
         {
             using (var f = File.OpenRead(path)) using (var r = new BinaryReader(f))
@@ -107,7 +109,7 @@ namespace LilithSetup
             SetupCore.Require(lines.Length == 1, "LBINSTALL_MARKER_INVALID");
             string value = lines[0].Trim(); if (value.StartsWith("\"") && value.EndsWith("\"") && value.Length >= 2) value = value.Substring(1, value.Length - 2);
             string data = SetupCore.SafePath(value, game); SetupCore.NoReparse(data);
-            SetupCore.Require(SetupCore.Inside(game, data, false), "LBINSTALL_EXISTING_DATA_ROOT_OUTSIDE_GAME_UNSUPPORTED");
+            SetupCore.Require(!SetupCore.Inside(data, game, true), "LBINSTALL_DATA_ROOT_UNSAFE");
             string production = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LilithAI");
             SetupCore.Require(!SetupCore.Inside(production, data, true) && !SetupCore.Inside(data, production, true), "LBINSTALL_PRODUCTION_DATA_REJECTED");
             return data;
@@ -128,20 +130,26 @@ namespace LilithSetup
             string old = FileState(plugin), oldMarker = FileState(marker);
             SetupCore.Require(old == "MISSING" || old == m.PluginSha256 || m.PreviousPluginHashes.Contains(old) || HostCapabilities.IsNamedBridge(plugin), "LBINSTALL_UNKNOWN_EXISTING_PLUGIN_BACK_UP_MANUALLY");
             // Avoid silently switching an existing APPDATA-based installation.
-            SetupCore.Require(old == "MISSING" || oldMarker != "MISSING", "LBINSTALL_EXISTING_INSTALL_NEEDS_EXPLICIT_DATA_MIGRATION");
-            string data = oldMarker == "MISSING" ? Join(game, "LilithBridgeData") : MarkerRoot(game, marker);
+            // Legacy roots are reviewed explicitly and kept at the effective location.
+            var rootReview = ExistingDataRoot.Review(game); ExistingDataRoot.RequireApproved(rootReview);
+            string data = rootReview.Root;
             RetainedDataProof retained = null;
-            if (oldMarker == "MISSING" && (Directory.Exists(data) || File.Exists(data)))
+            if (old == "MISSING" && oldMarker == "MISSING" && (Directory.Exists(data) || File.Exists(data)))
             { retained = RetainedData(game); SetupCore.Require(old == "MISSING" && retained != null && SetupCore.Same(retained.Root, data), "LBINSTALL_EXISTING_DATA_FOLDER_REQUIRES_REVIEW"); }
             string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
             if (env != null) SetupCore.Require(SetupCore.Same(SetupCore.SafePath(env, game), data), "LBINSTALL_ENVIRONMENT_ROOT_CONFLICT");
             CheckDuplicates(Path.GetDirectoryName(plugin), plugin);
-            if (old != m.PluginSha256) ReflectionWorkCompatibility.Check(data, m.PluginSha256);
-            var plan = new InstallPlan { GameRoot = game, DataRoot = data, OldPlugin = old, OldMarker = oldMarker, PayloadHash = m.PluginSha256, ManifestDigest = m.ManifestDigest, RetainedDataStamp = retained == null ? "" : retained.Stamp, CreateMarker = oldMarker == "MISSING", NoChange = old == m.PluginSha256 && oldMarker != "MISSING" };
+            if (old != m.PluginSha256) PersistentStateCompatibility.Check(data, m.PluginSha256);
+            var plan = new InstallPlan { GameRoot = game, DataRoot = data, OldPlugin = old, OldMarker = oldMarker, PayloadHash = m.PluginSha256, ManifestDigest = m.ManifestDigest, RetainedDataStamp = retained == null ? "" : retained.Stamp, RootStamp = rootReview.Stamp, CreateMarker = old == "MISSING" && oldMarker == "MISSING", NoChange = old == m.PluginSha256 };
+            plan.Changes.Add(rootReview.Summary);
             if (retained != null) plan.Changes.Add("继续使用已回退事务保留的配置和记忆目录：" + data);
+            plan.LegacyEntryStamp = LegacyEntryRetirement.Inspect(game);
+            if (plan.LegacyEntryStamp.Length != 0) plan.Changes.Add("Retire recognized legacy launch scripts to local engineering backup; unknown same-name files block before writes.");
             if (plan.NoChange) plan.Changes.Add("版本相同：无需覆盖文件。可直接打开配置器。");
             else { plan.Changes.Add((old == "MISSING" ? "新增 " : "备份并替换 ") + InstallManifest.Plugin); if (plan.CreateMarker) plan.Changes.Add("新增 " + InstallManifest.Marker + " → LilithBridgeData"); plan.Changes.Add("在 .LilithBridge-installer 保留事务记录与旧插件备份"); }
-            plan.Changes.Add("替换前会在阻止游戏重启期间复查未结反思 Work；DLL 备份不包含整套记忆快照。");
+            plan.Changes.Add("替换前会在阻止游戏重启期间复查回执、未结反思 Work、B1 与表达状态；DLL 备份不包含整套记忆快照。");
+            if (old == "c73a3973c4df32fff90a47d5e980637c2607c435e6fee348e21e54941428643b")
+                plan.Changes.Add("现役 .89 的配置和记忆会保留；其旧 DLL 回退尚未覆盖 B1 与生成表达资料，请先保存完整一致备份。");
             return plan;
         }
         static string Transactions(string game) { return Join(game, StateDir + @"\transactions"); }
@@ -244,7 +252,7 @@ namespace LilithSetup
             var f = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             if (f.Length != 0) { f.Dispose(); throw new SetupException("LBINSTALL_UNKNOWN_LOCK_FILE"); } return f;
         }
-        static bool SamePlan(InstallPlan a, InstallPlan b) { return SetupCore.Same(a.GameRoot, b.GameRoot) && a.OldPlugin == b.OldPlugin && a.OldMarker == b.OldMarker && a.PayloadHash == b.PayloadHash && a.ManifestDigest == b.ManifestDigest && a.RetainedDataStamp == b.RetainedDataStamp && SetupCore.Same(a.DataRoot, b.DataRoot); }
+        static bool SamePlan(InstallPlan a, InstallPlan b) { return a.RootStamp == b.RootStamp && a.LegacyEntryStamp == b.LegacyEntryStamp && SetupCore.Same(a.GameRoot, b.GameRoot) && a.OldPlugin == b.OldPlugin && a.OldMarker == b.OldMarker && a.PayloadHash == b.PayloadHash && a.ManifestDigest == b.ManifestDigest && a.RetainedDataStamp == b.RetainedDataStamp && SetupCore.Same(a.DataRoot, b.DataRoot); }
         public static InstallResult Install(InstallManifest manifest, InstallPlan approved, bool confirm)
         { return InstallInternal(manifest, approved, confirm, null, false); }
         // Test hook stays internal: injected faults cannot be requested by user CLI.
@@ -252,13 +260,22 @@ namespace LilithSetup
         {
             SetupCore.Require(confirm && approved != null, "LBINSTALL_REVIEW_AND_CONFIRM_FIRST");
             SetupCore.Require(SamePlan(approved, Inspect(manifest, approved.GameRoot)), "LBINSTALL_TARGET_CHANGED_RECHECK");
-            if (approved.NoChange) return new InstallResult { NoChange = true };
+            if (approved.NoChange) {
+                using (Lock(approved.GameRoot)) {
+                    SetupCore.Require(SamePlan(approved, Inspect(manifest, approved.GameRoot)), "LBINSTALL_TARGET_CHANGED_RECHECK");
+                    using (HoldStopped(approved.GameRoot)) LegacyEntryRetirement.Retire(approved.GameRoot, approved.LegacyEntryStamp, null);
+                    return new InstallResult { NoChange = true };
+                }
+            }
             string journal = null; bool promoted = false;
             using (Lock(approved.GameRoot))
             {
                 SetupCore.Require(SamePlan(approved, Inspect(manifest, approved.GameRoot)), "LBINSTALL_TARGET_CHANGED_RECHECK");
                 using (HoldStopped(approved.GameRoot))
                 {
+                // Entry retirement is durable and deliberately excluded from DLL rollback.
+                // A failed install/retry must never republish a retired launcher.
+                LegacyEntryRetirement.Retire(approved.GameRoot, approved.LegacyEntryStamp, null);
                 string id = Guid.NewGuid().ToString("N"), destination = Join(Transactions(approved.GameRoot), id);
                 string staging = Join(approved.GameRoot, StateDir + @"\staging"); Directory.CreateDirectory(staging); Directory.CreateDirectory(Transactions(approved.GameRoot));
                 string folder = Join(staging, id); Directory.CreateDirectory(folder);
@@ -287,11 +304,11 @@ namespace LilithSetup
                     if (checkpoint != null) checkpoint("prepared");
                     string liveMarker = Join(approved.GameRoot, InstallManifest.Marker);
                     SetupCore.Require(FileState(liveMarker) == approved.OldMarker, "LBINSTALL_TARGET_CHANGED_RECHECK");
-                    string liveData = approved.CreateMarker ? Join(approved.GameRoot, "LilithBridgeData") : MarkerRoot(approved.GameRoot, liveMarker);
+                    string liveData = approved.CreateMarker ? Join(approved.GameRoot, "LilithBridgeData") : ExistingDataRoot.Require(approved.GameRoot);
                     string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
                     SetupCore.Require(SetupCore.Same(liveData, approved.DataRoot)
                         && (env == null || SetupCore.Same(SetupCore.SafePath(env, approved.GameRoot), liveData)), "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
-                    ReflectionWorkCompatibility.Check(liveData, approved.PayloadHash);
+                    PersistentStateCompatibility.Check(liveData, approved.PayloadHash);
                     if (checkpoint != null) checkpoint("work-checked");
                     j["phase"] = "Applying"; WriteJournal(journal, j);
                     foreach (int i in OwnedFileOrder(files.ToArray(), true))
@@ -332,12 +349,11 @@ namespace LilithSetup
             if (before == "MISSING") return "remove-plugin-keep-data";
             if (FileState(Join(game, InstallManifest.Plugin)) == before) return "already-before";
             string marker = Join(game, InstallManifest.Marker);
-            SetupCore.Require(FileState(marker) != "MISSING", "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
-            string data = MarkerRoot(game, marker), recorded = DataJson.Get(j, "data_root") as string;
+            string data = ExistingDataRoot.Require(game), recorded = DataJson.Get(j, "data_root") as string;
             SetupCore.Require(recorded != null && SetupCore.Same(SetupCore.SafePath(recorded, null), data), "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
             string env = Environment.GetEnvironmentVariable("LILITH_BRIDGE_DATA_DIR");
             if (env != null) SetupCore.Require(SetupCore.Same(SetupCore.SafePath(env, game), data), "LBINSTALL_WORK_DATA_ROOT_UNKNOWN");
-            return data + "|" + ReflectionWorkCompatibility.Check(data, before);
+            return data + "|" + PersistentStateCompatibility.Check(data, before);
         }
         static void RestoreJournal(string game, string path)
         {
@@ -419,7 +435,7 @@ namespace LilithSetup
                     changes.Add((now == before ? "保持（已是安装前状态） " : before == "MISSING" ? "删除本次新增文件 " : "恢复安装前备份 ") + target + "；目标摘要：" + (before == "MISSING" ? "不存在" : before));
                 }
             }
-            changes.Add("仅保护新入口的未结反思 Work 兼容；DLL 备份不是整套记忆快照。首次安装回退只移除插件并保留数据。");
+            changes.Add("仅回退插件与标记，并复查目标 DLL 的资料读取能力；DLL 备份不是整套记忆快照。首次安装回退只移除插件并保留数据。");
             return new RecoveryPlan(game, pendingOnly, SetupCore.Hash(Utf8.GetBytes(stamp.ToString())), selected, changes.ToArray());
         }
         internal static void RequireSameRecoveryPlan(RecoveryPlan approved, RecoveryPlan fresh)
@@ -462,7 +478,12 @@ namespace LilithSetup
             const string workRollback = "LBINSTALL_RECOVERY_NEEDED_NO_OTHER_FILES_OVERWRITTEN:LBINSTALL_UNFINISHED_WORK_TARGET_UNVERIFIED:RETAINED_PLUGIN_SHA256:";
             if (code.StartsWith(workRollback, StringComparison.Ordinal)) return "安装未完成，旧 DLL 尚无经核验的 Work 恢复能力，自动回退被拒绝。当前保留本次新 DLL（SHA256：" + code.Substring(workRollback.Length) + "），未退回旧版；数据标记、Work 和中断事务记录仍保留。请保留一致备份并核对。";
             if (code.Contains("UNFINISHED_WORK_TARGET_UNVERIFIED")) return "检测到未完成反思，目标 DLL 尚无经核验的 Work 恢复能力。本次停止替换并保留文件。请使用兼容版本处理；关闭反思或空响应不等于已完成，不要手动删改回执。";
+            if (code.Contains("RECEIPT_READER_UNSUPPORTED")) return "反思回执要求未识别的数据读取协议。本次停止替换并保留原文件；不要删除 reader 字段或改成旧数字格式。";
+            if (code.Contains("RECEIPT_TARGET_UNVERIFIED")) return "目标 DLL 尚无经核验的新回执读取能力。本次停止替换并保留数据；旧 DLL 备份不等于可读取新版资料。";
+            if (code.Contains("PENDING_INTENTS_REQUIRE_REVIEW") || code.Contains("IMPORTED_TRANSFERS_REQUIRE_REVIEW")) return "反思记录仍有待处理意图或已导入转移状态，当前安装器尚未验证其迁移。本次保留文件并停止替换；Work 为空不等于这些状态可以忽略，请勿清空回执。";
             if (code.Contains("WORK_STATE_UNKNOWN") || code.Contains("WORK_DATA_ROOT_UNKNOWN")) return "无法可靠判定实际数据目录中的反思回执（目录不明、权限不足、损坏或未知格式）。本次停止替换并保留文件，请先保留一致备份并核对；不要把未知状态当作无未结工作。";
+            if (code.Contains("B1_TARGET_UNVERIFIED") || code.Contains("NEW_DATA_TARGET_UNVERIFIED")) return "实际数据包含目标 DLL 尚未验证的 B1 或表达记录格式，本次保留当前文件并停止替换。请从升级前一致备份规划完整回退，不要只换旧 DLL。";
+            if (code.Contains("DATA_STATE_UNKNOWN") || code.Contains("DATA_TRANSFER_PENDING")) return "数据格式、事务状态或读取权限需要核对，本次停止替换并保留数据。请保留一致备份，不要删改数据库、日志或转移锁。";
             if (code.Contains("HOST_STOP_GUARD_UNAVAILABLE")) return "无法在整个替换期间阻止所选游戏重新启动。请正常退出游戏并关闭占用程序后重试；本次未替换插件。";
             if (code.Contains("COMPATIBILITY_NOT_VERIFIED")) return "当前包尚无经核对的游戏/依赖指纹，安装已禁用。维护者需先完成隔离兼容验证。";
             if (code.Contains("DEPENDENCY_MISSING")) return "缺少依赖：" + code.Split(':').Last() + "。请按该游戏经验证的 BepInEx IL2CPP 安装说明补齐，并生成匹配的 interop 后重检；此原型不下载或分发依赖。";

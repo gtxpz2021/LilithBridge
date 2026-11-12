@@ -48,7 +48,7 @@ internal sealed partial class DeepSeekClient
             stage = "shape";
             string? shapeFailure = ReflectionResponseShape.RejectCode(doc.RootElement);
             if (shapeFailure != null) { code = shapeFailure; return null; }
-            var result = new ReflectionResult();
+            var result = new ReflectionResult { SelectionSnapshot = envelope.SelectionSnapshot };
             stage = "note";
             if (doc.RootElement.TryGetProperty("note", out JsonElement note) && note.ValueKind == JsonValueKind.Object)
             {

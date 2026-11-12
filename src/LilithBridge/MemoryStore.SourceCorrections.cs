@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace LilithBridge;
@@ -8,9 +9,12 @@ namespace LilithBridge;
 internal sealed partial class MemoryStore
 {
     private sealed record RawCorrection(string OldFragment, string Source);
-    private readonly Dictionary<string,List<string>> _readSourceCorrections=new(StringComparer.Ordinal);
-    private readonly Dictionary<string,List<string>> _readPossibleSourceCorrections=new(StringComparer.Ordinal);
+    private Dictionary<string,List<string>> _readSourceCorrections=new(StringComparer.Ordinal);
+    private Dictionary<string,List<string>> _readPossibleSourceCorrections=new(StringComparer.Ordinal);
     private string _rawCorrectionReadSignature="";
+    private sealed record RawCorrectionArchiveView(ExperienceValidationView Archive,string OverlaySignature,
+        Dictionary<string,List<string>> Exact,Dictionary<string,List<string>> Possible);
+    private RawCorrectionArchiveView? _rawCorrectionArchiveView;
 
     // Complete old words identify a source; a fragment only discovers candidates.
     // Never drop a logical operator or infer scope to change current eligibility.
@@ -77,12 +81,43 @@ internal sealed partial class MemoryStore
             return new(true,"source_corrected","已连接完整旧原话与用户更正，保留原文；这不证明新说法为事实。",link.RecallId,link.Revision,Match:"exact_complete_utterance",Candidates:1,ContinueDialogue:true);
         }
     }
-    private void BuildRawSourceCorrectionReadView()
+    private static bool IsRawCorrectionUser(MemoryTurn t)=>t.Role=="user"&&t.Origin=="user"&&t.DeliveryState=="received";
+    private void BuildRawSourceCorrectionReadView(ExperienceValidationView? archive=null)
     {
-        var turns=_b1ReadTurns.Values.Where(t=>t.Role=="user"&&t.Origin=="user"&&t.DeliveryState=="received").ToList();
-        string signature=B1Hash(string.Join("|",turns.OrderBy(t=>t.EventId,StringComparer.Ordinal).Select(t=>t.EventId+":"+t.Text)));
-        if(signature==_rawCorrectionReadSignature)return;_rawCorrectionReadSignature=signature;
-        _readSourceCorrections.Clear();_readPossibleSourceCorrections.Clear();
+        List<MemoryTurn> turns;
+        string signature;
+        if(archive!=null)
+        {
+            // Only the small mutable overlay needs a content key. Include a
+            // non-user override that shadows an archive user: filtering users
+            // before merging would incorrectly resurrect that original turn.
+            signature=JsonSerializer.Serialize(_b1ReadTurns.Where(pair=>IsRawCorrectionUser(pair.Value)
+                    ||archive.TryGetUnique(pair.Value.EventId,out var raw)&&B1Kind(raw)==B1Kind(pair.Value)&&IsRawCorrectionUser(raw))
+                .OrderBy(pair=>pair.Key,StringComparer.Ordinal).Select(pair=>new {pair.Key,
+                    User=IsRawCorrectionUser(pair.Value),pair.Value.EventId,pair.Value.Text,pair.Value.Timestamp}));
+            if(_rawCorrectionArchiveView is {} cached&&ReferenceEquals(cached.Archive,archive)&&cached.OverlaySignature==signature)
+            {
+                _readSourceCorrections=cached.Exact;_readPossibleSourceCorrections=cached.Possible;
+                _rawCorrectionReadSignature="";return;
+            }
+            // Preserve archive-first key order and last-overlay precedence of
+            // the ordinary GroupBy(B1Kind+id).Last() resolver view.
+            turns=archive.Turns.Select(raw=>_b1ReadTurns.GetValueOrDefault(B1Kind(raw)+":"+raw.EventId)??raw)
+                .Concat(_b1ReadTurns.Values.Where(t=>!archive.TryGetUnique(t.EventId,out var raw)||B1Kind(raw)!=B1Kind(t)))
+                .Where(IsRawCorrectionUser).ToList();
+            _rawCorrectionReadSignature="";
+        }
+        else
+        {
+            turns=_b1ReadTurns.Values.Where(IsRawCorrectionUser).ToList();
+            signature=B1Hash(JsonSerializer.Serialize(turns.OrderBy(t=>t.EventId,StringComparer.Ordinal)
+                .Select(t=>new {t.EventId,t.Text,t.Timestamp})));
+            if(signature==_rawCorrectionReadSignature)return;
+            _rawCorrectionReadSignature=signature;
+        }
+        // Published derived maps contain ids only, never borrowed records.
+        // Replace rather than clear: a retained content view stays immutable.
+        _readSourceCorrections=new(StringComparer.Ordinal);_readPossibleSourceCorrections=new(StringComparer.Ordinal);
         void Add(Dictionary<string,List<string>> map,string old,string later){if(!map.TryGetValue(old,out var list))map[old]=list=new();list.Add(later);}
         foreach(var input in turns)
         {
@@ -92,6 +127,7 @@ internal sealed partial class MemoryStore
             foreach(var possible in RawCorrectionTargets(input,intent,turns,false))
                 if(exact.Count!=1||possible.EventId!=exact[0].EventId)Add(_readPossibleSourceCorrections,possible.EventId,input.EventId);
         }
+        if(archive!=null)_rawCorrectionArchiveView=new(archive,signature,_readSourceCorrections,_readPossibleSourceCorrections);
     }
     private bool HasRawSourceCorrection(string id)=>_readSourceCorrections.TryGetValue(id,out var later)&&later.Count>0;
     private bool IsExactReadCorrection(string old,string later)=>_readSourceCorrections.TryGetValue(old,out var ids)&&ids.Contains(later);

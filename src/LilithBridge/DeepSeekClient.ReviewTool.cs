@@ -12,7 +12,10 @@ internal sealed record ReviewToolOutcome(string Json, int ModelRequests, int Pro
     bool SuppliesPriorThought, IReadOnlyList<MemoryTurn>? SourceRecords = null,
     IReadOnlyList<ReviewMaterialView>? SourceViews = null, IReadOnlyList<DaySourceDependency>? SourceVersions = null,
     bool IsControlReceipt = false, MethodSource[]? DerivedMethodSources = null, bool MethodSourcesTracked = false,
-    ReviewSourceSnapshot? SourceSnapshot = null);
+    ReviewSourceSnapshot? SourceSnapshot = null, string ReadDataVersion = "", ChatHistoryPacket? ChatHistory = null, LegacyArchivePacket? LegacyArchive = null, MethodOffer? LegacyOffer = null, DayArtifactReadPacket? DayArtifacts = null,
+    LogicalMessageReadPacket? LogicalMessage = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] GeneratedReplySnapshot? GeneratedReply = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] ContextDiscoverySnapshot? ContextDiscovery = null);
 
 // The child payload's immutable permission footprint, independent of main-owner
 // cancellation. An authorized read may finish under its own operation lifetime.
@@ -24,59 +27,120 @@ internal sealed class ReviewSourceSnapshot
     private readonly string _text,_query,_root,_session,_configRoot;
     private readonly Func<BridgeConfig> _configuration;
     private readonly ReviewProcess? _operation;
+    // A new execution grant never extends the absolute lease of inherited data.
+    private readonly DateTimeOffset? _operationDeadline;
     private readonly bool _authorized,_methodTracked;
     private readonly MethodCapabilityOwner? _capability;
     private readonly long _generation;
     private readonly SessionReadMethodOwner? _methods;
     private readonly long? _epoch;
     private readonly ReviewSourceSnapshot? _nextTransfer;
+    private readonly Func<bool>[] _workChecks;
+    private readonly ChatHistoryPacket? _chatHistory;
+    private readonly LegacyArchivePacket? _legacyArchive;
+    private readonly DayArtifactReadPacket? _dayArtifacts;
+    private readonly B1ExactReviewPage? _exactB1;
+    private readonly LogicalMessageReadPacket? _logicalMessage;
+    private readonly ContextDiscoverySnapshot? _contextDiscovery;
+    private readonly DialogueRequest? _historyOwner;
+    // Archive discovery shares the existing read-only logical-material dispatch
+    // footprint without activating a new history budget or writable aliases.
+    internal bool HasLogicalMessage => _logicalMessage != null || _contextDiscovery != null || _nextTransfer?.HasLogicalMessage == true;
+    internal bool HasExactB1=>_exactB1!=null||_nextTransfer?.HasExactB1==true;
+    internal bool HasDayArtifacts=>_dayArtifacts!=null||_nextTransfer?.HasDayArtifacts==true;
+    internal bool HasChatHistory => _chatHistory != null || _legacyArchive != null || _dayArtifacts != null || _nextTransfer?.HasChatHistory == true;
     internal ReviewSourceSnapshot(BridgeConfig config,DialogueRequest request,MemoryStore store,
-        string text,IReadOnlyList<MemoryTurn> records,MethodSource[] derived,MethodOffer? offer)
+        string text,IReadOnlyList<MemoryTurn> records,MethodSource[] derived,MethodOffer? offer,ChatHistoryPacket? chatHistory=null,LegacyArchivePacket? legacyArchive=null,DayArtifactReadPacket? dayArtifacts=null,B1ExactReviewPage? exactB1=null,LogicalMessageReadPacket? logicalMessage=null,ContextDiscoverySnapshot? contextDiscovery=null)
     {
         _store=store;_derived=derived.Distinct().ToArray();_records=records.Select(t=>t.Copy()).ToArray();
         _text=text;_query=request.ReviewCurrentText;_root=DataPaths.Root();
         _session=store.ReviewSessionIdentity;_configRoot=config.DataDirectory;
         _configuration=request.ReviewHandoff?.Configuration??(()=>config);
-        _operation=request.ReviewBudget;_authorized=request.ReviewAuthorizedTurn;
+        _operation=request.ReviewBudget;_operationDeadline=_operation?.Deadline;_authorized=request.ReviewAuthorizedTurn;
+        // Frozen before this result exists; later Take must retain these inputs.
+        _nextTransfer=_operation?.InheritedSources;
         _methodTracked=offer!=null||_derived.Length>0;
         _capability=request.MethodCapability;_generation=offer?.CapabilityGeneration??request.MethodCapabilityGeneration;
         _methods=offer?.Owner??request.MethodOwner;_epoch=request.MethodProtocolEpoch??offer?.Epoch;
+        _workChecks=request.StorySupplyChecks.ToArray();_chatHistory=chatHistory;_legacyArchive=legacyArchive;_dayArtifacts=dayArtifacts;_exactB1=exactB1;_logicalMessage=logicalMessage;_contextDiscovery=contextDiscovery;_historyOwner=chatHistory==null&&legacyArchive==null&&dayArtifacts==null&&logicalMessage==null&&contextDiscovery==null?null:request;
     }
-    private ReviewSourceSnapshot(ReviewSourceSnapshot origin,DialogueRequest request,string text,ReviewSourceSnapshot? next)
+    private ReviewSourceSnapshot(ReviewSourceSnapshot origin,DialogueRequest request,string text,ReviewSourceSnapshot? next,
+        ReviewProcess? operation,DateTimeOffset? deadline)
     {
         _store=origin._store;_derived=origin._derived;_records=origin._records;
         _text=text;_query=request.ReviewCurrentText;_root=origin._root;_session=origin._session;_configRoot=origin._configRoot;
-        _configuration=origin._configuration;_operation=origin._operation;_authorized=request.ReviewAuthorizedTurn;
+        _configuration=origin._configuration;_operation=operation;_operationDeadline=deadline;_authorized=request.ReviewAuthorizedTurn;
         _methodTracked=origin._methodTracked;_capability=origin._capability;_generation=origin._generation;
         _methods=origin._methods;_epoch=origin._epoch;_nextTransfer=next;
+        _workChecks=origin._workChecks;_chatHistory=origin._chatHistory;_legacyArchive=origin._legacyArchive;_dayArtifacts=origin._dayArtifacts;_exactB1=origin._exactB1;_logicalMessage=origin._logicalMessage;_contextDiscovery=origin._contextDiscovery;_historyOwner=origin._chatHistory==null&&origin._legacyArchive==null&&origin._dayArtifacts==null&&origin._logicalMessage==null&&origin._contextDiscovery==null?null:request;
     }
-    // Retained Take is a new supply, not acceptance of the old child response.
-    // Rebind only the original current-user query; retain every step's original
-    // source footprint, operation deadline, capability generation and epoch.
+    private static ReviewSourceSnapshot[] Flatten(IEnumerable<ReviewSourceSnapshot?> snapshots)
+    {
+        var result=new List<ReviewSourceSnapshot>();
+        var seen=new HashSet<ReviewSourceSnapshot>(ReferenceEqualityComparer.Instance);
+        foreach(var head in snapshots)
+            for(var step=head;step!=null&&seen.Add(step);step=step._nextTransfer)result.Add(step);
+        return result.ToArray();
+    }
+    internal bool UsesOperation(ReviewProcess operation)=>Flatten(new[]{this}).Any(s=>ReferenceEquals(s._operation,operation));
+    // Only the current owner's already supplied dependency chain is copied.
+    // Callers must validate the old chain and serialize publication with Stop.
+    internal static ReviewSourceSnapshot? ForReplacement(IEnumerable<ReviewSourceSnapshot> snapshots,
+        DialogueRequest request,ReviewProcess previous,ReviewProcess next)
+    {
+        ReviewSourceSnapshot? result=null;
+        foreach(var snapshot in Flatten(snapshots).Reverse())
+        {
+            bool replace=ReferenceEquals(snapshot._operation,previous);
+            var operation=replace?next:snapshot._operation;
+            var deadline=snapshot._operationDeadline??snapshot._operation?.Deadline;
+            if(replace&&(!deadline.HasValue||next.Deadline<deadline.Value))deadline=next.Deadline;
+            result=new(snapshot,request,snapshot._text,result,operation,deadline);
+        }
+        return result;
+    }
+    // Retained Take is a new supply. Flatten every inherited link, including
+    // dependencies of a later derived result, rather than dropping nested tails.
     internal static ReviewSourceSnapshot? ForTransfer(IEnumerable<ReviewSourceSnapshot?> snapshots,DialogueRequest request,string text)
     {
         ReviewSourceSnapshot? result=null;
-        foreach(var snapshot in snapshots.Where(s=>s!=null).Reverse())result=new(snapshot!,request,text,result);
+        foreach(var snapshot in Flatten(snapshots).Reverse())
+            result=new(snapshot,request,text,result,snapshot._operation,snapshot._operationDeadline);
         return result;
     }
     internal bool IsPermitted()=>TryUse(()=>true);
-    internal bool TryUse(Func<bool> use)
+    internal bool TryUse(Func<bool> use)=>TryUseMany(new[]{this},use);
+    internal static bool TryUseMany(IEnumerable<ReviewSourceSnapshot> snapshots,Func<bool> use)
+        =>PrepareUseMany(snapshots)(use);
+    internal static Func<Func<bool>,bool> PrepareUseMany(IEnumerable<ReviewSourceSnapshot> snapshots)
     {
         // Configuration publication can take the capability lock. Resolve every
         // transfer step's live config before entering any source/capability lock.
-        var checks=new List<(ReviewSourceSnapshot Snapshot,BridgeConfig Config)>();
-        for(ReviewSourceSnapshot? step=this;step!=null;step=step._nextTransfer)
-            checks.Add((step,step._configuration()));
-        bool Apply(int index)=>index==checks.Count?use()
-            :checks[index].Snapshot.TryUsePrepared(checks[index].Config,()=>Apply(index+1));
-        return Apply(0);
+        var checks=new List<(ReviewSourceSnapshot Snapshot,BridgeConfig Config,bool WorkAllowed)>();
+        foreach(var step in Flatten(snapshots))
+            checks.Add((step,step._configuration(),step.WorkPermitted()));
+        return use=> {
+            bool Apply(int index)=>index==checks.Count?use()
+                :checks[index].Snapshot.TryUsePrepared(checks[index].Config,checks[index].WorkAllowed,()=>Apply(index+1));
+            return Apply(0);
+        };
     }
-    private bool TryUsePrepared(BridgeConfig config,Func<bool> use)
+    private bool WorkPermitted()
+    {
+        try { return _workChecks.All(check=>check()); }
+        catch { return false; }
+    }
+    private bool TryUsePrepared(BridgeConfig config,bool workAllowed,Func<bool> use)
     {
         // Operation stop/deadline/scope remain local. No parent IsCancelled gate.
-        bool ScopePermitted()=>_root==DataPaths.Root()&&_session==_store.ReviewSessionIdentity
+        bool ScopePermitted()=>workAllowed&&_root==DataPaths.Root()&&_session==_store.ReviewSessionIdentity
             &&_configRoot==config.DataDirectory
+            &&(_chatHistory==null&&_legacyArchive==null&&_dayArtifacts==null||_capability?.Permits(_generation)==true)
+            &&(_historyOwner==null || !_historyOwner.IsCancelled
+                &&ReferenceEquals(_historyOwner.ReviewStore,_store)&&_historyOwner.ReviewSessionIdentity==_session
+                &&_historyOwner.ReviewDataRoot==_root&&_historyOwner.ReviewConfigRoot==_configRoot)
             &&(_operation==null||!_operation.Token.IsCancellationRequested&&DateTimeOffset.UtcNow<_operation.Deadline)
+            &&(!_operationDeadline.HasValue||DateTimeOffset.UtcNow<_operationDeadline.Value)
             &&ReviewContextModes.Normalize(config.ReviewContextMode)!=ReviewContextModes.Off
             &&(ReviewContextModes.Normalize(config.ReviewContextMode)==ReviewContextModes.OnDemand||_authorized)
             &&(!_methodTracked||config.SessionReadMethodsEnabled
@@ -86,8 +150,10 @@ internal sealed class ReviewSourceSnapshot
         {
             // Source lock -> existing short capability boundary; neither waits for
             // the returned HTTP task. Publication cannot cross check/start here.
-            bool Apply()=>ScopePermitted()&&use();
-            return _methodTracked&&_capability!=null?_capability.WithBoundary(Apply):Apply();
+            bool QualifiedUse()=>_contextDiscovery!=null?_store.TryUseContextDiscovery(_contextDiscovery,_query,config,use):_exactB1!=null?_store.TryUseExactB1(_exactB1,_query,config,use):_dayArtifacts!=null?_store.TryUseDayArtifacts(_dayArtifacts,_query,config,use):_legacyArchive!=null?_store.TryUseLegacyArchive(_legacyArchive,_query,config,use):_chatHistory==null?use():_store.TryUseChatRelationshipHistory(_chatHistory,_query,config,use);
+            bool Apply()=>ScopePermitted()&&(_logicalMessage==null?QualifiedUse():
+                _store.TryUseLogicalMessageRead(_logicalMessage,_query,config,QualifiedUse));
+            return (_methodTracked||_chatHistory!=null||_legacyArchive!=null||_dayArtifacts!=null)&&_capability!=null?_capability.WithBoundary(Apply):Apply();
         });
     }
 }
@@ -109,7 +175,8 @@ internal sealed partial class DeepSeekClient
             &&owner.MethodSourcesPermitted(derived,request);
         request.ReviewBudget?.CaptureDerivedSources(derived);
         var outcome=await ExecuteReviewToolCoreAsync(config,request,call,owner,token,historyProjection,derived,offer).ConfigureAwait(false);
-        return outcome with {DerivedMethodSources=derived,MethodSourcesTracked=tracked};
+        return outcome with {DerivedMethodSources=derived,MethodSourcesTracked=tracked&&call.Review?.Mode is not ("discover" or "history" or "archive" or "artifact" or "message")
+            &&call.Review?.SourceRefs.Any(r=>r.StartsWith("b1:",StringComparison.Ordinal))!=true};
     }
     /// <summary>
     /// Executes one already-validated review_context call. Materials are read
@@ -122,8 +189,28 @@ internal sealed partial class DeepSeekClient
         HistoryProjectionSummary historyProjection,MethodSource[] derived,MethodOffer? offer)
     {
         ReviewToolArgs args = call.Review!;
+        if(args.Mode=="discover")return await ExecuteContextDiscoveryAsync(config,request,args,owner,token,derived,offer).ConfigureAwait(false);
+        if(args.SourceRefs.Any(r=>r.StartsWith("b1:",StringComparison.Ordinal)))
+        {
+            token.ThrowIfCancellationRequested();
+            if(args.Mode!="read" || args.SourceRefs.Count!=1 || args.IncludePriorThought)
+                return ReviewProcess.Empty("invalid_arguments","b1_exact_read_requires_single_reference_and_no_prior_thought");
+            if(!request.ReviewToolEnabled || !ReferenceEquals(request.ReviewStore,owner)
+                ||request.ReviewSessionIdentity!=owner.ReviewSessionIdentity||request.ReviewDataRoot!=DataPaths.Root()
+                ||request.ReviewConfigRoot!=config.DataDirectory)
+                return ReviewProcess.Empty("unavailable","b1_exact_owner_mismatch");
+            var page=owner.ReadExactB1(args.SourceRefs[0][3..],args.Offset,request.ReviewCurrentText,config);
+            var snapshot=new ReviewSourceSnapshot(config,request,owner,args.Question,Array.Empty<MemoryTurn>(),derived,offer,exactB1:page);
+            if(!snapshot.IsPermitted())return ReviewProcess.Empty("unavailable","source_changed");
+            return new(page.Json,0,0,0,0,0,0,false,SourceSnapshot:snapshot,ReadDataVersion:page.Fingerprint);
+        }
+        if(args.Mode=="artifact")return ExecuteDayArtifacts(config,request,args,owner,token,derived,offer);
+        if(args.Mode=="archive")return ExecuteLegacyArchive(config,request,args,owner,token,derived,offer);
+        if(args.Mode=="history")return ExecuteChatRelationshipHistory(config,request,args,owner,token,derived,offer);
+        if(args.Mode=="message")return ExecuteLogicalMessageRead(config,request,args,owner,token,derived,offer);
         int promptTokens = 0, completionTokens = 0, reasoningTokens = 0, cacheHits = 0, cacheMisses = 0;
         int modelRequests = 0;
+        string beforeRead = args.Mode == "read" ? owner.ReviewReadDataVersion() : "";
         ReviewSourceSnapshot? sourceSnapshot=null;
         try
         {
@@ -133,6 +220,7 @@ internal sealed partial class DeepSeekClient
             int effectiveMax = Math.Clamp(config.ReviewMaxRecords, 1, ReviewContext.MaxRecordsLimit);
             bool moreRecords = false;
             SemanticRecallResult? discovery=null;
+            LogicalMessageReadPacket? logicalMessages = null;
             if (args.SourceRefs.Count > 0)
             {
                 var ids = new List<string>();
@@ -156,9 +244,17 @@ internal sealed partial class DeepSeekClient
                         SemanticDomain.Events,deadline,token).ConfigureAwait(false);
                 }
                 records = owner.GetReviewCandidates(query, effectiveMax + 1,semantic:discovery);
-                moreRecords = records.Count > effectiveMax;
-                if (moreRecords) records = records.Take(effectiveMax).ToList();
-                records=records.OrderBy(t=>t.Sequence).ToList();
+                if (records is LogicalDialogueSelection selection)
+                {
+                    moreRecords = selection.Units.Count > effectiveMax;
+                    logicalMessages = owner.CaptureLogicalMessageSupply(records, request.ReviewCurrentText, config);
+                    if (logicalMessages == null) return ReviewProcess.Empty("unavailable", "logical_message_membership_changed");
+                    logicalMessages = logicalMessages.ProjectBodies(selection.Units.Take(effectiveMax).Select(unit => unit.Key).ToArray());
+                    logicalMessages = logicalMessages with { Pages = logicalMessages.Pages.OrderBy(page => page.Unit.FirstSequence).ToArray() };
+                    records = logicalMessages.ActualSourceRecords.OrderBy(turn => turn.Sequence).ToArray();
+                }
+                else if (records.Count > 0)
+                    return ReviewProcess.Empty("unavailable", "logical_query_selection_identity_unavailable");
             }
             if (args.Offset > 0 && records.Count > 1)
             {
@@ -168,15 +264,25 @@ internal sealed partial class DeepSeekClient
 
             var sourceVersions = owner.CaptureReviewSourceVersions(records);
             PreparationTiming.Current?.Value("semantic_review_supplied",records.Count);
+            if (logicalMessages != null) PreparationTiming.Current?.Value("semantic_review_supplied_messages",logicalMessages.Pages.Count(p=>p.BodyIncluded));
             request.ReviewBudget?.CaptureSources(records);
-            sourceSnapshot=new(config,request,owner,args.Question,records,derived,offer);
+            sourceSnapshot=new(config,request,owner,args.Question,records,derived,offer,logicalMessage:logicalMessages);
             if(!sourceSnapshot.IsPermitted())
                 return ReviewProcess.Empty("unavailable","source_changed") with {SourceSnapshot=sourceSnapshot};
             var views = new List<object>();
             var materialViews = new List<ReviewMaterialView>();
             var sources = new List<object>();
             int truncatedRecords = 0;
-            foreach (MemoryTurn turn in records)
+            if (logicalMessages != null)
+            {
+                materialViews.AddRange(logicalMessages.ActualSourceViews);
+                views.AddRange(logicalMessages.Pages.Select(page => LogicalMessageProjection.Message(page.Unit,
+                    page.Offset, page.Text, page.BodyIncluded, page.NextOffset, page.NextCursor, page.SourceViews,
+                    writable: true, revisionAssociations: logicalMessages.SourceContexts.Where(p => p.Value.Length > 0).Select(p => p.Key).ToArray())));
+                sources.AddRange(records.Select(turn => (object)new { id = ReviewContext.ShortId(turn),
+                    speaker = turn.Role == "user" ? "player" : "lilith", time = turn.Timestamp.ToString("O"), turn = turn.Sequence }));
+            }
+            else foreach (MemoryTurn turn in records)
             {
                 string id = ReviewContext.ShortId(turn);
                 string cleaned = ReviewContext.Clean(turn.Text);
@@ -302,7 +408,7 @@ internal sealed partial class DeepSeekClient
                         prior_thought_status = "not_supplied",
                         truncated = truncatedRecords > 0
                     }), modelRequests, promptTokens, completionTokens, reasoningTokens, cacheHits, cacheMisses,
-                        false, records, materialViews, sourceVersions,SourceSnapshot:sourceSnapshot);
+                        false, records, materialViews, sourceVersions,SourceSnapshot:sourceSnapshot,LogicalMessage:logicalMessages);
                 }
                 note = ReviewContext.Truncate(ReviewContext.Clean(text), ReviewContext.MaxNoteChars);
             }
@@ -311,8 +417,10 @@ internal sealed partial class DeepSeekClient
             {
                 status,
                 mode = args.Mode,
+                read_unit = logicalMessages != null ? "logical_message" : "exact_raw_record",
                 question = ReviewContext.Truncate(args.Question, ReviewContext.MaxQuestionChars),
                 records = views,
+                omitted_messages = logicalMessages == null ? Array.Empty<object>() : LogicalMessageProjection.OmissionLocators(logicalMessages),
                 sources,
                 review_note = note,
                 prior_thought = prior,
@@ -333,6 +441,9 @@ internal sealed partial class DeepSeekClient
             });
             NativeEventLog.Trace("review.tool", "mod", "system", "review tool executed",
                 "mode=" + args.Mode + ";status=" + status + ";records=" + records.Count
+                + ";count_unit=" + (logicalMessages == null ? "raw_record" : "logical_message")
+                + ";logical_units=" + (logicalMessages?.Pages.Count(p=>p.BodyIncluded) ?? 0)
+                + ";omitted_units=" + (logicalMessages?.Pages.Count(p=>!p.BodyIncluded) ?? 0)
                 + ";truncated=" + (truncatedRecords > 0)
                 + ";prior=" + priorStatus + ";calls=" + request.ReviewCalls
                 + ";reconsider=" + request.ReconsiderCalls + ";note_chars=" + note.Length);
@@ -340,7 +451,10 @@ internal sealed partial class DeepSeekClient
             // becomes a tool message in the current generation.
             return new ReviewToolOutcome(json, modelRequests, promptTokens, completionTokens,
                 reasoningTokens, cacheHits, cacheMisses, prior != null, records, materialViews, sourceVersions,
-                SourceSnapshot:sourceSnapshot);
+                SourceSnapshot:sourceSnapshot, ReadDataVersion: beforeRead.Length > 0 && beforeRead == owner.ReviewReadDataVersion()
+                    ? JsonSerializer.Serialize(new { version = beforeRead, discovery?.ModelRevision, discovery?.IndexVersion,
+                        discovery?.TargetWatermark, discovery?.CompletedWatermark, discovery?.IndexComplete, discovery?.Unavailable }) : "",
+                    LogicalMessage:logicalMessages);
         }
         catch (OperationCanceledException)
         {

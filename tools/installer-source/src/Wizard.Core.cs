@@ -13,6 +13,8 @@ namespace LilithSetup
     {
         public string GameRoot, PackageRoot, CacheRoot = TrustedDownloads.DefaultCache, OfflineRoot = "", ExpectedConfigDigest = "MISSING";
         public string ApiKey = "", BaseUrl = ProviderPresets.DeepSeekUrl, ApiModel = ProviderPresets.DefaultModel;
+        public bool KeepService = true;
+        public bool ConfigureBundledStory, SwitchExistingStory, AllowStoryModelData;
         public bool Plugin = true, Loader = true, Runtime, Model, Configure = true, EnableRecall, Network = true, DownloadPlugin, Confirm, ProviderEdited;
         public ReleaseUpdate Update;
         internal string RuntimeStorageRoot = "";
@@ -34,7 +36,7 @@ namespace LilithSetup
     public static class WizardCore
     {
         public const bool PreviewChannel = true;
-        public const int InstallerSchema = 3, SupportedConfigSchema = 1;
+        public const int InstallerSchema = 12, SupportedConfigSchema = 1;
         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
         {
             TrustedDownloads.UsePlatformTls();
@@ -107,6 +109,7 @@ namespace LilithSetup
         public static WizardResult Execute(WizardOptions options, Action<WizardProgress> report, CancellationToken cancel)
         {
             SetupCore.Require(options != null && options.Confirm, "LBWIZ_CONFIRM_SELECTION_FIRST");
+            SetupCore.Require(!options.ConfigureBundledStory || options.Configure, "LBWIZ_STORY_REQUIRES_CONFIG_SELECTION");
             SetupCore.Require(!options.EnableRecall || (options.Runtime && options.Model && options.Configure), "LBWIZ_RECALL_REQUIRES_COMPONENTS_AND_CONFIG");
             var result = new WizardResult(); string game = SetupCore.SafePath(options.GameRoot, null), package = SetupCore.SafePath(options.PackageRoot, null), cache = SetupCore.SafePath(options.CacheRoot, null);
             SetupCore.NoReparse(game); SetupCore.NoReparse(package); SetupCore.NoReparse(cache);
@@ -159,7 +162,8 @@ namespace LilithSetup
             }
             CopyContext context = SetupCore.Inspect(game); result.DataRoot = context.DataRoot; Snapshot snapshot = SetupCore.ReadSnapshot(context.ConfigPath);
             SetupCore.Require(snapshot.Digest == options.ExpectedConfigDigest, "LBSETUP_CONFIG_CHANGED_RECHECK");
-            Receipt(context.DataRoot, "plugin", "verified");
+            ExistingDataRoot.EnsureApprovedDirectory(context.GameRoot); Receipt(context.DataRoot, "plugin", "verified");
+            string storyResult = options.ConfigureBundledStory ? BundledStory.Prepare(package, context) : "not-selected"; Say(report, "story", "done", BundledStory.Guidance(storyResult), 28);
             if (options.Plugin && options.DownloadPlugin)
             {
                 var spec = options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset;
@@ -217,9 +221,9 @@ namespace LilithSetup
             {
                 Say(report, "config", "working", "核对最终设置并一次保存", 95);
                 cancel.ThrowIfCancellationRequested();
-                var edit = new EditRequest { ConfirmCopy = true, ApiKey = options.ApiKey, Recall = RecallAction.Preserve };
+                var edit = new EditRequest { ConfirmCopy = true, SelectDeepSeek = !options.KeepService, ApiKey = options.KeepService ? "" : options.ApiKey, Recall = RecallAction.Preserve, ConfigureStory = options.ConfigureBundledStory, SwitchExistingStory = options.SwitchExistingStory, AllowStoryModelData = options.AllowStoryModelData, StoryFile = Path.Combine(context.DataRoot,"private-story/first-game.collection.jsonl") };
                 var currentSemantic = DataJson.Map(snapshot.Document, "semantic_recall", false); bool alreadyEnabled = DataJson.Get(currentSemantic, "enabled") is bool && (bool)DataJson.Get(currentSemantic, "enabled");
-                if (!snapshot.Exists || options.ProviderEdited) SetupCore.ApplyChangedProviderText(edit, snapshot, options.BaseUrl, options.ApiModel);
+                if (!options.KeepService && (!snapshot.Exists || options.ProviderEdited)) SetupCore.ApplyChangedProviderText(edit, snapshot, options.BaseUrl, options.ApiModel);
                 bool pathsChanged = (python.Length != 0 && !SetupCore.Same(python, existingPaths.Python)) || (worker.Length != 0 && !SetupCore.Same(worker, existingPaths.Worker)) || (model.Length != 0 && !SetupCore.Same(model, existingPaths.Model));
                 if (pathsChanged)
                 {
@@ -228,14 +232,14 @@ namespace LilithSetup
                 }
                 else if (options.EnableRecall) { edit.Recall = RecallAction.Enable; edit.CheckedLocal = checkedLocal; }
                 // No write for an unchanged existing configuration, preserving bytes and backups.
-                if (!snapshot.Exists || options.ProviderEdited || options.ApiKey.Length != 0 || pathsChanged || (options.EnableRecall && !alreadyEnabled))
+                if (StorySetup.WouldChange(snapshot, edit) || (!snapshot.Exists && !options.KeepService) || (!options.KeepService && (options.ProviderEdited || options.ApiKey.Length != 0 || DataJson.String(snapshot.Document, "llm_provider", "deepseek") != "deepseek")) || pathsChanged || (options.EnableRecall && !alreadyEnabled))
                 { var saved = SetupCore.SaveWithCommitBoundary(context, snapshot, edit, validator, () => { Say(report, "config", "committing", "正在提交最终配置，此短步骤完成前不能取消", 98); cancel.ThrowIfCancellationRequested(); }); SetupCore.Require(saved.Committed && saved.ReadbackVerified, "LBWIZ_CONFIG_READBACK_NEEDS_REVIEW"); result.ConfigurationSaved = true; }
                 else result.ConfigurationSaved = true;
                 Say(report, "config", "done", "配置已保存；保存不会调用对话 API", 100); Receipt(context.DataRoot, "complete", "verified");
             }
             result.State = "Complete";
             var effective = DataJson.EffectiveProvider(SetupCore.ReadSnapshot(context.ConfigPath).Document); bool hasKey = !String.IsNullOrWhiteSpace(DataJson.String(effective, "api_key", ""));
-            result.Message = "所选组件已完成。" + (options.EnableRecall ? "本地召回已启用。" : "") + (hasKey ? "可以关闭向导后启动游戏。" : "对话 API Key 尚未填写，可稍后在此窗口填入并保存。") + "游戏内效果仍需实际启动确认。"; return result;
+            result.Message = LoginGuidance.Completion(options.KeepService, hasKey) + "\r\n" + StorySetup.Result(snapshot, new EditRequest{ConfigureStory=options.ConfigureBundledStory,SwitchExistingStory=options.SwitchExistingStory,AllowStoryModelData=options.AllowStoryModelData,StoryFile=Path.Combine(context.DataRoot,"private-story/first-game.collection.jsonl")}) + BuildInfo.Feedback(context) + "游戏内效果仍需实际启动确认。"; return result;
         }
         public static string Explain(Exception error)
         {

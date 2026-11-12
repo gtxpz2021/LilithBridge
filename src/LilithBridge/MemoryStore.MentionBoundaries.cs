@@ -22,12 +22,20 @@ internal sealed partial class MemoryStore
         if (previous != null) return new MentionScope(() => { });
         lock (_experienceLock)
         {
-            var raw = ReadExperiences();
+            // Most playback guards have no mention boundary. Do not enumerate
+            // an entire history to construct an empty rule set.
+            var boundaries = _autonomous.Where(t => t.Kind == MentionBoundaryKind
+                && IsActiveLifecycle(t) && t.MentionPolicy == "avoid_unsolicited").ToArray();
+            if (boundaries.Length == 0)
+            {
+                _mentionReadPolicy.Value = new(Array.Empty<MentionRule>());
+                return new MentionScope(() => _mentionReadPolicy.Value = previous);
+            }
+            var raw = GetExperienceValidationTurns();
             var artifacts = raw.Concat(_autonomous).Concat(_reflectionNotes).Concat(_reflectionLessons)
                 .Concat(_relationshipReadings).Concat(_dreams).Concat(_summaries).Concat(_profile).ToList();
             var rules = new List<MentionRule>();
-            foreach (MemoryTurn boundary in _autonomous.Where(t => t.Kind == MentionBoundaryKind
-                         && IsActiveLifecycle(t) && t.MentionPolicy == "avoid_unsolicited"))
+            foreach (MemoryTurn boundary in boundaries)
             {
                 var ids = new HashSet<string>(boundary.SourceEventIds, StringComparer.Ordinal);
                 foreach (MemoryTurn t in artifacts.Where(t => MentionsTopic(t.Text, boundary.Text)

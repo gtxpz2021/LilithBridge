@@ -57,16 +57,22 @@ internal sealed partial class BridgeController
         DialogueRequest? dialogueRequest = !_proactiveRequest
             ? BeginDialogueRequest(requestConfig, userEventId, text, reviewAuthorized: reviewAuthorized) : null;
         BindPreparationObservation(dialogueRequest);
+        var temporaryCarry = CaptureTemporaryCarry(dialogueRequest);
+        if (temporaryCarry.Context.Length > 0) extraContext += Environment.NewLine + temporaryCarry.Context;
         if (memoryOperation != null)
             dialogueRequest?.BindMemoryOperation(userEventId, memoryOperation);
         long submissionGeneration=_conversationGeneration;
         if(!_proactiveRequest&&requestConfig.SemanticRecallEnabled&&dialogueRequest!=null&&userEventId.Length>0)
         {
             QueueSemanticDialogue(dialogueRequest,submissionGeneration,recallQuery,
-                ()=>ContinueSubmittedRequest(text,extraContext,userEventId,requestConfig,dialogueRequest,recallQuery,recallQuerySource,submissionGeneration));
+                ()=>QueueContextRelevance(dialogueRequest,submissionGeneration,recallQuery,requestConfig,
+                    ()=>ContinueSubmittedRequest(text,extraContext,userEventId,requestConfig,dialogueRequest,recallQuery,recallQuerySource,submissionGeneration)));
             return;
         }
-        ContinueSubmittedRequest(text,extraContext,userEventId,requestConfig,dialogueRequest,recallQuery,recallQuerySource,submissionGeneration);
+        if(!_proactiveRequest&&requestConfig.ContextRelevanceEnabled&&dialogueRequest!=null)
+            QueueContextRelevance(dialogueRequest,submissionGeneration,recallQuery,requestConfig,
+                ()=>ContinueSubmittedRequest(text,extraContext,userEventId,requestConfig,dialogueRequest,recallQuery,recallQuerySource,submissionGeneration));
+        else ContinueSubmittedRequest(text,extraContext,userEventId,requestConfig,dialogueRequest,recallQuery,recallQuerySource,submissionGeneration);
     }
 
     private void ContinueSubmittedRequest(string text,string extraContext,string userEventId,BridgeConfig requestConfig,
@@ -98,6 +104,7 @@ internal sealed partial class BridgeController
         using var b1Capture = B1Continuity.BeginCapture(dialogueRequest?.B1HostFootprint ?? new List<MemoryTurn>());
         using var methodRuntime = MethodRuntimeEvidence.Begin(true);
         using var memoCapture = new NativeMemoCapture(enabled: requestConfig.MemoWriteEnabled && requestConfig.MemoAnnotationEnabled);
+        dialogueRequest?.BeginInitialExperiencePreparation();
         string context = ContextBuilder.Build(
             _memory,
             _sessionState,
@@ -110,7 +117,12 @@ internal sealed partial class BridgeController
             onReflectionProjectionObservation: reflectionObservations.Add,
             playerDirected: !_proactiveRequest, requestHistory: finalRequestHistory,
             includeVisionStatus: dialogueRequest == null,
-            semanticRecall: dialogueRequest?.SemanticMaterial?.Result, semanticTrace: semanticTrace);
+            semanticRecall: dialogueRequest?.SemanticMaterial?.Result, semanticTrace: semanticTrace,
+            sourceEnvelopeForRequest: dialogueRequest?.SourceEnvelope == true,
+            onSceneBodyReferences: dialogueRequest == null ? null : dialogueRequest.BindSceneBodyReferences,
+            onContextBodySources: dialogueRequest == null ? null : dialogueRequest.BindContextSourceBodies,
+            onGeneratedReplyMaterial: dialogueRequest == null ? null : material =>
+                dialogueRequest.BindGeneratedReplyMaterial(_memory,material,recallQuery,requestConfig));
         context += Environment.NewLine + _sessionState.VisualSupply.Describe(
             _memory.GetRequestHistorySelection(requestConfig, finalRequestHistory));
         try
@@ -142,7 +154,7 @@ internal sealed partial class BridgeController
         }
         if(dialogueRequest!=null)
         {
-            dialogueRequest.MethodRuntimeTracked=methodRuntime.Available&&string.IsNullOrWhiteSpace(extraContext);
+            dialogueRequest.MethodRuntimeTracked=methodRuntime.Available&&dialogueRequest.PublicExpressionExtraContextTracked(extraContext);
             dialogueRequest.MethodRuntimeSources=methodRuntime.Sources;
             dialogueRequest.MemoAnnotationTarget=memoCapture.Target;
         }
@@ -172,6 +184,9 @@ internal sealed partial class BridgeController
         PaperSourceSnapshot paperSources = _memory.CapturePaperSources(
             methodRuntime.Sources.Concat(_memory.GetRequestHistorySelection(requestConfig, finalRequestHistory)).Concat(claimBoundary.Sources),
             _sessionState.RecentEvents, text, !_proactiveRequest);
+        dialogueRequest?.PrepareRecalledInitialExperience(_memory,text,recallQuery,context,finalRequestHistory,
+            recallUsed??Array.Empty<MemoryTurn>(),semanticTrace);
+        context+=dialogueRequest?.InitialExperiencePreparationNote??"";
         if(dialogueRequest?.SemanticMaterial!=null)
             BindSemanticMaterial(dialogueRequest,conversationGeneration,recallQuery,requestConfig,extraContext,
                 context,finalRequestHistory,semanticTrace!,recallUsed??Array.Empty<MemoryTurn>(),thoughtBoundary,claimBoundary,paperSources);
@@ -199,7 +214,8 @@ internal sealed partial class BridgeController
                 claimBoundary: claimBoundary, requestPurpose: requestPurpose,
                 dialogueRequest: dialogueRequest, historyOwner: _memory,
                 participationSnapshot: participationSnapshot, requestId: sharedSupply?.RequestId,
-                sharedActivitySupply: sharedSupply).ConfigureAwait(false);
+                sharedActivitySupply: sharedSupply, requestSourcePermission: dialogueRequest?.WorkCarryPermission,
+                proactiveContinuityQuery: requestPurpose == "proactive" ? recallQuery : null).ConfigureAwait(false);
             SubmittedMaterialBinding.Apply(result, dialogueRequest, paperSources, memoTarget);
             result.NativeLinkage = nativeAttempt;
             result.ConversationGeneration = conversationGeneration;

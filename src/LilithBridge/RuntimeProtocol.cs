@@ -17,14 +17,16 @@ internal static class RuntimeProtocol
         return BuildContract(config, state, allowStoryRecall: true, allowMemoryCommands: true);
     }
 
-    public static string BuildSystemContract(BridgeConfig config, bool allowStoryRecall = true, bool allowMemoryCommands = true)
+    public static string BuildSystemContract(BridgeConfig config, bool allowStoryRecall = true, bool allowMemoryCommands = true,
+        bool nativeMemoryRecall = false, bool nativeStoryRecall = false)
     {
         // The old static system instructions stayed active with the migration
         // switch off. Keep that behavior while centralizing their formats here.
-        return BuildContract(config, null, allowStoryRecall, allowMemoryCommands);
+        return BuildContract(config, null, allowStoryRecall, allowMemoryCommands, nativeMemoryRecall, nativeStoryRecall);
     }
 
-    private static string BuildContract(BridgeConfig config, SessionState? state, bool allowStoryRecall, bool allowMemoryCommands)
+    private static string BuildContract(BridgeConfig config, SessionState? state, bool allowStoryRecall, bool allowMemoryCommands,
+        bool nativeMemoryRecall = false, bool nativeStoryRecall = false)
     {
         var builder = new StringBuilder();
         builder.AppendLine("[Runtime Protocol]");
@@ -50,15 +52,21 @@ internal static class RuntimeProtocol
             builder.AppendLine("Desktop：只有 [desktop_arrange_state] 允许时才输出 <desktop_arrange:propose/confirm/cancel/execute/undo>。");
         }
 
-        if (allowMemoryCommands && config.MemoryHonestRecallEnabled)
+        if (nativeMemoryRecall)
+            builder.AppendLine("聊天经历需要补查时使用本轮 review_context 原生工具；先读记录再自然回答，不另发 <memory_recall> 标签启动第二条补查链。可以改写查询、继续读取或联想扩查，已有材料够用时直接回答。");
+        else if (allowMemoryCommands && config.MemoryHonestRecallEnabled)
         {
             builder.AppendLine("Memory Recall：玩家明确询问过去而现有记录不足时，可输出 <memory_recall>关键词</memory_recall> 请求查找；记录足够时直接回答。");
         }
 
-        if (allowMemoryCommands && config.PreviousStoryEnabled && allowStoryRecall
-            && PreviousStoryArchive.IsAvailable)
+        if (nativeStoryRecall)
         {
-            builder.AppendLine("Story Recall：玩家明确问前作片段而原文不足时，可输出 <story:recall>关键词或章节</story:recall> 请求查找；只使用实际提供的档案。");
+            builder.AppendLine("作品剧情可使用本轮 recall_work_reference 原生工具查询选定的第一作资料，按对话线索改写或扩查。作品档案与本机聊天历史来自不同数据源。本轮使用原生工具，不另发 <story:recall> 标签启动第二条查询链。");
+        }
+        else if (allowMemoryCommands && config.PreviousStoryEnabled && allowStoryRecall
+            && PreviousStoryArchive.CanSupply(config) && PreviousStoryArchive.IsAvailable(config))
+        {
+            builder.AppendLine("Story Recall：需要第一作资料时可输出 <story:recall>关键词或章节</story:recall> 查询；可按线索改写或扩查。");
         }
 
         if (allowMemoryCommands && config.MemoWriteEnabled)
@@ -79,7 +87,7 @@ internal static class RuntimeProtocol
 
         if (allowMemoryCommands && config.ReflectionEnabled)
         {
-            builder.AppendLine("Reflect：确实想安静回看某件事时可以输出 <reflect>一句话原因</reflect>；不显示给玩家，程序可能稍后再安排。");
+            builder.AppendLine("Reflect：想安静回看时可输出 <reflect>简短原因</reflect>。若明确指本轮已给原话，可用 <reflect>{\"reason\":\"原因\",\"target_event_ids\":[\"原话event_id\"]}</reflect>，可用本轮已供原话的event_id或source_ref，最多4项；不知道对象就不填，不用出处冒充对象。不必每轮请求，不显示给玩家，可能稍后安排。");
         }
 
         builder.AppendLine("Voice：只有程序提供语音 ID 时才输出 <voice:数字ID>。");

@@ -38,9 +38,7 @@ internal static class InitiativeSource
                 "unfinished_topic",
                 "历史话题线索（记录时间 " + lastScene.Timestamp.ToString("O") + "；来源 "
                     + string.Join(",", lastScene.SourceEventIds) + "；是否继续需结合当前情况判断）：" + lastScene.TopicText,
-                0.90 + CalculateModifier(
-                    "unfinished_topic",
-                    state.Emotions.GetTendencies()),
+                0.90,
                 lastScene.TopicText));
         }
 
@@ -49,9 +47,7 @@ internal static class InitiativeSource
             candidates.Add(new InitiativeCandidate(
                 "player_returned",
                 "本轮检测到游戏窗口重新获得焦点（检测时间 " + state.Now.ToString("O") + "）；仅是焦点返回信号，不说明玩家曾离开，也不记录莉莉丝先前的心理。",
-                0.80 + CalculateModifier(
-                    "player_returned",
-                    state.Emotions.GetTendencies())));
+                0.80));
         }
 
         // A recent observable input event is a soft candidate, not a relationship fact.
@@ -64,9 +60,7 @@ internal static class InitiativeSource
                         && e.Kind is SceneEventKind.Touch or SceneEventKind.NativeHitArea)
                     .Select(e => new { event_id=e.EventId, at=e.Timestamp, kind=e.Kind.ToString(), actor=e.Actor, area=e.Area }), DialogueMaterialEnvelope.DataJson)
                     + "；这里只记录输入事件，不预设双方感受或关系变化。",
-                0.60 + CalculateModifier(
-                    "after_intimate",
-                    state.Emotions.GetTendencies())));
+                0.60));
         }
 
         if (appChangeEnabled
@@ -76,9 +70,7 @@ internal static class InitiativeSource
             candidates.Add(new InitiativeCandidate(
                 "app_changed",
                 "玩家现在正在使用：" + AppCategoryName(state.ForegroundApp?.Category ?? "电脑"),
-                0.50 + CalculateModifier(
-                    "app_changed",
-                    state.Emotions.GetTendencies())));
+                0.50));
         }
 
         if (lateNightEnabled && state.TimePhase == TimePhase.LateNight)
@@ -93,9 +85,7 @@ internal static class InitiativeSource
             candidates.Add(new InitiativeCandidate(
                 "late_night",
                 lateReason,
-                0.45 + CalculateModifier(
-                    "late_night",
-                    state.Emotions.GetTendencies())));
+                0.45));
         }
 
         if (candidates.Count == 0)
@@ -108,39 +98,6 @@ internal static class InitiativeSource
                 best = candidate;
         }
         return best;
-    }
-
-    /// <summary>
-    /// This stays inside InitiativeSource while it is the only consumer of
-    /// emotional tendencies. Do NOT extract TendencyModifier until a second
-    /// consumer (e.g. Conversation) actually exists.
-    /// </summary>
-    private static double CalculateModifier(
-        string candidateKind,
-        EmotionTendencies tendencies)
-    {
-        (double Openness, double Restraint, double Curiosity, double FixedBias) weights =
-            WeightsFor(candidateKind);
-        double modifier =
-            tendencies.Openness * weights.Openness
-            + tendencies.Restraint * weights.Restraint
-            + tendencies.Curiosity * weights.Curiosity
-            + weights.FixedBias;
-        return Math.Clamp(modifier, -0.20, 0.20);
-    }
-
-    private static (double Openness, double Restraint, double Curiosity, double FixedBias) WeightsFor(
-        string candidateKind)
-    {
-        return candidateKind switch
-        {
-            "unfinished_topic" => (0.04, -0.08, 0.06, 0.00),
-            "player_returned" => (0.05, -0.02, 0.03, 0.011),
-            "after_intimate" => (0.10, -0.06, 0.02, 0.011),
-            "app_changed" => (0.03, -0.04, 0.03, 0.00),
-            "late_night" => (0.02, -0.03, 0.03, -0.0275),
-            _ => (0.00, 0.00, 0.00, 0.00)
-        };
     }
 
     private static string AppCategoryName(string category)

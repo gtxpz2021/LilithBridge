@@ -18,6 +18,9 @@ internal sealed partial class B1Document
     public Dictionary<string, string> Management { get; set; } = new(StringComparer.Ordinal);
     public List<string> DeletedVersions { get; set; } = new();
     public List<B1ManagementReceipt> ManagementReceipts { get; set; } = new();
+    public long ControlGeneration { get; set; }
+    public List<B1SelectionEvent> SelectionEvents { get; set; } = new();
+    public List<B1SelectionRequestFact> SelectionRequests { get; set; } = new();
 }
 
 internal sealed partial class MemoryStore
@@ -47,6 +50,9 @@ internal sealed partial class MemoryStore
         to.Management = new(from.Management, StringComparer.Ordinal);
         to.DeletedVersions = from.DeletedVersions.ToList();
         to.ManagementReceipts = from.ManagementReceipts.ToList();
+        to.ControlGeneration = from.ControlGeneration;
+        to.SelectionEvents = from.SelectionEvents.ToList();
+        to.SelectionRequests = from.SelectionRequests.ToList();
     }
     private void MarkB1StorageSnapshot(B1Document doc)
     {
@@ -66,6 +72,7 @@ internal sealed partial class MemoryStore
     }
     private static void ValidateB1Document(B1Document doc)
     {
+        ValidateB1SelectionState(doc);
         if (doc.SchemaVersion != 1) throw new InvalidDataException("unknown_schema");
         if (doc.Entries == null || doc.Receipts == null || doc.Current == null || doc.Deliveries == null
             || doc.Management == null || doc.DeletedVersions == null || doc.ManagementReceipts == null
@@ -74,7 +81,7 @@ internal sealed partial class MemoryStore
                 || e.Packet.SemanticAnchors == null || e.Packet.ShortRefs == null || e.Packet.Omissions == null
                 || e.Text == null || e.Scope == null || e.Target == null || e.Kind == null || e.Nature == null || e.Conditions == null || e.AnchorStatus == null
                 || e.Packet.Availability == null || e.Packet.Diagnostic == null || e.Packet.FocusStatus == null || e.Packet.SearchMode == null
-                || e.GeneratedBy != "main_reply" || e.Selection != "explicit_retain"
+                || e.GeneratedBy is not ("main_reply" or "b1_reconsideration") || e.Selection != "explicit_retain"
                 || e.Sources.Any(r => r == null || r.Kind == null || r.Version == null || r.Sha256 == null || r.Purpose == null)
                 || e.ObjectAnchors.Concat(e.Packet.SemanticAnchors).Concat(e.Packet.ShortRefs.Values)
                     .Any(r => r == null || r.Kind == null || r.Version == null || r.Sha256 == null || r.Purpose == null)
@@ -134,12 +141,14 @@ internal sealed partial class MemoryStore
             B1StorageLegacyLoads++;
         }
         ValidateB1Document(doc);
+        if (doc.ControlGeneration != 0 || doc.SelectionRequests.Count != 0)
+            throw new InvalidDataException("selection_requires_v3_sqlite_not_legacy_json");
         _b1LegacyDocument = doc; _b1LegacyStamp = stamp;
         return doc;
     }
     private static void VerifyB1Database(B1Sqlite db)
     {
-        if (db.Scalar("PRAGMA application_id") != B1DatabaseApplication || db.Scalar("PRAGMA user_version") != "2")
+        if (db.Scalar("PRAGMA application_id") != B1DatabaseApplication || db.Scalar("PRAGMA user_version") is not ("2" or "3" or "4"))
             throw new InvalidDataException("unknown_database_schema");
         if (db.Scalar("PRAGMA journal_mode") != "delete") throw new InvalidDataException("unsupported_database_journal");
         if (db.Scalar("PRAGMA quick_check") != "ok") throw new InvalidDataException("corrupt_database");
@@ -150,7 +159,7 @@ internal sealed partial class MemoryStore
         byte[] header = new byte[100]; int count = stream.Read(header, 0, header.Length);
         if (count != 100 || !header.AsSpan(0, 16).SequenceEqual(Encoding.ASCII.GetBytes("SQLite format 3\0")))
             throw new InvalidDataException("corrupt_database_header");
-        if (BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(60, 4)) != 2
+        if (BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(60, 4)) is not (2 or 3 or 4)
             || BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(68, 4)).ToString() != B1DatabaseApplication)
             throw new InvalidDataException("unknown_database_schema");
         if (header[18] != 1 || header[19] != 1) throw new InvalidDataException("unsupported_database_journal");
@@ -231,18 +240,25 @@ internal sealed partial class MemoryStore
         }
         throw new InvalidDataException("legacy_changed_after_migration");
     }
-    private B1Document? ReadB1Storage(bool force = false)
+    private B1Document? ReadB1Storage(bool force = false,bool initializeMissing = true)
     {
         try
         {
+            // The new history consumer has no storage initialization authority.
+            // Existing B1 callers retain their original initialization behavior.
+            if(!initializeMissing&&!File.Exists(B1DatabasePath)){B1StorageStatus="missing_database";return null;}
             var legacy = ReadLegacyB1();
-            if (!File.Exists(B1DatabasePath)) InitializeB1Database(legacy);
+            if (!File.Exists(B1DatabasePath))
+            {
+                if (!initializeMissing) { B1StorageStatus = "missing_database"; return null; }
+                InitializeB1Database(legacy);
+            }
             string stamp = FileStamp(B1DatabasePath, true) + "|" + _b1LegacyHash;
             // 'force' requests a fresh filesystem identity check, not a needless
             // full JSON reload when that identity is unchanged.
             if (_b1 != null && _b1DatabaseStamp == stamp) { B1StorageStatus = "ready"; return _b1; }
             VerifyB1DatabaseHeader(B1DatabasePath);
-            using var db = new B1Sqlite(B1DatabasePath);
+            using var db = new B1Sqlite(B1DatabasePath, readOnly: !initializeMissing);
             db.Execute("BEGIN");
             B1Document doc;
             try
@@ -258,6 +274,12 @@ internal sealed partial class MemoryStore
                     DeletedVersions = db.Rows("SELECT id FROM deleted").Select(r => r[0]).ToList(),
                     ManagementReceipts = db.Rows("SELECT value FROM management_receipts ORDER BY rowid").Select(r => Decode<B1ManagementReceipt>(r[0])).ToList()
                 };
+                if (db.Scalar("PRAGMA user_version") is "3" or "4")
+                {
+                    doc.ControlGeneration = long.Parse(db.Scalar("SELECT value FROM meta WHERE id='control_generation'") ?? throw new InvalidDataException("missing_control_generation"));
+                    doc.SelectionEvents = db.Rows("SELECT value FROM selection_events ORDER BY rowid").Select(r => Decode<B1SelectionEvent>(r[0])).ToList();
+                    doc.SelectionRequests = db.Rows("SELECT value FROM selection_requests ORDER BY rowid").Select(r => Decode<B1SelectionRequestFact>(r[0])).ToList();
+                }
                 ValidateB1Document(doc);
                 _b1DatabaseRevision = long.Parse(db.Scalar("SELECT value FROM meta WHERE id='revision'") ?? throw new InvalidDataException("malformed_database_metadata"));
                 db.Execute("COMMIT");
@@ -304,7 +326,7 @@ internal sealed partial class MemoryStore
         }
         foreach (string id in old.Keys.Where(id => !seen.Contains(id))) B1Row(db, "DELETE FROM " + table + " WHERE id=?", id);
     }
-    private bool WriteB1Storage(B1Document next)
+    private bool WriteB1Storage(B1Document next, Func<bool>? transactionGuard = null)
     {
         bool committed = false;
         long expectedBaseRevision = next.StorageRevision;
@@ -321,7 +343,7 @@ internal sealed partial class MemoryStore
             using var db = new B1Sqlite(B1DatabasePath);
             // Verify schema again even on the cached fast path. No unavailable
             // storage result is reinterpreted as permission to overwrite it.
-            if (db.Scalar("PRAGMA application_id") != B1DatabaseApplication || db.Scalar("PRAGMA user_version") != "2")
+            if (db.Scalar("PRAGMA application_id") != B1DatabaseApplication || db.Scalar("PRAGMA user_version") is not ("2" or "3" or "4"))
                 throw new InvalidDataException("unknown_database_schema");
             string? dataVersion = db.Scalar("PRAGMA data_version");
             db.Execute("BEGIN IMMEDIATE");
@@ -330,6 +352,23 @@ internal sealed partial class MemoryStore
                 if (db.Scalar("SELECT value FROM meta WHERE id='revision'") != expectedBaseRevision.ToString())
                     throw new InvalidDataException("database_version_conflict");
                 CheckB1LegacyIdentity(db);
+                if (transactionGuard != null && !transactionGuard()) throw new InvalidDataException("selection_source_changed");
+                if (next.ControlGeneration < previous.ControlGeneration || next.SelectionEvents.Count < previous.SelectionEvents.Count
+                    || !previous.SelectionEvents.SequenceEqual(next.SelectionEvents.Take(previous.SelectionEvents.Count)))
+                    throw new InvalidDataException("selection_history_cannot_be_rewritten");
+                if (next.SelectionRequests.Count < previous.SelectionRequests.Count
+                    || !previous.SelectionRequests.SequenceEqual(next.SelectionRequests.Take(previous.SelectionRequests.Count)))
+                    throw new InvalidDataException("selection_request_facts_cannot_be_rewritten");
+                if (next.ControlGeneration > 0 && db.Scalar("PRAGMA user_version") == "2")
+                {
+                    db.Execute("CREATE TABLE selection_events(id TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+                    db.Execute("CREATE TABLE selection_requests(id TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)");
+                    db.Execute("INSERT INTO meta VALUES('control_generation','0')");
+                    db.Execute("PRAGMA user_version=3");
+                }
+                // Real local creator events require v4. Older f348 readers/writers
+                // must reject rather than misinterpret or erase these reasons.
+                if (next.SelectionEvents.Any(e => !e.IsSynthetic)) db.Execute("PRAGMA user_version=4");
                 long writesBefore = B1StorageRowWrites;
                 DiffB1Rows(db, "entries", previous.Entries, next.Entries, e => e.Version, Serialize);
                 bool entriesChanged = B1StorageRowWrites != writesBefore;
@@ -339,6 +378,12 @@ internal sealed partial class MemoryStore
                 DiffB1Rows(db, "management", previous.Management, next.Management, kv => kv.Key, kv => kv.Value);
                 DiffB1Rows(db, "deleted", previous.DeletedVersions.Distinct(), next.DeletedVersions.Distinct(), s => s, _ => "");
                 DiffB1Rows(db, "management_receipts", previous.ManagementReceipts, next.ManagementReceipts, r => r.OperationId, Serialize);
+                if (next.ControlGeneration > 0)
+                {
+                    DiffB1Rows(db, "selection_events", previous.SelectionEvents, next.SelectionEvents, e => e.OperationId, Serialize);
+                    DiffB1Rows(db, "selection_requests", previous.SelectionRequests, next.SelectionRequests, e => e.Id, Serialize);
+                    if (previous.ControlGeneration != next.ControlGeneration) B1Row(db, "UPDATE meta SET value=? WHERE id='control_generation'", next.ControlGeneration.ToString());
+                }
                 if (B1StorageRowWrites == writesBefore)
                 {
                     db.Execute("COMMIT"); committed = true; MarkB1StorageSnapshot(next); _b1 = next;

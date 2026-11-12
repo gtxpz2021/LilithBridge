@@ -164,6 +164,15 @@ internal sealed class SemanticRecallWorker : IDisposable
     }
     private async Task ReleaseAfterResponseAsync(string id,Task response)
     {try{await response.ConfigureAwait(false);}catch{}finally{_pending.TryRemove(id,out _);_protocol.Release();}}
+    // The existing vector worker uses received/delivered as admission states.
+    // Adapt only the IPC receipt label: the host kind, provenance and generated
+    // expression status remain unchanged; this never makes it delivered speech.
+    internal static object IndexWireRecord(SemanticIndexRecord record,string textHash) => new {
+        event_id=record.WireId,text=record.Text,role=record.Role,origin=record.Origin,
+        delivery=record.Kind=="generated_reply"&&record.Delivery=="received_public_text"?"received":record.Delivery,
+        text_hash=textHash
+    };
+
     private async Task SynchronizeAsync(IReadOnlyList<SemanticIndexRecord> snapshot,CancellationToken token,bool commit,bool reset=false)
     {
         await _synchronization.WaitAsync(token).ConfigureAwait(false);
@@ -177,7 +186,7 @@ internal sealed class SemanticRecallWorker : IDisposable
             {
                 token.ThrowIfCancellationRequested();
                 var batch=changes.Skip(at).Take(16).ToArray();
-                var result=await CommandAsync("upsert",new(){["records"]=batch.Select(r=>new{event_id=r.WireId,text=r.Text,role=r.Role,origin=r.Origin,delivery=r.Delivery,text_hash=hashes[r.WireId]}).ToArray()},token).ConfigureAwait(false);
+                var result=await CommandAsync("upsert",new(){["records"]=batch.Select(r=>IndexWireRecord(r,hashes[r.WireId])).ToArray()},token).ConfigureAwait(false);
                 if(result.GetProperty("status").GetString()!="ok")throw new InvalidDataException("semantic update rejected");
                 _indexDirty=true;
                 foreach(var r in batch)_hashes[r.WireId]=hashes[r.WireId];
@@ -298,9 +307,12 @@ internal sealed class SemanticRecallWorker : IDisposable
                 if(!byWire.TryGetValue(c.GetProperty("event_id").GetString()!,out var source)
                     ||(source.Domain&request.Domains)==0||c.GetProperty("text_hash").GetString()!=MemoryStore.SemanticTextHash(source.Text))continue;
                 candidates.Add(new(source.EventId,c.GetProperty("text_hash").GetString()!,c.GetProperty("score").GetDouble(),
-                    c.GetProperty("chunk_start").GetInt32(),c.GetProperty("chunk_end").GetInt32(),source.Kind,source.Version,++rank));
+                    c.GetProperty("chunk_start").GetInt32(),c.GetProperty("chunk_end").GetInt32(),source.Kind,source.Version,++rank,
+                    c.TryGetProperty("char_start",out var a)?MemoryStore.SemanticCodePointOffset(source.Text,a.GetInt32()):null,
+                    c.TryGetProperty("char_end",out var b)?MemoryStore.SemanticCodePointOffset(source.Text,b.GetInt32()):null));
             }
-            PreparationTiming.Current?.Value("semantic_event_candidates",candidates.Count(c=>c.Kind=="utterance"));
+            PreparationTiming.Current?.Value("semantic_event_candidates",candidates.Count(c=>c.Kind is "utterance" or "message"));
+            PreparationTiming.Current?.Value("semantic_message_candidates",candidates.Count(c=>c.Kind=="message"));
             PreparationTiming.Current?.Value("semantic_b1_hits",candidates.Count(c=>c.Kind=="b1"));
             PreparationTiming.Current?.Value("semantic_thought_hits",candidates.Count(c=>c.Kind is "note" or "lesson"));
             return new(request.OwnerId,queryHash,ModelRevision,epoch+":"+r.GetProperty("index_generation").GetInt64(),

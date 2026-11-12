@@ -27,18 +27,20 @@ internal sealed partial class MemoryStore
             if (!request.ReviewSourceViews.TryGetValue(pair.Key, out var views) || views.Count == 0)
                 continue; // Conservative footprint for old internal callers; no selectable unseen body.
             if (!request.ReviewSourceVersions.ContainsKey(pair.Key)) return null;
-            string clean = ReviewContext.Clean(turn.Text);
-            if (views.Any(v => v.Id != pair.Key || v.Offset < 0 || v.TotalChars != clean.Length
-                || v.Offset > clean.Length || v.Text.Length > clean.Length - v.Offset
-                || clean.Substring(v.Offset, v.Text.Length) != v.Text)) return null;
+            if (views.Any(v => {
+                string basis = v.RawTextPreserved ? turn.Text : ReviewContext.Clean(turn.Text);
+                return v.Id != pair.Key || v.Offset < 0 || v.TotalChars != basis.Length
+                    || v.Offset > basis.Length || v.Text.Length > basis.Length - v.Offset
+                    || basis.Substring(v.Offset, v.Text.Length) != v.Text;
+            })) return null;
             if (materials.Any(m => m.Ref.Key == reference.Key && m.Ref.Sha256 == reference.Sha256)) continue;
             var actual = views.Distinct().OrderBy(v => v.Offset).ToList();
             string excerpts = string.Join("\n", actual.Select(v =>
                 "[review original excerpt offset=" + v.Offset + ";chars=" + v.Text.Length
-                + ";total=" + v.TotalChars + "]\n" + v.Text));
+                + ";total=" + v.TotalChars + ";basis=" + (v.RawTextPreserved ? "raw_utf16" : "legacy_clean_utf16") + "]\n" + v.Text));
             materials.Add(now.Material with { Ref = reference, Text = excerpts,
                 Scope = now.Material.Scope + ";supply=review_original_excerpts_only",
-                SuppliedRanges = actual.Select(v => new B1SourceRange(v.Offset, v.Text.Length, v.TotalChars)).ToList() });
+                SuppliedRanges = actual.Select(v => new B1SourceRange(v.Offset, v.Text.Length, v.TotalChars, v.RawTextPreserved ? "raw_utf16" : null)).ToList() });
         }
         return new B1Packet { ProtocolVersion = initial.ProtocolVersion, Id = initial.Id,
             UserEventId = initial.UserEventId, Materials = materials, Footprint = footprint.Distinct().ToList(),

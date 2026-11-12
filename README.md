@@ -21,11 +21,19 @@ LilithBridge 把原始经历与后来形成的理解分开处理，保留来源�
 
 项目自有代码采用 MIT 许可。架构说明解释了这些机制怎样衔接，也提供了源码入口，方便理解和继续改进。
 
-## 当前修复版：0.3.150.66-rc.3.fix.2
+## 当前版本：0.3.150.103 / e4c865ca
+
+当前源码与[正式发布附件](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.103-e4c865ca)中的清洁源码包同步。安装请使用该页安装 ZIP，而不是 GitHub 自动生成的 Source code 包。安装器为 0.1.4.13；游戏内 ChatGPT 登录及一次推荐配置、后台默认与旧设置保留说明见 [正常使用说明](NORMAL-USE.zh-CN.md)，变更见 [本版说明](RELEASE-NOTES.zh-CN.md)，精确身份见 [BUILD-IDENTITY.txt](BUILD-IDENTITY.txt)。新配置的普通记忆提取与后台反思缺省开启，所选资料发送前有一次清楚选择；已有明确关闭、模型和预算保留，不默认启用截图。ChatGPT 模型及额度以账户实际权限为准。
+
+源码不含原作语料正文、游戏本体、个人配置或认证。发行安装包内的第一作语料不属项目 MIT，来源和再分发许可未确认状态见 [来源声明](tools/setup/story/SOURCE.json)及[许可说明](LICENSE-STATUS.md)。
+
+下方 RC3 说明保留为历史记录，不代表本次版本。
+
+## 历史修复版：0.3.150.66-rc.3.fix.2
 
 修复召回安装、输入框位置和控制台生命周期，并保留 Work、核对匹配 interop 后升级。**历史记录窗口可能只显示一半，尚未修复。** 详见[本版说明](docs/RELEASE-NOTES-fix2.md)和[验证边界](CANDIDATE-VALIDATION.md)。
 
-## 第一次使用
+## 第一次使用（历史 RC3 流程，当前版本见上方说明）
 
 你需要 Windows x64、正版游戏和自己的聊天 API Key。安装器会检查所选游戏环境；游戏更新可能影响兼容性，遇到提示时请先按[依赖说明](docs/DEPENDENCIES.md)处理。
 

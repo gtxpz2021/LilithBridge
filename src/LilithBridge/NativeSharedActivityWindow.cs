@@ -60,7 +60,11 @@ internal sealed class NativeSharedActivityWindow
     {
         if (!IsOpen || _runtime == null) return;
         if (_runtime.View.ViewVersion != _renderedVersion && !IsEditing) Render();
-        if (_markOnNextTick && Time.frameCount > _renderFrame && Application.isFocused && NativeInput.IsGameForeground())
+        CaptureDirtyEditors();
+        // The full view preserves unsaved player buffers. Only the compact
+        // read-only view or clean unfocused editors show the committed view.
+        if (_markOnNextTick && (_compact || (!IsEditing && !_sourceDirty && !_artifactDirty))
+            && Time.frameCount > _renderFrame && Application.isFocused && NativeInput.IsGameForeground())
         { _runtime.MarkDisplayed(_renderedVersion, DateTimeOffset.UtcNow); _markOnNextTick = false; }
         if (_status != null) _status.text = _runtime.View.Status + " · " + (_runtime.View.Open ? "开放" : "暂停");
         PaintFocus();
@@ -148,14 +152,13 @@ internal sealed class NativeSharedActivityWindow
         canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.sortingOrder = 10011;
         var scaler = _root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920, 1080); scaler.matchWidthOrHeight = .5f;
-        Transform monitorViewport = NativeUiViewport.Create(canvas);
-        var shield = Box("OutsideClickShield", monitorViewport, Vector2.zero, Vector2.zero);
+        var shield = Box("OutsideClickShield", _root.transform, Vector2.zero, Vector2.zero);
         _shield = shield;
         shield.anchorMin = Vector2.zero; shield.anchorMax = Vector2.one; shield.offsetMin = shield.offsetMax = Vector2.zero;
         var shade = shield.gameObject.AddComponent<Image>(); shade.color = new Color(0, 0, 0, .25f);
         var outside = shield.gameObject.AddComponent<Button>(); outside.targetGraphic = shade; NoNavigation(outside);
         outside.onClick.AddListener((UnityEngine.Events.UnityAction)(() => _close?.Invoke()));
-        var panel = Box("SharedActivityPanel", monitorViewport, Vector2.zero, new Vector2(1080, 910));
+        var panel = Box("SharedActivityPanel", _root.transform, Vector2.zero, new Vector2(1080, 910));
         _panel = panel;
         panel.gameObject.AddComponent<Image>().color = new Color(.04f, .055f, .085f, .99f);
         Label(panel, "一起看", new Vector2(-420, 414), new Vector2(180, 38), 27);
@@ -189,7 +192,7 @@ internal sealed class NativeSharedActivityWindow
         Button(panel, "撤回共享内容", new Vector2(140, -422), new Vector2(300, 36), () =>
         { bool ok = _runtime?.Withdraw() == true; ResetEditors(_runtime!.View); Blur(); Render();
             if (!ok) _status!.text = _runtime?.View.Status ?? "撤回失败"; });
-        _compactPanel = Box("SharedActivityBesideChat", monitorViewport, new Vector2(0, 400), new Vector2(1000, 260));
+        _compactPanel = Box("SharedActivityBesideChat", _root.transform, new Vector2(0, 400), new Vector2(1000, 260));
         _compactPanel.gameObject.AddComponent<Image>().color = new Color(.04f, .055f, .085f, .97f);
         Label(_compactPanel, "一起看 · 当前对象仍开放", new Vector2(-225, 100), new Vector2(500, 32), 20);
         Button(_compactPanel, "完整视图", new Vector2(210, 100), new Vector2(160, 34), () =>

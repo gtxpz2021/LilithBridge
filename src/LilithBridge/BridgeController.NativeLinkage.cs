@@ -146,13 +146,41 @@ internal sealed partial class BridgeController
             && !_memory.CurrentNativeSourcesAvailable(_nativeLinkage.SourceIds))
             CancelNativeLinkage("source_unavailable");
     }
+    // Only the presenter calls this for a reply it already accepted through
+    // NativeLinkageAllows at Show. Ordinary completed speech does not read its
+    // historical sources again on each rendered frame. Revocation affects the
+    // next use; explicit cancellation/generation replacement still stops pending
+    // speech. Native autonomous opportunities retain their existing live policy.
+    internal bool NativePlaybackAllows(ApiResult result)
+    {
+        if (!MatchesConversationGeneration(result) || result.DialogueRequest?.IsCancelled == true
+            || result.Error.Length == 0 && result.SendPermission is { Allowed:false }) return false;
+        return result.NativeLinkage == null || NativeLinkageAllows(result);
+    }
+
     internal bool NativeLinkageAllows(ApiResult result)
     {
         if (!MatchesConversationGeneration(result)) return false;
+        // A single synchronous gate may enter native matching through several
+        // review snapshots. Share pure body tokens until this gate returns;
+        // eligibility, cancellation and source permissions are never memoized.
+        using var matching = _memory.BeginExperienceMatchingPreparation();
+        if(result.Error.Length==0&&(result.SendPermission is {Allowed:false}||!result.RequestSourcesPermitted()))
+        {
+            result.DialogueRequest?.Cancel();
+            if(ReferenceEquals(_queuedReply,result))CancelQueuedReply("authorization_revoked");
+            else NativeBubblePresenter.CancelUndispatched(result,"cancelled","authorization_revoked");
+            if(ReferenceEquals(result.DialogueRequest,_activeDialogue))
+            {_requestPending=false;_memoryRecallInProgress=false;_storyRecallInProgress=false;}
+            return false;
+        }
         if(result.Error.Length==0 && result.DialogueRequest is { } reviewOwner && IsCurrentDialogue(reviewOwner))
         {
             string sourceReason = result.SharedSupply != null && !result.SharedSupply.TryUse(() => true) ? "shared_activity_changed"
-                : !reviewOwner.ReviewSupplyPermitted() ? "review_source_changed"
+                // RequestSourcesPermitted above already checked the same live
+                // ChatHistorySnapshots in this synchronous gate. Keep outbound
+                // review/method checks, without traversing those snapshots twice.
+                : !reviewOwner.ReviewSupplyPermitted(includeChatHistory:false) ? "review_source_changed"
                 : !DeepSeekClient.MethodProtocolPermitted(reviewOwner) ? "method_source_changed" : "";
             if(sourceReason.Length>0)
             {

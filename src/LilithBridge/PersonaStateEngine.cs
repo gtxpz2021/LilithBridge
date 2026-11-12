@@ -94,7 +94,7 @@ internal static class PersonaStateEngine
 
     public static string DescribeForPrompt(PersonaDecisionHint hint, SessionState state)
     {
-        // Emotional residue has its own single projection in SessionState.
+        // This decision uses present session conditions, without an affect substrate.
         // Do not turn the same numbers into another set of length, follow-up,
         // silence or mood instructions. Only surface an active runtime boundary.
         if (!hint.ShouldWait && !hint.ShouldDeferProactive)

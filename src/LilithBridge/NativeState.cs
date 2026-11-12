@@ -228,7 +228,10 @@ internal sealed partial class MemoryStore
     private int _personaInteractionCount;
     private string _personaStage = "陪伴者";
     private string _personaTone = "傲娇但温柔";
-    private EmotionalStateSnapshot? _personaEmotions;
+    // Retired four-axis payload is retained opaquely for a reversible rollback.
+    // No runtime state, threshold, clock or behavior reads values from it.
+    private JsonElement? _legacyEmotionalState;
+    private bool _personaStateReadFailed;
     private RelationshipSnapshot? _personaRelationship;
     private LastSceneSummary? _lastSceneSummary;
     private readonly bool _longTermEnabled;
@@ -238,6 +241,9 @@ internal sealed partial class MemoryStore
     private readonly bool _recallIsolationEnabled;
     private readonly bool _profileCaptureEnabled;
     private readonly bool _derivedWriteEnabled;
+    private readonly string _historyCompactionMode;
+    private readonly bool _historyAuxiliaryEnabled;
+    private readonly bool _historyArchiveRequired;
     private readonly double _decayPerDay;
     private readonly Func<DateTimeOffset> _lifecycleClock;
     private bool _autonomousLifecycleDirty;
@@ -274,6 +280,9 @@ internal sealed partial class MemoryStore
         _recallIsolationEnabled = effectiveConfig.MemoryRecallIsolationEnabled;
         _profileCaptureEnabled = effectiveConfig.ProfileCaptureEnabled;
         _derivedWriteEnabled = effectiveConfig.MemoryDerivedWriteEnabled;
+        _historyCompactionMode = HistoryCompressionPolicy.NormalizeMode(effectiveConfig.HistoryCompactionMode);
+        _historyAuxiliaryEnabled = effectiveConfig.MemoryCompressionEnabled;
+        _historyArchiveRequired = effectiveConfig.LongTermMemoryEnabled && effectiveConfig.ExperienceArchiveEnabled;
         _decayPerDay = effectiveConfig.AutonomousMemoryDecayPerDay;
         try
         {
@@ -307,12 +316,17 @@ internal sealed partial class MemoryStore
             foreach (MemoryTurn turn in _history.Where(t => t.EventId.Length > 0)) _seenUtteranceIds.Add(turn.EventId);
             // History may still be dropped below by ResetShortTermOnStart; a
             // record whose archive write failed must be able to recover first.
-            ReconcileExperienceArchive("startup");
+            _archiveReconcilePending = _historyArchiveRequired && !ReconcileExperienceArchive("startup");
+            if (_archiveReconcilePending) ReportHistoryRetentionBlocked("startup_reconcile_unconfirmed");
             if (_resetShortTermOnStart)
             {
-                _native.Clear();
-                _events.Clear();
-                _history.Clear();
+                if (!_historyArchiveRequired || HistoryRawDurablyArchived(_history))
+                {
+                    _native.Clear();
+                    _events.Clear();
+                    _history.Clear();
+                }
+                else ReportHistoryRetentionBlocked("startup_reset_deferred_archive_unconfirmed");
             }
             ApplyAutonomousLifecycle();
             if (_memoryLifecycleEnabled)
@@ -413,7 +427,7 @@ internal sealed partial class MemoryStore
     internal const string LocalFallbackOrigin = "local_fallback";
 
     public MemoryTurn? AddHistory(string role, string text, string eventId = "", string kind = "chat", string sourceEventId = "",
-        bool isLocalFallback = false)
+        bool isLocalFallback = false, DateTimeOffset? observedAtUtc = null)
     {
         text = Clean(text);
         if (text.Length == 0 || role is not ("user" or "assistant"))
@@ -423,6 +437,7 @@ internal sealed partial class MemoryStore
         var turn = new MemoryTurn
         {
             EventId = eventId.Length > 0 ? eventId : Guid.NewGuid().ToString("N"),
+            Timestamp = observedAtUtc ?? DateTimeOffset.UtcNow,
             SourceEventId = sourceEventId,
             SessionId = _sessionId,
             Sequence = ++_utteranceSequence,
@@ -434,9 +449,15 @@ internal sealed partial class MemoryStore
             DeliveryState = role == "user" ? "received" : "delivered"
         };
         _history.Add(turn);
+        ReflectionMaterialChanged();
         _seenUtteranceIds.Add(turn.EventId);
         bool archived = AppendExperience(turn);
-        Trim(_history, MaxHistory);
+        if (!archived && _historyArchiveRequired)
+        {
+            _archiveReconcilePending = true;
+            ReportHistoryRetentionBlocked("append_failed_or_archive_disabled");
+        }
+        TrimHistoryAtMessageBoundary();
         bool sessionSaved = SaveList("sessions\\v4-native-chat.json", _history);
         if (!sessionSaved)
         {
@@ -445,7 +466,7 @@ internal sealed partial class MemoryStore
                 PrivacySafety.Redact(turn.Text),
                 "role=" + role + ";event_id=" + turn.EventId);
         }
-        if (!archived)
+        if (!archived && _historyArchiveRequired)
         {
             _archiveReconcilePending = true;
             NativeEventLog.Trace("history.archive_pending", "mod", "system",
@@ -465,7 +486,10 @@ internal sealed partial class MemoryStore
         {
             _nextArchiveReconcileAt = DateTimeOffset.UtcNow.AddSeconds(60);
             if (ReconcileExperienceArchive(archived ? "retry" : "append_failed"))
+            {
                 _archiveReconcilePending = false;
+                _historyRetentionBlocked = false;
+            }
         }
         CompressHistoryIfNeeded(120, 24);
         return turn.Copy();
@@ -503,19 +527,83 @@ internal sealed partial class MemoryStore
         if (!summary.HasContent)
             return;
         string path = Path.Combine(_root, "v4-native-last-scene.json");
-        Directory.CreateDirectory(_root);
-        string temp = path + ".tmp";
-        File.WriteAllText(
-            temp,
-            JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
-        File.Move(temp, path, true);
-        _lastSceneSummary = summary;
-        NativeEventLog.Trace(
-            "continuity.last_scene_saved",
-            "mod",
-            "lilith",
-            summary.NotableEvent,
-            "topic=" + summary.TopicText);
+        bool backupFailure = false;
+        try
+        {
+            Directory.CreateDirectory(_root);
+            if (!PrepareAffectRetirementWrite(path, out backupFailure))
+                return;
+            string temp = path + ".tmp";
+            File.WriteAllText(
+                temp,
+                JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temp, path, true);
+            _lastSceneSummary = summary;
+            SetSaveFailure(path, "");
+            NativeEventLog.Trace(
+                "continuity.last_scene_saved",
+                "mod",
+                "lilith",
+                summary.NotableEvent,
+                "topic=" + summary.TopicText);
+        }
+        catch
+        {
+            if (!backupFailure) SetSaveFailure(path, "write_failed");
+            throw; // Keep existing caller-visible failure semantics.
+        }
+    }
+
+    // The first candidate write keeps the exact previous file for rollback.
+    // A leftover temporary file is an unresolved interrupted save, so neither
+    // file is changed and no automatic authority is assigned to main vs tmp.
+    public string PersonaSaveFailure { get; private set; } = "";
+    public string LastSceneSaveFailure { get; private set; } = "";
+
+    // Status remains available even if the host logger/listeners are unavailable.
+    // Never include stored text, credentials or an exception message in diagnostics.
+    private void SetSaveFailure(string path, string reason)
+    {
+        bool persona = Path.GetFileName(path) == "v4-native-persona.json";
+        string previous = persona ? PersonaSaveFailure : LastSceneSaveFailure;
+        if (persona) PersonaSaveFailure = reason;
+        else LastSceneSaveFailure = reason;
+        if (previous == reason) return; // Scheduled saves must not flood the log.
+        try
+        {
+            string message = "LilithBridge save " + (reason.Length == 0 ? "recovered" : "blocked")
+                + ": " + Path.GetFileName(path)
+                + (reason.Length == 0 ? "; save completed" : "; reason=" + reason
+                    + "; original retained; resolve the file condition before retrying"
+                    + (reason == "persona_read_failed" ? "; a successful reload is required" : ""));
+            if (reason.Length == 0) Plugin.PluginLog?.LogInfo(message);
+            else Plugin.PluginLog?.LogWarning(message);
+        }
+        catch { /* Status must survive an unavailable host logging sink. */ }
+    }
+
+    private bool PrepareAffectRetirementWrite(string path, out bool backupFailure)
+    {
+        backupFailure = false;
+        if (File.Exists(path + ".tmp") || Directory.Exists(path + ".tmp"))
+        {
+            SetSaveFailure(path, "pending_tmp");
+            return false;
+        }
+        string backup = path + ".bak-before-affect-retirement";
+        try
+        {
+            if (File.Exists(path) && !File.Exists(backup))
+                File.Copy(path, backup, overwrite: false);
+        }
+        catch
+        {
+            backupFailure = true;
+            SetSaveFailure(path, "backup_failed");
+            throw;
+        }
+        // A failed backup throws before any temporary or main file is written.
+        return true;
     }
 
     private void LoadLastSceneSummary()
@@ -567,7 +655,7 @@ internal sealed partial class MemoryStore
             return Array.Empty<MemoryTurn>();
         HashSet<string> suppressed = SuppressedExperienceIds();
         return _history.Where(turn => !suppressed.Contains(turn.EventId) && !suppressed.Contains(turn.SourceEventId)
-                && IsMentionAllowed(turn))
+                && IsMentionAllowed(turn) && HistoryBoundary.DisplayedOrLegacyRecord(turn))
             .TakeLast(count).Select(turn => turn.Copy()).ToList();
     }
 
@@ -600,9 +688,10 @@ internal sealed partial class MemoryStore
             config.HistoryGroupReplies,
             config.HistoryWindowInMessages);
         HashSet<string> suppressed = SuppressedExperienceIds();
-        return projection.Turns.SelectMany(turn => turn.Records)
+        var selected = projection.Turns.SelectMany(turn => turn.Records)
             .Where(turn => IsRequestHistoryRecordAllowed(turn, suppressed))
             .ToList();
+        return permitted is HistoryWindowRecords window ? window.Selected(selected) : selected;
     }
 
     /// <summary>
@@ -622,7 +711,7 @@ internal sealed partial class MemoryStore
         foreach (MemoryTurn turn in requestHistory)
             if (IsRequestHistoryRecordAllowed(turn, suppressed))
                 permitted.Add(turn);
-        return permitted;
+        return requestHistory is HistoryWindowRecords window ? window.Revalidated(permitted) : permitted;
     }
 
     // Current input ownership is stricter than a historical window permission:
@@ -641,6 +730,7 @@ internal sealed partial class MemoryStore
         !suppressed.Contains(turn.EventId)
         && !suppressed.Contains(turn.SourceEventId)
         && !SuppressedTextMatches(turn.Text)
+        && HistoryBoundary.DisplayedOrLegacyRecord(turn)
         && IsMentionAllowed(turn)
         && IsNativeSupplyAllowed(turn);
 
@@ -690,7 +780,11 @@ internal sealed partial class MemoryStore
             && (!_memoryLifecycleEnabled
             || !MemoryLifecycle.IsStale(turn, DateTimeOffset.UtcNow))));
         candidates.AddRange(_profile);
-        candidates.AddRange(GetSummaryMemories(int.MaxValue));
+        // Program summaries/extracts are not ordinary fact candidates. Keeping
+        // them out before ranking also prevents them consuming a finite Take
+        // budget ahead of lawful original/retained candidates. Explicit summary
+        // getters/history review remain available; ContextBuilder owns opt-in
+        // auxiliary presentation separately.
         candidates.AddRange(GetDayArtifacts(int.MaxValue));
         // Only player-stated facts are eligible as memory candidates. Lilith's
         // own previous replies stay in the conversation history (GetRecentHistory)
@@ -826,28 +920,40 @@ internal sealed partial class MemoryStore
 
     private void CompressHistoryIfNeeded(int threshold, int keep)
     {
-        if (!_memoryLifecycleEnabled
+        // Default retain_raw never replaces original history with generated or
+        // clipped text. Explicit extracts are auxiliary and never remove raw.
+        if (_historyCompactionMode != HistoryCompressionPolicy.AuxiliaryExtracts
+            || !_historyAuxiliaryEnabled
+            || !_memoryLifecycleEnabled
             || !_derivedWriteEnabled
-            || threshold <= 0
-            || _history.Count <= threshold)
+            || threshold <= 0)
             return;
-        int removeCount = _history.Count - Math.Max(0, keep);
+        int messageCount = HistoryBoundary.CountMessages(_history);
+        if (messageCount <= threshold) return;
+        // Retain complete qualified runs, including the actual displayed prefix
+        // of an active/cancelled reply. Never use the bubble count to cut a head.
+        int removeCount = HistoryBoundary.WindowStart(_history, Math.Max(1, keep), keepAdjacentUserRoot: true);
         if (removeCount <= 0)
             return;
-        var older = _history.Take(removeCount).ToList();
-        _history.RemoveRange(0, removeCount);
-        string summary = MemorySemantics.CompressConversation(older, 700);
+        var older = RevalidateRequestHistory(_history.Take(removeCount).ToArray()).ToList();
+        if (older.Count == 0) return;
+        string summary = HistoryCompressionPolicy.BuildAuxiliary(older, 700, AuxiliaryWholeMessageAllowed);
         if (summary.Length > 0)
         {
+            string[] sources = older.Select(t => t.EventId).Where(id => id.Length > 0).ToArray();
+            if (_summaries.Any(t => t.Kind == HistoryCompressionPolicy.ExtractKind
+                && t.Origin == HistoryCompressionPolicy.ExtractOrigin && t.Text == summary
+                && t.SourceEventIds.SequenceEqual(sources))) return;
             _summaries.Add(new MemoryTurn
             {
+                EventId = Guid.NewGuid().ToString("N"),
                 Role = "lilith",
                 Text = summary,
-                Kind = "conversation.summary",
+                Kind = HistoryCompressionPolicy.ExtractKind,
                 Tier = "archival",
                 Category = "conversation",
-                Origin = "compressor",
-                SourceEventIds = older.Select(t => t.EventId).Where(id => id.Length > 0).ToArray(),
+                Origin = HistoryCompressionPolicy.ExtractOrigin,
+                SourceEventIds = sources,
                 Timestamp = older[^1].Timestamp == default
                     ? DateTimeOffset.UtcNow
                     : older[^1].Timestamp,
@@ -856,14 +962,78 @@ internal sealed partial class MemoryStore
             Trim(_summaries, 80);
             SaveList("v4-native-summaries.json", _summaries);
         }
-        SaveList("sessions\\v4-native-chat.json", _history);
         NativeEventLog.Trace(
-            "memory.compact",
+            "memory.history_auxiliary_extract",
             "mod",
             "lilith",
-            "older conversation turns compressed into a summary",
-            "moved=" + removeCount + ";kept=" + _history.Count
-            + ";summary_chars=" + summary.Length);
+            "bounded whole-message auxiliary extract; raw history was not replaced",
+            "source_records=" + removeCount + ";raw_kept=" + _history.Count
+            + ";summary_chars=" + summary.Length
+            + ";unit=independent_record_or_qualified_delivered_reply_run"
+            + ";messages_before=" + messageCount
+            + ";messages_kept=" + HistoryBoundary.CountMessages(_history));
+    }
+
+    private bool _historyOversizeRunReported;
+    private void TrimHistoryAtMessageBoundary()
+    {
+        int removeCount = HistoryBoundary.WindowStart(_history, MaxHistory, keepAdjacentUserRoot: true);
+        if (removeCount > 0)
+        {
+            if (_historyArchiveRequired && !HistoryRawDurablyArchived(_history.Take(removeCount).ToArray()))
+            { ReportHistoryRetentionBlocked("recent_view_trim_deferred_archive_unconfirmed"); return; }
+            _history.RemoveRange(0, removeCount);
+            _historyRetentionBlocked = false;
+        }
+        // 160 is a logical-message bound now, not a hidden raw-record cap. A
+        // large delivered run stays intact and remains subject to the sender's
+        // explicit whole-request budget. This event never logs private text.
+        int oversizeRuns = HistoryBoundary.OversizeReplyRunCount(_history);
+        bool oversized = _history.Count > MaxHistory || oversizeRuns > 0;
+        if (oversized && !_historyOversizeRunReported)
+            NativeEventLog.Trace("memory.history_boundary_oversize", "mod", "system",
+                "large delivered history units retained whole; no bubble-head clipping",
+                "source_records=" + _history.Count
+                + ";messages=" + HistoryBoundary.CountMessages(_history)
+                + ";oversize_reply_runs=" + oversizeRuns
+                + ";policy=whole_units_retained;generation_tail=unknown");
+        _historyOversizeRunReported = oversized;
+    }
+
+    private bool _historyRetentionBlocked;
+    internal string HistoryRetentionStatus => !_historyArchiveRequired
+        ? "policy_no_archive;unarchived_recent_view_may_expire"
+        : _historyRetentionBlocked ? "raw_preserved_archive_unconfirmed" : "ready";
+
+    private void ReportHistoryRetentionBlocked(string reason)
+    {
+        if (_historyRetentionBlocked) return;
+        _historyRetentionBlocked = true;
+        NativeEventLog.Trace("memory.history_retention_blocked", "mod", "system",
+            "raw history retained; archive durability was not confirmed",
+            "reason=" + reason + ";raw_records=" + _history.Count);
+    }
+
+    private bool HistoryRawDurablyArchived(IReadOnlyList<MemoryTurn> records)
+    {
+        if (records.Count == 0) return true;
+        if (!_experienceArchiveEnabled || _archiveReconcilePending) return false;
+        return HistoryCompressionPolicy.ConfirmDurableRaw(ExperienceDirectory, records, out _);
+    }
+
+    private bool AuxiliaryWholeMessageAllowed(ProjectedHistoryTurn turn)
+    {
+        if (turn.Records.Count == 0 || turn.Records.Any(t => string.IsNullOrEmpty(t.EventId) || t.Text == null)) return false;
+        if (turn.Text != string.Concat(turn.Records.Select(t => t.Text))) return false;
+        if (turn.Role == "user") return turn.Records.Count == 1 && turn.Records[0].DeliveryState == "received";
+        if (!turn.IdentityGuaranteed || turn.TruncatedHeadOrUnknown || turn.FirstChunkIndex != 0) return false;
+        var first = turn.Records[0]; var last = turn.Records[^1];
+        return first.SourceEventId.Length > 0
+            && HistoryBoundary.TryReplyBubble(first, out string requestId, out _)
+            && ReflectionDeliveries().TryGetValue(first.SourceEventId, out var receipt)
+            && receipt.RequestId == requestId
+            && receipt.SessionId == first.SessionId && receipt.Outcome == "completed" && receipt.Complete
+            && receipt.ShownChunks == turn.Records.Count && receipt.LastShownEventId == last.EventId;
     }
 
     public IReadOnlyList<MemoryTurn> GetRecentNative(int max)
@@ -880,6 +1050,7 @@ internal sealed partial class MemoryStore
         return count == 0
             ? Array.Empty<MemoryTurn>()
             : _events
+                .Where(turn => !IsLegacyAssistantReplyEcho(turn))
                 .Where(IsDerivedMemoryVisible)
                 .Where(turn => turn.Kind == "native.memory"
                     || turn.Kind == "interaction.memory"
@@ -1585,7 +1756,6 @@ internal sealed partial class MemoryStore
             _personaRelationship.Milestones.RemoveAll(SuppressedTextMatches);
             state.Relationship.ApplySnapshot(_personaRelationship);
         }
-        state.Emotions.ApplySnapshot(_personaEmotions);
         state.TickRelationshipEvolution();
     }
 
@@ -1593,33 +1763,54 @@ internal sealed partial class MemoryStore
     {
         if (state == null || !_longTermEnabled)
             return;
+        if (_personaStateReadFailed)
+        {
+            SetSaveFailure(Path.Combine(_root, "v4-native-persona.json"), "persona_read_failed");
+            return;
+        }
         _personaInteractionCount = state.InteractionCount;
         _personaStage = state.RelationshipStage;
         _personaTone = state.ToneBias;
-        EmotionalStateSnapshot emotions = state.Emotions.ToSnapshot();
         RelationshipSnapshot relationship = state.Relationship.ToSnapshot();
         string path = Path.Combine(_root, "v4-native-persona.json");
-        Directory.CreateDirectory(_root);
-        string temp = path + ".tmp";
-        File.WriteAllText(
-            temp,
-            JsonSerializer.Serialize(
-                new
-                {
-                    schema_version = PersonaStateMigration.CurrentSchemaVersion,
-                    interaction_count = _personaInteractionCount,
-                    relationship_stage = _personaStage,
-                    tone_bias = _personaTone,
-                    emotional_state = emotions,
-                    relationship = relationship,
-                    updated_at = DateTimeOffset.UtcNow
-                },
+        bool backupFailure = false;
+        try
+        {
+            Directory.CreateDirectory(_root);
+            if (!PrepareAffectRetirementWrite(path, out backupFailure))
+                return;
+            string temp = path + ".tmp";
+            var payload = new Dictionary<string, object?>
+            {
+                ["schema_version"] = PersonaStateMigration.CurrentSchemaVersion,
+                ["interaction_count"] = _personaInteractionCount,
+                ["relationship_stage"] = _personaStage,
+                ["tone_bias"] = _personaTone,
+                ["relationship"] = relationship,
+                ["updated_at"] = DateTimeOffset.UtcNow
+            };
+            // Preserve an existing legacy value unchanged in meaning, including
+            // unknown fields or non-object values. New files never create it.
+            if (_legacyEmotionalState.HasValue)
+                payload["emotional_state"] = _legacyEmotionalState.Value;
+            File.WriteAllText(temp, JsonSerializer.Serialize(payload,
                 new JsonSerializerOptions { WriteIndented = true }));
-        File.Move(temp, path, true);
+            File.Move(temp, path, true);
+            SetSaveFailure(path, "");
+        }
+        catch
+        {
+            if (!backupFailure) SetSaveFailure(path, "write_failed");
+            throw; // Keep existing caller-visible failure semantics.
+        }
     }
 
     private void LoadPersonaState()
     {
+        // A reload after deletion or removal must not retain a previous file's
+        // legacy payload. An unreadable file is not permission to overwrite it.
+        _legacyEmotionalState = null;
+        _personaStateReadFailed = false;
         string path = Path.Combine(_root, "v4-native-persona.json");
         if (!File.Exists(path))
             return;
@@ -1636,21 +1827,8 @@ internal sealed partial class MemoryStore
             if (root.TryGetProperty("tone_bias", out JsonElement tone)
                 && tone.ValueKind == JsonValueKind.String)
                 _personaTone = tone.GetString() ?? _personaTone;
-            if (root.TryGetProperty("emotional_state", out JsonElement emotionalState)
-                && emotionalState.ValueKind == JsonValueKind.Object)
-            {
-                _personaEmotions = new EmotionalStateSnapshot
-                {
-                    Warmth = ReadSnapshotDouble(emotionalState, "warmth", 0.50),
-                    Closeness = ReadSnapshotDouble(emotionalState, "closeness", 0.34),
-                    Tension = ReadSnapshotDouble(emotionalState, "tension", 0.18),
-                    Vitality = ReadSnapshotDouble(emotionalState, "vitality", 0.55),
-                    Curiosity = ReadSnapshotDouble(emotionalState, "curiosity", 0.52),
-                    LastNudge = ReadSnapshotString(emotionalState, "last_nudge"),
-                    LastNudgeAt = ReadSnapshotDate(emotionalState, "last_nudge_at"),
-                    LastTickAt = ReadSnapshotDate(emotionalState, "last_tick_at")
-                };
-            }
+            if (root.TryGetProperty("emotional_state", out JsonElement emotionalState))
+                _legacyEmotionalState = emotionalState.Clone();
             if (root.TryGetProperty("relationship", out JsonElement relationship)
                 && relationship.ValueKind == JsonValueKind.Object)
             {
@@ -1702,7 +1880,10 @@ internal sealed partial class MemoryStore
         }
         catch
         {
-            // Ignore a malformed local persona file.
+            // Keep a malformed/unreadable original intact. A fresh successful
+            // load is required before this instance may replace the file.
+            _personaStateReadFailed = true;
+            SetSaveFailure(path, "persona_read_failed");
         }
     }
 

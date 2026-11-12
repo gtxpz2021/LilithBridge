@@ -75,7 +75,8 @@ internal static class RuntimeDirector
         bool requestedByModel,
         bool resumedPendingWindow = false,
         bool settledIncompleteWindow = false,
-        int budgetLimitedDialogueLines = 0)
+        int budgetLimitedDialogueLines = 0,
+        bool currentDialogue = false)
     {
         if (!config.ReflectionEnabled
             || !systemReady
@@ -86,7 +87,16 @@ internal static class RuntimeDirector
             || noteSupplementInProgress
             || reflectionInProgress)
             return false;
+        // An explicit public request can use one settled dialogue immediately.
+        // Frozen-work/failure cooldown and provider/resource/source gates still
+        // apply; this does not create a request on ordinary turns. Timing is not target selection.
+        if (requestedByModel && newDeliveredTurns >= 2) return true;
         if (newDeliveredTurns < Math.Max(1, config.ReflectionMinNewTurns)
+            // A short current conversation should not wait forever for a third
+            // exchange. It still waits for the same natural pause; this does not
+            // create a reflection per utterance or replace her explicit request.
+            && !(currentDialogue && config.ReflectionOnlyWhenIdle && newDeliveredTurns >= 2
+                && idleSeconds >= config.ReflectionNaturalPauseSeconds)
             && !(resumedPendingWindow && newDeliveredTurns >= 2)
             // A character-limited prefix may be small even though this same
             // eligible window already met the ordinary complete-dialogue floor.

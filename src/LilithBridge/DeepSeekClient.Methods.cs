@@ -74,7 +74,7 @@ internal sealed partial class DeepSeekClient
         foreach(var p in b.EnumerateObject())
             if(p.Name.Length>32||p.Value.ValueKind!=JsonValueKind.String||p.Value.GetString()!.Length>300
                 ||!bindings.TryAdd(p.Name,p.Value.GetString()!))throw new ArgumentException("invalid_bindings");
-        return new("read",id,0,Revision:revision,Bindings:bindings,Refs:Strings(r,"source_refs",6,32),Offset:Number(r,"offset",0,ReviewContext.MaxRecordOffset,false),HasRefs:r.TryGetProperty("source_refs",out _));
+        return new("read",id,0,Revision:revision,Bindings:bindings,Refs:Strings(r,"source_refs",6,35),Offset:Number(r,"offset",0,ReviewContext.MaxRecordOffset,false),HasRefs:r.TryGetProperty("source_refs",out _));
     }
     private static string MethodOfferError(DialogueRequest r,MethodOffer? o,string id="",int revision=0)
     {

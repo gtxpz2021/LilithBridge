@@ -61,10 +61,11 @@ internal sealed partial class MemoryStore
         lock(_experienceLock)
         {
             var mention=_mentionReadPolicy.Value;var native=_nativeDialoguePolicy.Value;
-            var turns=_b1ReadTurns;var permission=_b1Permission;
+            var turns=_b1ReadTurns;var borrowed=_b1BorrowedArchive;var permission=_b1Permission;
+            var corrections=_readSourceCorrections;var possibleCorrections=_readPossibleSourceCorrections;var correctionSignature=_rawCorrectionReadSignature;
             bool session=_b1ReadSession,built=_b1ReadSessionBuilt;
             var document=_b1MemoDocument;var resolved=_b1ResolutionMemo.ToArray();
-            var entries=_b1IndexedEntries;var index=_b1Index;var search=_b1SearchIndex;
+            var entries=_b1IndexedEntries;var index=_b1Index;var search=_b1SearchIndex;var meaning=_b1MeaningSearchIndex;
             var sourceSearch=_b1SourceSearchIndex;var discovery=_b1DiscoveryIndex;
             _mentionReadPolicy.Value=null;_nativeDialoguePolicy.Value=null;
             // The lifetime probe has its own resolver view even if called in
@@ -74,10 +75,11 @@ internal sealed partial class MemoryStore
             finally
             {
                 _mentionReadPolicy.Value=mention;_nativeDialoguePolicy.Value=native;
-                _b1ReadTurns=turns;_b1Permission=permission;
+                _b1ReadTurns=turns;_b1BorrowedArchive=borrowed;_b1Permission=permission;
+                _readSourceCorrections=corrections;_readPossibleSourceCorrections=possibleCorrections;_rawCorrectionReadSignature=correctionSignature;
                 _b1ReadSession=session;_b1ReadSessionBuilt=built;_b1MemoDocument=document;
                 _b1ResolutionMemo.Clear();foreach(var item in resolved)_b1ResolutionMemo.Add(item.Key,item.Value);
-                _b1IndexedEntries=entries;_b1Index=index;_b1SearchIndex=search;
+                _b1IndexedEntries=entries;_b1Index=index;_b1SearchIndex=search;_b1MeaningSearchIndex=meaning;
                 _b1SourceSearchIndex=sourceSearch;_b1DiscoveryIndex=discovery;
             }
         }
@@ -150,9 +152,25 @@ internal sealed partial class MemoryStore
         if(dependencies.Length==0)return true;
         lock(_experienceLock)
         {
+            var validation=CurrentSourceValidation;
+            // Public-expression closure checks use the same empty-query source
+            // policy. Reuse exact successes within that synchronous operation;
+            // an interactive query can have time-relative native recall rules.
+            bool reuse=validation!=null&&query.Length==0&&_nativeDialoguePolicy.Value?.Authorization==null;
+            var mentionPolicy=_mentionReadPolicy.Value;var nativePolicy=_nativeDialoguePolicy.Value;
+            MethodPermissionKey Key(MethodSource source)=>new(source,query,config,mentionPolicy,nativePolicy);
+            if(reuse)
+            {
+                dependencies=dependencies.Where(source=>!validation!.Methods.Contains(Key(source))).ToArray();
+                if(dependencies.Length==0)return true;
+            }
+            long revision=validation?.Revision??0;
             using var mention=BeginMentionRequest(query,true);
             using var native=BeginNativeDialogueRequest(query,true,config);
-            return MethodSourceVersionsMatch(dependencies);
+            bool permitted=MethodSourceVersionsMatch(dependencies);
+            if(permitted&&reuse&&validation!.Revision==revision)
+                foreach(var source in dependencies)validation.Methods.Add(Key(source));
+            return permitted;
         }
     }
     // Shared material gate. Consumers keep their own owner/operation lifecycle.
@@ -178,7 +196,8 @@ internal sealed partial class MemoryStore
     // Caller holds _experienceLock and selects the appropriate policy scope.
     private bool MethodSourceVersionsMatch(IEnumerable<MethodSource> dependencies)
     {
-        BeginB1Read();B1Document? doc=null;
+        using var borrowed=BeginBorrowedB1BooleanRead();
+        BeginB1Read(borrowArchive:true);B1Document? doc=null;
         foreach(var s in dependencies)
         {
             if(s.Kind=="b1" && (doc??=LoadB1())==null)return false;
@@ -187,12 +206,14 @@ internal sealed partial class MemoryStore
         }
         return true;
     }
-    internal MethodSource[]? CaptureMethodSources(DialogueRequest request,out string error)
+    internal MethodSource[]? CaptureMethodSources(DialogueRequest request,out string error,
+        IReadOnlyList<MemoryTurn>? expressionBase = null, bool expressionTracked = false, bool allowGeneratedDerivation = false)
     {
         error="source_tracking_unavailable";
-        if(!request.MethodBaseTrackingAvailable || request.Frame is {DataUrl.Length:>0}
-            ||request.ReviewPriorThoughtSupplied || request.ReviewDerivationUntracked || request.MethodProtocolUntracked
+        if(!(expressionBase == null ? request.MethodBaseTrackingAvailable : expressionTracked) || request.Frame is {DataUrl.Length:>0}
+            ||request.ReviewPriorThoughtSupplied || request.ReviewDerivationUntracked&&!(expressionBase!=null&&allowGeneratedDerivation) || request.MethodProtocolUntracked
             ||request.MemoryOperation!=null)return null;
+        error="source_identity_unresolvable";
         lock(_experienceLock)
         {
             using var mention=BeginMentionRequest(request.ReviewCurrentText,true);
@@ -200,7 +221,7 @@ internal sealed partial class MemoryStore
             BeginB1Read();B1Document? doc=null;var sources=new List<MethodSource>();
             var input=B1Turn("utterance",request.UserEventId);
             if(input==null||input.Role!="user"||input.Origin!="user"||input.DeliveryState!="received"
-                ||input.Text!=request.ReviewCurrentText)return null;
+                ||input.Text!=request.ReviewCurrentText){error="current_user_source_unavailable";return null;}
             bool Add(B1Ref reference,string fingerprint="",string state="")
             {
                 if(reference.Kind=="b1" && (doc??=LoadB1())==null)return false;
@@ -216,7 +237,7 @@ internal sealed partial class MemoryStore
                 }
                 return true;
             }
-            foreach(var t in request.MethodBaseSources.Append(input).Concat(request.ReviewSourceRecords.Values))
+            foreach(var t in (expressionBase ?? request.MethodBaseSources).Append(input).Concat(request.ReviewSourceRecords.Values))
             {
                 if(t.Kind=="profile")
                 {
