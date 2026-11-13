@@ -1,0 +1,353 @@
+--- /dev/null
++++ b/tools/installer-source/Build-SingleFile.ps1
+@@ -0,0 +1,12 @@
++param([Parameter(Mandatory=$true)][string]$Payload,[Parameter(Mandatory=$true)][string]$Destination)
++$ErrorActionPreference='Stop'
++$payloadPath=[IO.Path]::GetFullPath($Payload)
++$destinationPath=[IO.Path]::GetFullPath($Destination)
++$digest=(Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
++$length=(Get-Item -LiteralPath $payloadPath).Length
++$identity=Join-Path ([IO.Path]::GetDirectoryName($destinationPath)) 'PayloadIdentity.g.cs'
++$code='namespace LilithSetupLauncher { internal static class PayloadInfo { internal const string Hash="'+$digest+'"; internal const long Bytes='+$length+'L; } }'
++[IO.File]::WriteAllText($identity,$code,[Text.UTF8Encoding]::new($false))
++$compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
++& $compiler /nologo /codepage:65001 /langversion:5 /target:winexe /platform:x64 /optimize+ /debug- /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll "/win32manifest:$PSScriptRoot\src\app.manifest" "/resource:$payloadPath,LilithBridge.SetupPayload.zip" "/out:$destinationPath" "$PSScriptRoot\launcher\Bootstrap.cs" $identity
++if($LASTEXITCODE -ne 0){throw 'Single-file launcher compilation failed. No installer or test was run.'}
+--- /dev/null
++++ b/tools/installer-source/launcher/Bootstrap.cs
+@@ -0,0 +1,163 @@
++using System;
++using System.IO;
++using System.IO.Compression;
++using System.Linq;
++using System.Reflection;
++using System.Security.Cryptography;
++using System.Diagnostics;
++using System.Threading;
++using System.Threading.Tasks;
++using System.Collections.Generic;
++using System.Drawing;
++using System.Windows.Forms;
++using System.Runtime.InteropServices;
++using System.Runtime.Versioning;
++[assembly: AssemblyTitle("LilithBridge Setup")]
++[assembly: AssemblyVersion("0.1.4.16")]
++[assembly: ComVisible(false)]
++[assembly: TargetFramework(".NETFramework,Version=v4.8")]
++namespace LilithSetupLauncher
++{
++    static class Bootstrap
++    {
++        [STAThread] static int Main(string[] args)
++        {
++            Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
++            if (args.Length != 0) { MessageBox.Show("请直接打开此安装程序；游戏目录和组件在向导中选择。", "LilithBridge 安装"); return 1; }
++            using (var mutex = new Mutex(false, "Local\\LilithBridgeSetup-" + PayloadInfo.Hash.Substring(0, 16)))
++            {
++                bool acquired = false;
++                try
++                {
++                    try { acquired = mutex.WaitOne(0); } catch (AbandonedMutexException) { acquired = true; }
++                    if (!acquired) { MessageBox.Show("正在准备此版本的安装向导，请稍候。", "LilithBridge 安装"); return 1; }
++                    using (var form = new PreparationForm()) Application.Run(form);
++                    return 0;
++                }
++                finally { if (acquired) mutex.ReleaseMutex(); }
++            }
++        }
++        internal static string Digest(Stream input)
++        { using (var sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(input)).Replace("-", "").ToLowerInvariant(); }
++        internal static string HashFile(string path)
++        { Guard(path); using (var input = File.OpenRead(path)) return Digest(input); }
++        internal static void Guard(string path)
++        {
++            string current = Path.GetFullPath(path);
++            while (!String.IsNullOrEmpty(current))
++            {
++                try { if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new IOException("安装缓存路径包含链接，请使用普通用户目录。检查代码 LBBOOT_REPARSE"); }
++                catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { }
++                current = Path.GetDirectoryName(current);
++            }
++        }
++        internal static string Prepare(Action<string, int> progress, CancellationToken cancel)
++        {
++            string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LilithBridge", "InstallerCache", "v1", "singlefile", PayloadInfo.Hash.Substring(0, 24));
++            Guard(root); Directory.CreateDirectory(root);
++            string archive = Path.Combine(root, "setup-payload.zip"); Guard(archive);
++            if (File.Exists(archive) && (new FileInfo(archive).Length != PayloadInfo.Bytes || HashFile(archive) != PayloadInfo.Hash))
++                File.Move(archive, archive + ".invalid-" + Guid.NewGuid().ToString("N"));
++            if (!File.Exists(archive))
++            {
++                progress("正在自动准备安装文件，无需手工解压…", 0);
++                string part = archive + "." + Guid.NewGuid().ToString("N") + ".part";
++                try
++                {
++                    using (var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("LilithBridge.SetupPayload.zip"))
++                    using (var output = new FileStream(part, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++                    {
++                        if (input == null) throw new IOException("安装文件缺失，检查代码 LBBOOT_PAYLOAD_MISSING");
++                        var buffer = new byte[131072]; int n; long total = 0;
++                        while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
++                        { cancel.ThrowIfCancellationRequested(); total += n; if (total > PayloadInfo.Bytes) throw new IOException("LBBOOT_PAYLOAD_SIZE"); output.Write(buffer, 0, n); progress("正在准备安装向导…", (int)(total * 25 / PayloadInfo.Bytes)); }
++                        output.Flush(true); if (total != PayloadInfo.Bytes) throw new IOException("LBBOOT_PAYLOAD_SIZE");
++                    }
++                    if (HashFile(part) != PayloadInfo.Hash) throw new IOException("安装文件未通过校验，请重新下载此安装程序。检查代码 LBBOOT_PAYLOAD_HASH");
++                    cancel.ThrowIfCancellationRequested(); File.Move(part, archive);
++                }
++                finally { if (File.Exists(part)) File.Delete(part); }
++            }
++            string exe = Path.Combine(root, "setup", "LilithBridge-Installer.exe"), expectedExe = null;
++            using (var input = new FileStream(archive, FileMode.Open, FileAccess.Read, FileShare.Read))
++            {
++                if (input.Length != PayloadInfo.Bytes || Digest(input) != PayloadInfo.Hash) throw new IOException("安装缓存未通过校验，未启动安装器。检查代码 LBBOOT_CACHE_HASH");
++                input.Position = 0;
++                using (var zip = new ZipArchive(input, ZipArchiveMode.Read))
++                {
++                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase); long total = 0; int done = 0;
++                    foreach (var entry in zip.Entries)
++                    {
++                        cancel.ThrowIfCancellationRequested(); string name = entry.FullName;
++                        if (name.EndsWith("/", StringComparison.Ordinal)) continue;
++                        if (name.Contains("\\") || name.Contains(":") || Path.IsPathRooted(name) || name.Split('/').Any(x => x == "" || x == "." || x == "..") || !seen.Add(name)) throw new IOException("LBBOOT_UNSAFE_ENTRY");
++                        total += entry.Length; if (entry.Length < 0 || total > 134217728) throw new IOException("LBBOOT_PAYLOAD_SIZE");
++                        string target = Path.GetFullPath(Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar)));
++                        if (!target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new IOException("LBBOOT_UNSAFE_ENTRY");
++                        Guard(target); Directory.CreateDirectory(Path.GetDirectoryName(target));
++                        string expected; using (var content = entry.Open()) expected = Digest(content);
++                        if (name == "setup/LilithBridge-Installer.exe") expectedExe = expected;
++                        bool needsFile = !File.Exists(target);
++                        if (!needsFile)
++                        {
++                            if (new FileInfo(target).Length != entry.Length || HashFile(target) != expected)
++                            { File.Move(target, target + ".invalid-" + Guid.NewGuid().ToString("N")); needsFile = true; }
++                        }
++                        if (needsFile)
++                        {
++                            string part = target + "." + Guid.NewGuid().ToString("N") + ".part";
++                            try
++                            {
++                                using (var content = entry.Open()) using (var output = new FileStream(part, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++                                {
++                                    var buffer = new byte[131072]; int n; long length = 0;
++                                    while ((n = content.Read(buffer, 0, buffer.Length)) > 0) { cancel.ThrowIfCancellationRequested(); length += n; if (length > entry.Length) throw new IOException("LBBOOT_ENTRY_SIZE"); output.Write(buffer, 0, n); }
++                                    output.Flush(true); if (length != entry.Length) throw new IOException("LBBOOT_ENTRY_SIZE");
++                                }
++                                if (HashFile(part) != expected) throw new IOException("LBBOOT_ENTRY_HASH");
++                                cancel.ThrowIfCancellationRequested(); Guard(target); File.Move(part, target);
++                            }
++                            finally { if (File.Exists(part)) File.Delete(part); }
++                        }
++                        progress("正在校验安装文件（" + (++done) + " / " + zip.Entries.Count + "）…", 25 + (int)(70L * done / Math.Max(1, zip.Entries.Count)));
++                    }
++                }
++            }
++            cancel.ThrowIfCancellationRequested(); Guard(exe);
++            if (expectedExe == null || HashFile(exe) != expectedExe) throw new IOException("LBBOOT_INSTALLER_HASH");
++            progress("安装向导已准备好，正在打开…", 100); return exe;
++        }
++    }
++    sealed class PreparationForm : Form
++    {
++        readonly Label status = new Label(); readonly ProgressBar progress = new ProgressBar(); readonly Button action = new Button();
++        CancellationTokenSource cancel; bool busy, closing;
++        public PreparationForm()
++        {
++            Text = "LilithBridge 安装 · .16 单文件候选"; ClientSize = new Size(540, 190); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen; Font = new Font("Microsoft YaHei UI", 10F);
++            status.SetBounds(20, 20, 500, 62); status.Text = "正在准备安装向导…"; Controls.Add(status);
++            progress.SetBounds(20, 90, 500, 24); Controls.Add(progress);
++            action.SetBounds(395, 132, 125, 34); action.Text = "取消"; Controls.Add(action);
++            action.Click += async (s, e) => { if (busy) { closing = true; cancel.Cancel(); status.Text = "正在取消…"; } else await Start(); };
++            FormClosing += (s, e) => { if (busy) { e.Cancel = true; closing = true; cancel.Cancel(); } };
++            Shown += async (s, e) => await Start();
++        }
++        void Report(string text, int value)
++        { if (IsDisposed) return; if (InvokeRequired) { BeginInvoke(new Action<string, int>(Report), text, value); return; } status.Text = text; progress.Value = Math.Max(0, Math.Min(100, value)); }
++        async Task Start()
++        {
++            busy = true; closing = false; cancel = new CancellationTokenSource(); action.Text = "取消";
++            try
++            {
++                string exe = await Task.Run(() => Bootstrap.Prepare(Report, cancel.Token)); cancel.Token.ThrowIfCancellationRequested();
++                string origin = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
++                var info = new ProcessStartInfo(exe, "--resource-dir \"" + origin + "\"") { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
++                using (var child = Process.Start(info)) { if (child == null) throw new IOException("LBBOOT_START_FAILED"); }
++                closing = true;
++            }
++            catch (OperationCanceledException) { closing = true; }
++            catch (Exception error) { status.Text = "安装向导尚未打开，游戏和存档未操作。可重试；若仍失败，请反馈此信息：\r\n" + error.Message; action.Text = "重试"; }
++            finally { busy = false; cancel.Dispose(); cancel = null; if (closing) Close(); }
++        }
++    }
++}
+--- /dev/null
++++ b/tools/installer-source/launcher/README.md
+@@ -0,0 +1,24 @@
++# Single-file launcher
++
++The launcher contains the matching small installer ZIP as an embedded resource.
++It hashes the entire archive and verifies every extracted file before opening
++the ordinary installer with `--resource-dir` pointing at the launcher's original
++directory. It writes only its own per-payload cache at this stage, never a game
++directory. It does not download arbitrary executable code.
++
++Build the inner installer with `Build-Installer.ps1`. Assemble the small release
++ZIP with its `setup` directory and notices, then compile the launcher:
++
++```powershell
++./Build-SingleFile.ps1 -Payload ./LilithBridge-installer-current.zip -Destination ./LilithBridge-Setup.exe
++```
++
++`Build-SingleFile.ps1` generates the exact payload hash and byte count as C#
++constants. The supplied generated identity documents the prepared release ZIP;
++regenerate it whenever that ZIP changes. The launcher only prepares files and
++opens the existing wizard. Component selection, cached resources, pinned
++downloads, stopped-game checks and protected configuration commits stay in
++the installer. The 50 MiB online-update ZIP cap is unchanged.
++
++This candidate was compiled only. The launcher, handoff, network retry and
++install/upgrade paths were not run; the user owns runtime verification.
+--- a/tools/installer-source/src/OfflineResourceArchive.cs
++++ b/tools/installer-source/src/OfflineResourceArchive.cs
+@@ -16,6 +16,7 @@
+         {
+             var roots = new List<string>();
+             if (!String.IsNullOrWhiteSpace(offline)) roots.Add(SetupCore.SafePath(offline, null));
++            if (!String.IsNullOrWhiteSpace(TrustedDownloads.LauncherDirectory)) roots.Add(SetupCore.SafePath(TrustedDownloads.LauncherDirectory, null));
+             if (!String.IsNullOrWhiteSpace(package))
+             {
+                 string root = SetupCore.SafePath(package, null);
+--- a/tools/installer-source/src/Program.cs
++++ b/tools/installer-source/src/Program.cs
+@@ -5,7 +5,7 @@
+ using System.Runtime.InteropServices;
+ using System.Runtime.Versioning;
+ [assembly: AssemblyTitle("LilithBridge Selector Generated Save Cache Supply Input History and Receipt Integration Research Installer")]
+-[assembly: AssemblyVersion("0.1.4.15")]
++[assembly: AssemblyVersion("0.1.4.16")]
+ [assembly: ComVisible(false)]
+ [assembly: TargetFramework(".NETFramework,Version=v4.8")]
+ namespace LilithSetup
+@@ -18,6 +18,8 @@
+             try
+             {
+                 string root = null;
++                // The single-file launcher supplies only its download directory, never keys or configuration.
++                if (args.Length == 2 && args[0] == "--resource-dir") { TrustedDownloads.LauncherDirectory = SetupCore.SafePath(args[1], null); SetupCore.NoReparse(TrustedDownloads.LauncherDirectory); args = new string[0]; }
+                 if (args.Length == 1 && args[0] == "--network-diagnostic") { using (var diagnostic = new NetworkDiagnosticForm()) Application.Run(diagnostic); return 0; }
+                 WizardOptions handoff = null;
+                 if (args.Length == 2 && args[0] == "--resume-handoff") { handoff = InstallerHandoff.Accept(args[1], AppDomain.CurrentDomain.BaseDirectory, WizardCore.InstallerSchema, WizardCore.SupportedConfigSchema); root = handoff.GameRoot; }
+--- a/tools/installer-source/src/StorySetup.cs
++++ b/tools/installer-source/src/StorySetup.cs
+@@ -22,9 +22,9 @@
+   public static string Result(Snapshot snapshot,EditRequest edit){if(!edit.ConfigureStory)return "未选择向导配置随包语料，已有作品资料设置保持。";if(!Applies(snapshot,edit))return "随包文件已核对；已有作品资料选源/开关/许可保持，未按默认选项切换。";return "作品资料路径已配置，本地库已启用并按需读取；无需再手填路径或选库。"+(edit.AllowStoryModelData?"本次仅明确启用作品资料域的模型使用许可；其他总许可与登录不改。":"本次不新增模型使用许可；原作品资料许可保持。")+"ChatGPT由本人游戏内登录，随后点顶部“推荐使用设置”一次知情选择；仅登录不会授权资料发送。旧后台关闭项可用其中“明确开启普通记忆提取与反思工作”；提示需正常重进时照提示操作。";}
+  }
+  public static class BuildInfo {
+-  public const string Build="0.1.4.15-auto-resources.candidate.1";
++  public const string Build="0.1.4.16-singlefile-cn.candidate.1";
+   public const string ProductHash="e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff";
+-  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .15 · auto-resources.candidate.1";
++  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .16 · singlefile-cn.candidate.1";
+   public static string Feedback(CopyContext context){return "\r\n包构建："+Build+"；包内DLL："+ProductHash+"\r\n本次目标DLL："+context.PluginHash+"\r\n已有日志："+Path.Combine(context.GameRoot,"BepInEx/LogOutput.log")+"；"+Path.Combine(context.DataRoot,"telemetry/v4-native-events.jsonl")+"。反馈请附构建身份、发生时间和最短复现步骤；日志由本人选择，不自动上传，勿公开密钥/认证或整个资料目录。";}
+  }
+ }
+--- a/tools/installer-source/src/TrustedDownloads.cs
++++ b/tools/installer-source/src/TrustedDownloads.cs
+@@ -22,6 +22,7 @@
+         public static void UsePlatformTls() { ServicePointManager.SecurityProtocol = SecurityProtocolType.SystemDefault; }
+         public static bool IsInstallerArchive(string name)
+         { return name != null && System.Text.RegularExpressions.Regex.IsMatch(name, "^LilithBridge-(?:unified-)?installer-(?!source(?:-|\\.))(?!changes(?:-|\\.))(?!evidence(?:-|\\.))[A-Za-z0-9._-]+\\.zip$"); }
++        public static string LauncherDirectory = "";
+         public static string DefaultCache { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"LilithBridge\InstallerCache\v1"); } }
+         public static List<DownloadSpec> Wheels(string manifest)
+         {
+@@ -64,7 +65,7 @@
+         public static IEnumerable<string> ResourceCacheRoots(string cache, string offline, string package, string kind)
+         {
+             var roots = new List<string>();
+-            foreach (string root in new[] { offline, String.IsNullOrWhiteSpace(package) ? "" : Path.Combine(package, "offline-cache") })
++            foreach (string root in new[] { offline, String.IsNullOrWhiteSpace(LauncherDirectory) ? "" : Path.Combine(LauncherDirectory, "offline-cache"), LauncherDirectory, String.IsNullOrWhiteSpace(package) ? "" : Path.Combine(package, "offline-cache") })
+             {
+                 if (String.IsNullOrWhiteSpace(root)) continue;
+                 if (!String.IsNullOrEmpty(kind)) roots.Add(Path.Combine(root, kind));
+@@ -107,20 +108,38 @@
+             for (int i = 0; i < sources.Length; i++)
+             {
+                 cancel.ThrowIfCancellationRequested();
+-                try { return AcquireSource(sources[i], cache, offline, allowNetwork, progress, cancel); }
++                try
++                {
++                    try { return AcquireSource(sources[i], cache, offline, allowNetwork, progress, cancel); }
++                    catch (WebException transient)
++                    {
++                        cancel.ThrowIfCancellationRequested(); if (!Retryable(transient)) throw;
++                        if (transient.Response != null) transient.Response.Close();
++                        if (progress != null) progress(item.Name + " @ " + new Uri(sources[i].Url).Host + "：连接中断，自动重试一次；已下载部分保留", 0, item.Bytes);
++                        return AcquireSource(sources[i], cache, offline, allowNetwork, progress, cancel);
++                    }
++                }
+                 catch (WebException error)
+                 {
+                     cancel.ThrowIfCancellationRequested();
+                     if (error.Response != null) error.Response.Close();
+                     if (i == sources.Length - 1) throw;
++                    if (progress != null) progress(item.Name + " @ 镜像未完成，正在切换官方来源", 0, item.Bytes);
+                 }
+                 catch (SetupException error)
+                 {
+                     // A stale/missing mirror is not a reason to change pinned dependencies.
+                     if (i == sources.Length - 1 || !(error.Message.StartsWith("LBWIZ_DOWNLOAD_") || error.Message == "LBWIZ_TOO_MANY_REDIRECTS")) throw;
++                    if (progress != null) progress(item.Name + " @ 镜像未通过下载校验，正在切换官方来源", 0, item.Bytes);
+                 }
+             }
+             throw new SetupException("LBWIZ_DOWNLOAD_FAILED");
++        }
++        static bool Retryable(WebException error)
++        {
++            var response = error.Response as HttpWebResponse;
++            if (response != null) return response.StatusCode == HttpStatusCode.RequestTimeout || response.StatusCode == HttpStatusCode.BadGateway || response.StatusCode == HttpStatusCode.ServiceUnavailable || response.StatusCode == HttpStatusCode.GatewayTimeout;
++            return error.Status == WebExceptionStatus.Timeout || error.Status == WebExceptionStatus.ConnectFailure || error.Status == WebExceptionStatus.ConnectionClosed || error.Status == WebExceptionStatus.ReceiveFailure || error.Status == WebExceptionStatus.SendFailure;
+         }
+         static string AcquireSource(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel)
+         {
+--- a/tools/installer-source/src/Wizard.Core.cs
++++ b/tools/installer-source/src/Wizard.Core.cs
+@@ -246,7 +246,7 @@
+         public static string Explain(Exception error)
+         {
+             if (error is OperationCanceledException) return "已停止。完成并核验的组件会保留，重新开始时会检查并复用。";
+-            if (error is WebException) { var detail = NetworkDiagnostics.Error(error); if ((string)detail["category"] == "windows_schannel_credentials_unavailable") return "Windows HTTPS 当前运行上下文的安全凭证不可用（0x8009030E），下载尚未完成。可以运行包内无 Key 网络诊断入口一次核对，或选择离线包目录；已核验文件会复用。"; return "下载未完成。请检查网络、代理或证书状态后重试，也可选择离线包目录。已核验的下载会复用；安全校验保持启用。"; }
++            if (error is WebException) { var detail = NetworkDiagnostics.Error(error); if ((string)detail["category"] == "windows_schannel_credentials_unavailable") return "Windows HTTPS 当前运行上下文的安全凭证不可用（0x8009030E），下载尚未完成。可以运行包内无 Key 网络诊断入口一次核对，或选择离线包目录；已核验文件会复用。"; return "国内镜像及官方来源未能完成本项下载。请检查网络后点“重新检查并继续”；已核验资源和可续传的下载会复用。安全校验保持启用，不保证所有网络均可连接。"; }
+             if (error is UnauthorizedAccessException) return "当前目录没有写入权限。请使用可写的独立游戏目录，或检查系统给出的权限提示。";
+             string code = SetupCore.SafeError(error);
+             if (code == "LBINSTALL_HOST_InteropGenerationDisabled") return "游戏接口缓存缺失或已过期，但加载器自动生成已关闭。请在 BepInEx/config/BepInEx.cfg 的 IL2CPP 设置中启用 UpdateInteropAssemblies，启动所选游戏完成生成并正常退出，再重新检查。现有设置、缓存和用户数据未删除。";
+--- a/tools/installer-source/src/Wizard.Form.cs
++++ b/tools/installer-source/src/Wizard.Form.cs
+@@ -77,7 +77,7 @@
+             var toggles = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false }; toggles.Controls.Add(advanced); toggles.Controls.Add(network); advancedRow.Controls.Add(toggles, 0, 0);
+             advancedPanel.Dock = DockStyle.Fill; advancedPanel.Visible = false; offline.Name = "OfflineCache"; offline.Dock = DockStyle.Fill; offline.ReadOnly = true; offlineBrowse.Text = "选择资源ZIP所在目录…"; offlineBrowse.AutoSize = true;
+             var advancedFields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 }; advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); advancedFields.Controls.Add(Line(offline, offlineBrowse), 0, 0); advancedFields.Controls.Add(endpoint, 1, 0); advancedPanel.Controls.Add(advancedFields); advancedRow.Controls.Add(advancedPanel, 0, 1); layout.Controls.Add(advancedRow, 0, 7);
+-            status.Name = "Status"; status.Multiline = true; status.ReadOnly = true; status.ScrollBars = ScrollBars.Vertical; status.Dock = DockStyle.Fill; status.BackColor = Color.White; status.Text = "请选择游戏目录。默认安装插件与所需加载器；本地召回可选。\r\n旁边的离线资源ZIP会在开始安装后自动解压校验，无需手工合并。游戏初始化按后续提示操作。"; layout.Controls.Add(status, 0, 8);
++            status.Name = "Status"; status.Multiline = true; status.ReadOnly = true; status.ScrollBars = ScrollBars.Vertical; status.Dock = DockStyle.Fill; status.BackColor = Color.White; status.Text = "请选择游戏目录。默认安装插件与所需加载器；本地召回可选。\r\n已下载的有效资源会自动复用；缺失项自动从国内镜像或官方来源下载，无需另备资源包。游戏初始化按后续提示操作。"; layout.Controls.Add(status, 0, 8);
+             confirm.Name = "ConfirmSelection"; confirm.Text = "我已核对目标目录和勾选组件，允许安装并保存这些设置。"; confirm.Dock = DockStyle.Fill; layout.Controls.Add(confirm, 0, 9);
+             start.Text = "开始安装"; start.Name = "StartInstallation"; start.Width = 132; start.Height = 34; start.BackColor = Color.FromArgb(35, 97, 177); start.ForeColor = Color.White; start.FlatStyle = FlatStyle.Flat;
+             stop.Text = "停止"; stop.Width = 70; stop.Height = 34; stop.Enabled = false; update.Text = "检查项目更新"; recover.Text = "中断恢复"; rollback.Text = "回退上次插件";
+@@ -199,7 +199,7 @@
+                 else if (result.State == "WaitingForGame" || result.State == "WaitingForExit") start.Text = "继续安装";
+                 else { start.Text = "再次检查 / 应用"; loading = true; key.Clear(); loading = false; if (result.DataRoot != null) expectedDigest = SetupCore.ReadSnapshot(Path.Combine(result.DataRoot, "config.json")).Digest; providerEdited = false; progress.Value = 100; }
+             }
+-            catch (Exception error) { LastState = "Incomplete"; LastError = WizardCore.Explain(error); status.Text = "所选流程尚未完成。\r\n" + LastError; start.Text = "重新检查并继续"; try { WizardSession.Save(options, "Incomplete"); } catch { } }
++            catch (Exception error) { LastState = "Incomplete"; LastError = WizardCore.Explain(error); status.Text = "所选流程尚未完成。\r\n" + LastError + "\r\n可点“重新检查并继续”重试；已校验资源及未完成下载会复用，原资料不会为重试而清空。"; start.Text = "重新检查并继续"; try { WizardSession.Save(options, "Incomplete"); } catch { } }
+             finally { options.ApiKey = ""; cancellation.Dispose(); cancellation = null; busy = false; commitInProgress = false; SetButtons(); }
+             if (switchInstaller) Close();
+         }
+--- a/tools/setup/install-manifest.json
++++ b/tools/setup/install-manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "schema": 1,
+   "product": "LilithBridge",
+-  "id": "lilithbridge-103-cn15-auto-resources-candidate1",
++  "id": "lilithbridge-103-cn16-singlefile-candidate1",
+   "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+   "previous_plugin_hashes": [
+     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",

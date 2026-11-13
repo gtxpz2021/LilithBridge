@@ -91,6 +91,7 @@ internal sealed partial class NativeOpenAISettings
         Note("密钥仅以 Windows 当前用户加密文件保存。关闭面板或切换页签会清空输入框。",new Vector2(0,-167),new Vector2(666,30),15);
 
         CaptureApiPrivacyWidgets();
+        BuildDeepSeekKeyPage();
         _building=_pages[3];
         Note("私有作品资料 · 本地检索，有限供给",new Vector2(-120,143),new Vector2(420,32),18);
         Button("SelectLocalFirstGame",new Vector2(234,143),new Vector2(198,32),SelectLocalFirstGame).text="选择本地第一作库";
@@ -160,7 +161,7 @@ internal sealed partial class NativeOpenAISettings
     }
     private void ShowTab(int index)
     {
-        CloseChoices();if(_key!=null)_key.text="";
+        CloseChoices();ClearKeyInputs();
         for(int i=0;i<_pages.Length;i++){_pages[i].gameObject.SetActive(i==index);_tabs[i].color=i==index?new Color(.16f,.36f,.42f,1):new Color(.09f,.14f,.19f,1);}
     }
     private void ToggleTemporaryExpressions()
@@ -201,13 +202,13 @@ internal sealed partial class NativeOpenAISettings
     private void CloseChoices(){if(_choices!=null)UnityEngine.Object.Destroy(_choices);_choices=null;}
     internal void Open()
     {
-        _storyStatusAt=DateTimeOffset.MinValue;_config=ConfigStore.Load();_key.text="";_customModel.text="";_storyPath.text=_config.PreviousStoryFile;_status.text="可用“推荐使用设置”一次核对资料发送与后台；已有关闭项保留。";
+        _storyStatusAt=DateTimeOffset.MinValue;_config=ConfigStore.Load();ClearKeyInputs();_customModel.text="";_storyPath.text=_config.PreviousStoryFile;_status.text="先选提供方和模型；API Key 在“密钥与隐私”页填写，ChatGPT 在“认证账户”页登录。";
         _panel.gameObject.SetActive(true);ShowTab(0);Refresh(_config);
     }
     internal void Close()
     {
         _signIn.ViewClosed();
-        CloseChoices();_key.text="";_customModel.text="";_network?.Cancel();_network?.Dispose();_network=null;
+        CloseChoices();ClearKeyInputs();_customModel.text="";_network?.Cancel();_network?.Dispose();_network=null;
         if(_catalogTask!=null)Observe(_catalogTask);if(_testTask!=null)Observe(_testTask);_catalogTask=null;_testTask=null;CloseChatGPTTasks();_panel.gameObject.SetActive(false);
     }
     private static void Observe(Task task)=>_=task.ContinueWith(t=>{_=t.Exception;},TaskContinuationOptions.OnlyOnFaulted);
@@ -218,6 +219,7 @@ internal sealed partial class NativeOpenAISettings
         _panel.localScale=Vector3.one*Math.Min(1f,Math.Min((_canvas.rect.height-32)/680f,(_canvas.rect.width-24)/760f));
         _provider.text=(config.IsOpenAI?"OpenAI":"DeepSeek")+"  ▾";
         RefreshChatGPTPage(config);
+        RefreshDeepSeekKeyPage(config);
         _modelCaption.text=config.UsesChatGPT?"账户模型":DialogueProviderOptions.Provider(config)+" 模型";
         _model.text=(config.IsOpenAI?ModelLabel(config.OpenAIModel):DeepSeekModels.Label(config.Model))+"  ▾";
         _effort.text=DialogueProviderOptions.Label(DialogueProviderOptions.Effort(config))+" · "+DialogueProviderOptions.Effort(config)+"  ▾";
@@ -250,7 +252,7 @@ internal sealed partial class NativeOpenAISettings
     }
     private void ShowNetworkError(Exception e)=>_status.text=e is InvalidOperationException?e.Message:e is OpenAIProtocolException p?p.Message:e is OperationCanceledException?"请求超时或已取消，没有自动重试。":"请求失败，请检查网络、密钥与账户权限。";
     private void Change(string name,string value)
-    {try{if(name is "provider" or "auth_mode"){CancelSettingsNetwork();_customModel.text="";_key.text="";}_config=ConfigStore.SetOpenAIOption(name,value);_status.text="已保存。后续请求使用新设置；在途请求保持原设置。";Refresh(_config);}catch{_status.text="未保存，请检查模型 ID、参数或文件权限。";}}
+    {try{if(name is "provider" or "auth_mode"){CancelSettingsNetwork();_customModel.text="";ClearKeyInputs();}_config=ConfigStore.SetOpenAIOption(name,value);_status.text="已保存。后续请求使用新设置；在途请求保持原设置。";Refresh(_config);}catch{_status.text="未保存，请检查模型 ID、参数或文件权限。";}}
     private void StoryChange(string name,string value)
     {try{_config=ConfigStore.SetStoryOption(name,value);if(name=="file")_storyPath.text=_config.PreviousStoryFile;_storyStatusAt=DateTimeOffset.MinValue;_status.text=name=="file"?"路径已保存。请核对上方状态，再单独启用资料供给；不会自动授权。":"已保存。后续请求使用新设置；在途请求保持原设置。";Refresh(_config);}catch{_status.text="未保存：请核对本地 JSONL 格式、路径及文件权限。";}}
     private void SelectLocalFirstGame()

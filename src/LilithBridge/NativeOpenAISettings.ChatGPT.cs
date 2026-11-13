@@ -122,7 +122,8 @@ internal sealed partial class NativeOpenAISettings
             _config=ConfigStore.Load();
         }
         if(_showPlanWelcome&&config.UsesChatGPT){_showPlanWelcome=false;ShowPlanWelcome();}
-        foreach (var widget in _apiPrivacyWidgets) widget.SetActive(!config.UsesChatGPT);
+        foreach (var widget in _apiPrivacyWidgets) widget.SetActive(config.IsOpenAI && !config.UsesChatGPT);
+        _consent.transform.parent.gameObject.SetActive(config.IsOpenAI);
         _planPrivacy.gameObject.SetActive(config.UsesChatGPT);
         _customModel.interactable = !config.UsesChatGPT;
         if(_customModel.placeholder is TMP_Text hint)hint.text=config.UsesChatGPT?"点击上方模型，从当前账户目录选择":"自定义 API 模型 ID（可选）";

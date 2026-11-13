@@ -36,7 +36,7 @@ namespace LilithSetup
     public static class WizardCore
     {
         public const bool PreviewChannel = true;
-        public const int InstallerSchema = 12, SupportedConfigSchema = 1;
+        public const int InstallerSchema = 14, SupportedConfigSchema = 1;
         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
         {
             TrustedDownloads.UsePlatformTls();
@@ -109,12 +109,13 @@ namespace LilithSetup
         public static WizardResult Execute(WizardOptions options, Action<WizardProgress> report, CancellationToken cancel)
         {
             SetupCore.Require(options != null && options.Confirm, "LBWIZ_CONFIRM_SELECTION_FIRST");
+            SetupCore.Require(!options.Plugin || !options.DownloadPlugin || options.Update != null, "LBWIZ_CHECK_UPDATE_FIRST");
             SetupCore.Require(!options.ConfigureBundledStory || options.Configure, "LBWIZ_STORY_REQUIRES_CONFIG_SELECTION");
             SetupCore.Require(!options.EnableRecall || (options.Runtime && options.Model && options.Configure), "LBWIZ_RECALL_REQUIRES_COMPONENTS_AND_CONFIG");
             var result = new WizardResult(); string game = SetupCore.SafePath(options.GameRoot, null), package = SetupCore.SafePath(options.PackageRoot, null), cache = SetupCore.SafePath(options.CacheRoot, null);
             SetupCore.NoReparse(game); SetupCore.NoReparse(package); SetupCore.NoReparse(cache);
             string manifestRoot = package;
-            Action<string, long, long> transfer = (name, done, total) => Say(report, "download", "working", "正在准备" + (name.EndsWith(".whl") ? "召回依赖" : name.EndsWith(".nupkg") ? "私有 Python" : name.StartsWith("BepInEx") ? "游戏加载器" : name.StartsWith("LilithBridge") ? "插件安装包" : "本地模型") + "（" + (done / 1048576) + " / " + Math.Max(1, total / 1048576) + " MiB）", total == 0 ? 0 : (int)(100 * done / total));
+            Action<string, long, long> transfer = (name, done, total) => { if (name.Contains("校验本地缓存SHA256")) { Say(report, "download", "working", "正在校验本地缓存：" + name.Split('@')[0].Trim() + "（文件大小 " + (total / 1048576.0).ToString("F1") + " MiB）", 0); return; } if (name.StartsWith("正在校验模型文件", StringComparison.Ordinal)) { Say(report, "model", "working", name, 78); return; } Say(report, "download", "working", "正在准备" + (name.Contains(".whl") ? "召回依赖" : name.Contains(".nupkg") ? "私有 Python" : name.StartsWith("BepInEx") ? "游戏加载器" : name.StartsWith("LilithBridge") ? "插件安装包" : "本地模型") + "：" + name + "（" + (done / 1048576) + " / " + Math.Max(1, total / 1048576) + " MiB）", total == 0 ? 0 : (int)(100 * done / total)); };
             Say(report, "check", "working", "检查游戏、已有组件与配置", 0); cancel.ThrowIfCancellationRequested();
             string plugin = Path.Combine(game, InstallManifest.Plugin); CopyContext existing = null; Snapshot original = null;
             if (File.Exists(plugin)) { existing = SetupCore.Inspect(game); original = SetupCore.ReadSnapshot(existing.ConfigPath); SetupCore.Require(original.Digest == options.ExpectedConfigDigest, "LBSETUP_CONFIG_CHANGED_RECHECK"); }
@@ -122,7 +123,7 @@ namespace LilithSetup
             if (options.Plugin && options.DownloadPlugin)
             {
                 DownloadSpec spec = options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset;
-                string archive = TrustedDownloads.Acquire(spec, cache, options.OfflineRoot, options.Network, transfer, cancel);
+                string archive = TrustedDownloads.Acquire(spec, cache, options.OfflineRoot, options.Network, transfer, cancel, package, "");
                 try { manifestRoot = StagePlugin(archive, spec, cache); }
                 catch (SetupException error)
                 {
@@ -139,7 +140,7 @@ namespace LilithSetup
             if (host.State == "NeedsLoader" && options.Loader)
             {
                 Say(report, "loader", "working", "准备游戏加载器（已有不同文件会保留并停止）", 10);
-                string archive = TrustedDownloads.Acquire(TrustedDownloads.Loader, cache, options.OfflineRoot, options.Network, transfer, cancel);
+                string archive = TrustedDownloads.Acquire(TrustedDownloads.Loader, cache, options.OfflineRoot, options.Network, transfer, cancel, package, "loader");
                 var preview = LoaderPreparation.PreviewZip(archive, game, Path.Combine(package, "loader-files.json")); SetupCore.Require(preview.Conflicts.Count == 0, "LBWIZ_LOADER_CONFLICT_EXISTING_FILES_PRESERVED");
                 cancel.ThrowIfCancellationRequested(); var installed = LoaderPreparation.ExecuteZip(preview.Plan);
                 SetupCore.Require(installed.State == "PendingFirstRun", "LBWIZ_LOADER_NOT_PREPARED"); host = HostCapabilities.Inspect(game, Path.Combine(manifestRoot, "payload/LilithBridge.dll"));
@@ -178,7 +179,7 @@ namespace LilithSetup
             {
                 existingPaths = SetupCore.Locate(context, snapshot, "");
                 try { SetupCore.ValidateRuntimeFiles(existingPaths); existingRuntime = SetupCore.FileHash(existingPaths.Worker) == WizardProvisioning.WorkerHash; } catch (SetupException) { }
-                try { validator.Verify(existingPaths.Model); existingModel = true; } catch (SetupException) { }
+                try { validator.Verify(existingPaths.Model, text => Say(report, "model", "working", text, 38)); existingModel = true; } catch (SetupException) { }
             }
             if (options.Runtime)
             {
@@ -186,17 +187,20 @@ namespace LilithSetup
                 if (existingRuntime) { python = existingPaths.Python; worker = existingPaths.Worker; }
                 else
                 {
-                    components = WizardProvisioning.ManagedRuntimeBase(context.DataRoot, options.RuntimeStorageRoot); string archive = TrustedDownloads.Acquire(TrustedDownloads.Python, cache, options.OfflineRoot, options.Network, transfer, cancel);
+                    components = WizardProvisioning.ManagedRuntimeBase(context.DataRoot, options.RuntimeStorageRoot);
+                    // Reuse explicit offline files first, then the package cache, then verified local cache.
+                    string archive = TrustedDownloads.Acquire(TrustedDownloads.Python, cache, options.OfflineRoot, options.Network, transfer, cancel, package, "");
+                    Say(report, "runtime", "working", "正在展开或核对私有Python解释器（本地文件）", 42);
                     string basePython = WizardProvisioning.InstallPrivatePython(archive, components, cancel);
                     var wheels = TrustedDownloads.Wheels(Path.Combine(package, "optional-recall/wheels.lock.json"));
-                    foreach (var wheel in wheels) TrustedDownloads.Acquire(wheel, WizardProvisioning.PathIn(cache, "wheelhouse"), String.IsNullOrEmpty(options.OfflineRoot) ? "" : WizardProvisioning.PathIn(options.OfflineRoot, "wheelhouse"), options.Network, transfer, cancel);
+                    string verifiedWheelhouse = WizardProvisioning.PrepareWheels(wheels, package, cache, options.OfflineRoot, options.Network, transfer, cancel);
                     string runtime = WizardProvisioning.PathIn(components, "runtime"); bool ready = File.Exists(Path.Combine(runtime, "install-result.json")) && File.Exists(Path.Combine(runtime, ".venv/Scripts/python.exe"));
                     if (!ready && Directory.Exists(Path.Combine(runtime, ".venv")))
                         WizardProvisioning.RunPython(basePython, new[] { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/runtime_setup.py"), "remove-venv", "--root", runtime }, components, Path.Combine(components, "incomplete-environment-recovery.log"), null, cancel);
                     // Create the venv in its final location. Never rename/move an installed venv.
-                    var arguments = new List<string> { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/runtime_setup.py"), ready ? "verify" : "install", "--root", runtime, "--wheel-cache", WizardProvisioning.PathIn(cache, "wheelhouse") };
-                    if (!String.IsNullOrEmpty(options.OfflineRoot)) { arguments.Add("--wheel-cache"); arguments.Add(WizardProvisioning.PathIn(options.OfflineRoot, "wheelhouse")); }
-                    WizardProvisioning.RunPython(basePython, arguments, components, Path.Combine(components, "environment-check.log"), text => Say(report, "runtime", "working", "正在安装或检查隔离依赖，请稍候", 55), cancel);
+                    var arguments = new List<string> { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/runtime_setup.py"), ready ? "verify" : "install", "--root", runtime };
+                    arguments.Add("--wheel-cache"); arguments.Add(verifiedWheelhouse);
+                    WizardProvisioning.RunPython(basePython, arguments, components, Path.Combine(components, "environment-check.log"), text => Say(report, "runtime", "working", text, 55), cancel);
                     python = Path.Combine(runtime, ".venv/Scripts/python.exe"); worker = WizardProvisioning.DeployWorker(package, components);
                 }
                 Say(report, "runtime", "done", "召回环境文件已准备", 65); Receipt(context.DataRoot, "runtime", "verified");
@@ -213,7 +217,8 @@ namespace LilithSetup
             {
                 Say(report, "verify", "working", "离线验证召回环境与模型（仅使用临时合成文本）", 85);
                 string work = WizardProvisioning.PathIn(context.DataRoot, ".setup-checks");
-                WizardProvisioning.RunPython(python, new[] { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/verify_local_recall.py"), "--worker", worker, "--model", model, "--work", work, "--lock", Path.Combine(package, "optional-recall/wheels.lock.json") }, context.DataRoot, Path.Combine(work, "local-recall-check.log"), null, cancel);
+                WizardProvisioning.RunPython(python, new[] { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/verify_local_recall.py"), "--worker", worker, "--model", model, "--work", work, "--lock", Path.Combine(package, "optional-recall/wheels.lock.json") }, context.DataRoot, Path.Combine(work, "local-recall-check.log"), text => Say(report, "verify", "working", text, 85), cancel);
+                Say(report, "verify", "working", "正在核对本地文件与配置版本，尚未提交配置", 90);
                 checkedLocal = SetupCore.CheckLocal(context, snapshot, model, validator, python, worker); result.RecallVerified = true; Say(report, "verify", "done", "本地模型已通过离线合成召回检查", 92);
             }
             cancel.ThrowIfCancellationRequested();
@@ -244,7 +249,7 @@ namespace LilithSetup
         public static string Explain(Exception error)
         {
             if (error is OperationCanceledException) return "已停止。完成并核验的组件会保留，重新开始时会检查并复用。";
-            if (error is WebException) { var detail = NetworkDiagnostics.Error(error); if ((string)detail["category"] == "windows_schannel_credentials_unavailable") return "Windows HTTPS 当前运行上下文的安全凭证不可用（0x8009030E），下载尚未完成。可以运行包内无 Key 网络诊断入口一次核对，或选择离线包目录；已核验文件会复用。"; return "下载未完成。请检查网络、代理或证书状态后重试，也可选择离线包目录。已核验的下载会复用；安全校验保持启用。"; }
+            if (error is WebException) { var detail = NetworkDiagnostics.Error(error); if ((string)detail["category"] == "windows_schannel_credentials_unavailable") return "Windows HTTPS 当前运行上下文的安全凭证不可用（0x8009030E），下载尚未完成。可以运行包内无 Key 网络诊断入口一次核对，或选择离线包目录；已核验文件会复用。"; return "国内镜像及官方来源未能完成本项下载。请检查网络后点“重新检查并继续”；已核验资源和可续传的下载会复用。安全校验保持启用，不保证所有网络均可连接。"; }
             if (error is UnauthorizedAccessException) return "当前目录没有写入权限。请使用可写的独立游戏目录，或检查系统给出的权限提示。";
             string code = SetupCore.SafeError(error);
             if (code == "LBINSTALL_HOST_InteropGenerationDisabled") return "游戏接口缓存缺失或已过期，但加载器自动生成已关闭。请在 BepInEx/config/BepInEx.cfg 的 IL2CPP 设置中启用 UpdateInteropAssemblies，启动所选游戏完成生成并正常退出，再重新检查。现有设置、缓存和用户数据未删除。";
@@ -253,9 +258,13 @@ namespace LilithSetup
             if (code == "LBWIZ_RUNTIME_INSTALL_FAILED") return "召回环境未通过检查，配置尚未切换。可重试，或检查系统运行库状态；脱敏技术记录在产品专用环境目录或数据目录的 .setup-checks 中。";
             if (code == "LBSETUP_CONFIG_CHANGED_RECHECK") return "配置在操作期间发生变化，本次没有覆盖。点“重新读取”核对后再继续。";
             if (code == "LBSETUP_NEW_SERVICE_REQUIRES_OWN_KEY_OR_EXPLICIT_CLEAR") return "服务地址已经更换。请填写新服务对应的 Key；原服务的 Key 尚未修改，也不会自动带到新服务。";
-            if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从官方来源下载后继续。";
+            if (code == "LBWIZ_RESOURCE_ARCHIVE_HASH" || code == "LBWIZ_RESOURCE_ARCHIVE_CHANGED") return "旁边离线资源ZIP未通过完整性校验，该文件未投入使用。请重新取得完整资源包；现有资料不覆盖。";
+            if (code == "LBWIZ_RESOURCE_ARCHIVE_SPACE") return "自动解压资源的位置空间不足。请把完整小安装包和资源ZIP放在有足够空间的可写目录后继续。";
+            if (code == "LBWIZ_RESOURCE_ARCHIVE_CACHE_CHANGED") return "资源缓存目标发生变化或被占用，原文件保留。请核对后重试。";
+            if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从国内镜像或官方来源下载后继续。";
             if (code == "LBWIZ_NOT_ENOUGH_FREE_SPACE") return "可用空间不足。勾选本地召回时建议预留至少 8 GiB；释放空间后可重新检查。";
             if (code == "LBWIZ_DOWNLOAD_INTEGRITY_FAILED") return "下载未通过完整性校验，损坏文件已隔离。可重新开始下载，或选择完整离线包。";
+            if (code == "LBWIZ_CHECK_UPDATE_FIRST") return "请先点“检查项目更新”取得明确版本，或保留“安装包内的已核验版本”。不会自动改装旧版插件。";
             if (code == "LBWIZ_SELECT_COMPONENT_FIRST") return "请至少选择一个需要准备或保存的组件。";
             if (code == "LBWIZ_CONFIRM_SELECTION_FIRST") return "请先核对目标目录与所选组件，再勾选确认。";
             if (code == "LBWIZ_CONFIG_READBACK_NEEDS_REVIEW") return "配置提交后的目标或备份校验发生变化，本次不能确认完成。原版本和并发版本可能保留在唯一备份中，请先检查状态；向导不会自动抢写回滚。";

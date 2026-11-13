@@ -1,0 +1,95 @@
+--- a/tools/installer-source/launcher/Bootstrap.cs
++++ b/tools/installer-source/launcher/Bootstrap.cs
+@@ -13,7 +13,7 @@
+ using System.Runtime.InteropServices;
+ using System.Runtime.Versioning;
+ [assembly: AssemblyTitle("LilithBridge Setup")]
+-[assembly: AssemblyVersion("0.1.4.16")]
++[assembly: AssemblyVersion("0.1.4.17")]
+ [assembly: ComVisible(false)]
+ [assembly: TargetFramework(".NETFramework,Version=v4.8")]
+ namespace LilithSetupLauncher
+@@ -134,7 +134,7 @@
+         CancellationTokenSource cancel; bool busy, closing;
+         public PreparationForm()
+         {
+-            Text = "LilithBridge 安装 · .16 单文件候选"; ClientSize = new Size(540, 190); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen; Font = new Font("Microsoft YaHei UI", 10F);
++            Text = "LilithBridge 安装 · .17 国内下载候选"; ClientSize = new Size(540, 190); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen; Font = new Font("Microsoft YaHei UI", 10F);
+             status.SetBounds(20, 20, 500, 62); status.Text = "正在准备安装向导…"; Controls.Add(status);
+             progress.SetBounds(20, 90, 500, 24); Controls.Add(progress);
+             action.SetBounds(395, 132, 125, 34); action.Text = "取消"; Controls.Add(action);
+--- a/tools/installer-source/src/Program.cs
++++ b/tools/installer-source/src/Program.cs
+@@ -5,7 +5,7 @@
+ using System.Runtime.InteropServices;
+ using System.Runtime.Versioning;
+ [assembly: AssemblyTitle("LilithBridge Selector Generated Save Cache Supply Input History and Receipt Integration Research Installer")]
+-[assembly: AssemblyVersion("0.1.4.16")]
++[assembly: AssemblyVersion("0.1.4.17")]
+ [assembly: ComVisible(false)]
+ [assembly: TargetFramework(".NETFramework,Version=v4.8")]
+ namespace LilithSetup
+--- a/tools/installer-source/src/StorySetup.cs
++++ b/tools/installer-source/src/StorySetup.cs
+@@ -22,9 +22,9 @@
+   public static string Result(Snapshot snapshot,EditRequest edit){if(!edit.ConfigureStory)return "未选择向导配置随包语料，已有作品资料设置保持。";if(!Applies(snapshot,edit))return "随包文件已核对；已有作品资料选源/开关/许可保持，未按默认选项切换。";return "作品资料路径已配置，本地库已启用并按需读取；无需再手填路径或选库。"+(edit.AllowStoryModelData?"本次仅明确启用作品资料域的模型使用许可；其他总许可与登录不改。":"本次不新增模型使用许可；原作品资料许可保持。")+"ChatGPT由本人游戏内登录，随后点顶部“推荐使用设置”一次知情选择；仅登录不会授权资料发送。旧后台关闭项可用其中“明确开启普通记忆提取与反思工作”；提示需正常重进时照提示操作。";}
+  }
+  public static class BuildInfo {
+-  public const string Build="0.1.4.16-singlefile-cn.candidate.1";
++  public const string Build="0.1.4.17-cn-direct.candidate.1";
+   public const string ProductHash="e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff";
+-  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .16 · singlefile-cn.candidate.1";
++  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .17 · cn-direct.candidate.1";
+   public static string Feedback(CopyContext context){return "\r\n包构建："+Build+"；包内DLL："+ProductHash+"\r\n本次目标DLL："+context.PluginHash+"\r\n已有日志："+Path.Combine(context.GameRoot,"BepInEx/LogOutput.log")+"；"+Path.Combine(context.DataRoot,"telemetry/v4-native-events.jsonl")+"。反馈请附构建身份、发生时间和最短复现步骤；日志由本人选择，不自动上传，勿公开密钥/认证或整个资料目录。";}
+  }
+ }
+--- a/tools/installer-source/src/Wizard.Core.cs
++++ b/tools/installer-source/src/Wizard.Core.cs
+@@ -109,6 +109,7 @@
+         public static WizardResult Execute(WizardOptions options, Action<WizardProgress> report, CancellationToken cancel)
+         {
+             SetupCore.Require(options != null && options.Confirm, "LBWIZ_CONFIRM_SELECTION_FIRST");
++            SetupCore.Require(!options.Plugin || !options.DownloadPlugin || options.Update != null, "LBWIZ_CHECK_UPDATE_FIRST");
+             SetupCore.Require(!options.ConfigureBundledStory || options.Configure, "LBWIZ_STORY_REQUIRES_CONFIG_SELECTION");
+             SetupCore.Require(!options.EnableRecall || (options.Runtime && options.Model && options.Configure), "LBWIZ_RECALL_REQUIRES_COMPONENTS_AND_CONFIG");
+             var result = new WizardResult(); string game = SetupCore.SafePath(options.GameRoot, null), package = SetupCore.SafePath(options.PackageRoot, null), cache = SetupCore.SafePath(options.CacheRoot, null);
+@@ -261,6 +262,7 @@
+             if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从国内镜像或官方来源下载后继续。";
+             if (code == "LBWIZ_NOT_ENOUGH_FREE_SPACE") return "可用空间不足。勾选本地召回时建议预留至少 8 GiB；释放空间后可重新检查。";
+             if (code == "LBWIZ_DOWNLOAD_INTEGRITY_FAILED") return "下载未通过完整性校验，损坏文件已隔离。可重新开始下载，或选择完整离线包。";
++            if (code == "LBWIZ_CHECK_UPDATE_FIRST") return "请先点“检查项目更新”取得明确版本，或保留“安装包内的已核验版本”。不会自动改装旧版插件。";
+             if (code == "LBWIZ_SELECT_COMPONENT_FIRST") return "请至少选择一个需要准备或保存的组件。";
+             if (code == "LBWIZ_CONFIRM_SELECTION_FIRST") return "请先核对目标目录与所选组件，再勾选确认。";
+             if (code == "LBWIZ_CONFIG_READBACK_NEEDS_REVIEW") return "配置提交后的目标或备份校验发生变化，本次不能确认完成。原版本和并发版本可能保留在唯一备份中，请先检查状态；向导不会自动抢写回滚。";
+--- a/tools/installer-source/src/Wizard.Form.cs
++++ b/tools/installer-source/src/Wizard.Form.cs
+@@ -48,7 +48,7 @@
+             foreach (var box in new[] { plugin, loader, recall, configure }) { box.Dock = DockStyle.Fill; box.Margin = new Padding(0); }
+             plugin.Name = "SelectPlugin"; loader.Name = "SelectLoader"; recall.Name = "SelectRecall"; configure.Name = "SelectConfiguration";
+             components.Controls.Add(plugin, 0, 1); components.Controls.Add(loader, 0, 2); components.Controls.Add(recall, 0, 3); components.Controls.Add(configure, 0, 4);
+-            source.Name = "PluginSource"; source.DropDownStyle = ComboBoxStyle.DropDownList; source.Dock = DockStyle.Fill; source.Items.AddRange(new object[] { "插件来源：安装包内的已核验版本", "插件来源：官方发行下载" }); source.SelectedIndex = 0; components.Controls.Add(source, 0, 5); settings.Controls.Add(components, 0, 0);
++            source.Name = "PluginSource"; source.DropDownStyle = ComboBoxStyle.DropDownList; source.Dock = DockStyle.Fill; source.Items.AddRange(new object[] { "插件来源：安装包内的已核验版本", "插件来源：先检查项目更新再下载" }); source.SelectedIndex = 0; components.Controls.Add(source, 0, 5); settings.Controls.Add(components, 0, 0);
+             var service = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6, BackColor = Color.White, Padding = new Padding(12, 8, 12, 8), Margin = new Padding(0, 3, 0, 3) };
+             service.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42)); service.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+             foreach (int h in new[] { 25, 34, 28, 32, 30, 48 }) service.RowStyles.Add(new RowStyle(SizeType.Absolute, h));
+--- a/tools/installer-source/src/Wizard.Planning.cs
++++ b/tools/installer-source/src/Wizard.Planning.cs
+@@ -27,6 +27,7 @@
+                 }
+             }
+             else { string retained = InstallerCore.FindRetainedDataRoot(root); if (retained != null) { data = retained; storySnapshot = SetupCore.ReadSnapshot(Path.Combine(data, "config.json")); SetupCore.Require(storySnapshot.Digest == options.ExpectedConfigDigest, "LBSETUP_CONFIG_CHANGED_RECHECK"); } }
++            SetupCore.Require(!options.Plugin || !options.DownloadPlugin || options.Update != null, "LBWIZ_CHECK_UPDATE_FIRST");
+             if (options.Plugin && options.DownloadPlugin) downloads.Add(Tuple.Create(options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset, options.CacheRoot, ""));
+             if (options.Loader && host.State == "NeedsLoader") downloads.Add(Tuple.Create(TrustedDownloads.Loader, options.CacheRoot, "loader"));
+             if (options.Runtime && !runtimeReady)
+--- a/tools/setup/install-manifest.json
++++ b/tools/setup/install-manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "schema": 1,
+   "product": "LilithBridge",
+-  "id": "lilithbridge-103-cn16-singlefile-candidate1",
++  "id": "lilithbridge-103-cn17-direct-candidate1",
+   "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+   "previous_plugin_hashes": [
+     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",

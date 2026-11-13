@@ -1,0 +1,9 @@
+{
+  "purpose": "exact upstream source/license acquisition only, not connectivity or install testing",
+  "source_url": "https://codeload.github.com/BepInEx/BepInEx/zip/32fb12f",
+  "final_url": "https://codeload.github.com/BepInEx/BepInEx/zip/32fb12f",
+  "bytes": 246010,
+  "sha256": "04924d095fb792b7ea8dcb35c2306336c6ac6c11207344e8cbbcad565cbcf34a",
+  "license_sha256": "f2ceca48af033d8adf337a8f9453e633cfad10a1f8c9fec2e5ae55a2d8ffe952",
+  "archive_root": "BepInEx-32fb12f"
+}

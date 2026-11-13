@@ -489,6 +489,7 @@ internal static partial class ConfigStore
             ReadOpenAISelection(config, root);
             ReadChatGPTSelection(config, root);
             string? activeProvider = ReadString(root, "active_provider");
+            config.DeepSeekKeyOwner = "provider|active_provider:" + activeProvider;
             if (!string.IsNullOrWhiteSpace(activeProvider)
                 && root.TryGetProperty("provider_profiles", out JsonElement profiles)
                 && profiles.ValueKind == JsonValueKind.Object
@@ -496,11 +497,13 @@ internal static partial class ConfigStore
                 && activeProfile.ValueKind == JsonValueKind.Object)
             {
                 ApplyProvider(config, activeProfile);
+                config.DeepSeekKeyOwner = "provider_profiles:" + activeProvider;
             }
             if (root.TryGetProperty("provider", out JsonElement provider)
                 && provider.ValueKind == JsonValueKind.Object)
             {
                 ApplyProvider(config, provider);
+                config.DeepSeekKeyOwner = "provider|active_provider:" + activeProvider;
             }
             if (root.TryGetProperty("dialogue", out JsonElement dialogue) && dialogue.ValueKind == JsonValueKind.Object)
             {

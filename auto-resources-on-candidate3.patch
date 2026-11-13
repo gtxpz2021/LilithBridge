@@ -1,0 +1,233 @@
+--- /dev/null
++++ b/tools/installer-source/src/OfflineResourceArchive.cs
+@@ -0,0 +1,103 @@
++using System;
++using System.IO;
++using System.IO.Compression;
++using System.Linq;
++using System.Collections.Generic;
++using System.Threading;
++
++namespace LilithSetup
++{
++    // Only exact requested locked resources are read. ZIP metadata never grants trust.
++    public static class OfflineResourceArchive
++    {
++        static bool Resource(DownloadSpec item, string kind)
++        { return kind == "wheelhouse" || kind == "model" || kind == "loader" || (kind == "" && item.Name == TrustedDownloads.Python.Name); }
++        static IEnumerable<string> Archives(string package, string offline)
++        {
++            var roots = new List<string>();
++            if (!String.IsNullOrWhiteSpace(offline)) roots.Add(SetupCore.SafePath(offline, null));
++            if (!String.IsNullOrWhiteSpace(package))
++            {
++                string root = SetupCore.SafePath(package, null);
++                for (int i = 0; i < 3 && !String.IsNullOrEmpty(root); i++, root = Path.GetDirectoryName(root)) roots.Add(root);
++            }
++            foreach (string root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
++            {
++                if (!Directory.Exists(root)) continue;
++                string[] files;
++                try { files = Directory.GetFiles(root, "LilithBridge-offline-resources*.zip", SearchOption.TopDirectoryOnly); }
++                catch (UnauthorizedAccessException) { continue; }
++                foreach (string file in files.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)) { SetupCore.NoReparse(file); yield return file; }
++            }
++        }
++        static ZipArchiveEntry Entry(ZipArchive zip, DownloadSpec item, string kind)
++        {
++            var names = new List<string>();
++            foreach (string prefix in new[] { "setup/offline-cache/", "offline-cache/", "" })
++            {
++                if (!String.IsNullOrEmpty(kind)) names.Add(prefix + kind + "/" + item.Name);
++                if (kind == "" || kind == "loader") names.Add(prefix + item.Name);
++            }
++            foreach (string name in names)
++            {
++                var entries = zip.Entries.Where(e => String.Equals(e.FullName, name, StringComparison.OrdinalIgnoreCase)).ToArray();
++                if (entries.Length == 1 && entries[0].FullName == name && entries[0].Length == item.Bytes) return entries[0];
++            }
++            return null;
++        }
++        static string Locate(DownloadSpec item, string package, string offline, string kind)
++        {
++            if (!Resource(item, kind)) return null;
++            foreach (string file in Archives(package, offline))
++            {
++                try { using (var zip = ZipFile.OpenRead(file)) if (Entry(zip, item, kind) != null) return file; }
++                catch (InvalidDataException) { }
++                catch (IOException) { }
++            }
++            return null;
++        }
++        public static bool CanSupply(DownloadSpec item, string package, string offline, string kind)
++        { return Locate(item, package, offline, kind) != null; }
++        static string Target(string root, string name)
++        { string target = SetupCore.SafePath(name, root); SetupCore.NoReparse(target); return target; }
++        public static string TryExtract(DownloadSpec item, string cache, string offline, string package, string kind, Action<string, long, long> progress, CancellationToken cancel)
++        {
++            cancel.ThrowIfCancellationRequested(); string archive = Locate(item, package, offline, kind); if (archive == null) return null;
++            string root = String.IsNullOrEmpty(kind) ? Path.Combine(package, "offline-cache") : Path.Combine(package, "offline-cache", kind);
++            string target = Target(root, item.Name);
++            // A different supplied file is preserved; use the application cache instead.
++            if (File.Exists(target) || Directory.Exists(target)) { root = cache; target = Target(root, item.Name); }
++            try { Directory.CreateDirectory(root); }
++            catch (UnauthorizedAccessException) { root = cache; target = Target(root, item.Name); Directory.CreateDirectory(root); }
++            if (TrustedDownloads.Matches(target, item)) return target;
++            SetupCore.Require(!Directory.Exists(target), "LBWIZ_RESOURCE_ARCHIVE_CACHE_CHANGED");
++            SetupCore.Require(new DriveInfo(Path.GetPathRoot(target)).AvailableFreeSpace >= item.Bytes + 16777216, "LBWIZ_RESOURCE_ARCHIVE_SPACE");
++            string temp = target + ".unpack-" + Guid.NewGuid().ToString("N") + ".part"; SetupCore.NoReparse(temp);
++            try
++            {
++                using (var zip = ZipFile.OpenRead(archive))
++                {
++                    var entry = Entry(zip, item, kind); SetupCore.Require(entry != null, "LBWIZ_RESOURCE_ARCHIVE_CHANGED");
++                    if (progress != null) progress(item.Name + " @ 离线ZIP自动解压：" + Path.GetFileName(archive), 0, item.Bytes);
++                    using (var input = entry.Open()) using (var output = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
++                    {
++                        byte[] buffer = new byte[131072]; long total = 0; int count;
++                        while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
++                        { cancel.ThrowIfCancellationRequested(); total += count; SetupCore.Require(total <= item.Bytes, "LBWIZ_RESOURCE_ARCHIVE_HASH"); output.Write(buffer, 0, count); if (progress != null) progress(item.Name + " @ 离线ZIP自动解压", total, item.Bytes); }
++                        output.Flush(true);
++                    }
++                }
++                cancel.ThrowIfCancellationRequested(); SetupCore.Require(TrustedDownloads.Matches(temp, item), "LBWIZ_RESOURCE_ARCHIVE_HASH"); SetupCore.NoReparse(target);
++                if (File.Exists(target))
++                {
++                    // Only the application's own cache can contain a previous invalid target here.
++                    if (TrustedDownloads.Matches(target, item)) return target;
++                    SetupCore.Require(SetupCore.Same(root, cache), "LBWIZ_RESOURCE_ARCHIVE_CACHE_CHANGED");
++                    File.Move(target, target + ".invalid-" + Guid.NewGuid().ToString("N"));
++                }
++                File.Move(temp, target); return target;
++            }
++            finally { if (File.Exists(temp)) File.Delete(temp); }
++        }
++    }
++}
+--- a/tools/installer-source/src/Program.cs
++++ b/tools/installer-source/src/Program.cs
+@@ -5,7 +5,7 @@
+ using System.Runtime.InteropServices;
+ using System.Runtime.Versioning;
+ [assembly: AssemblyTitle("LilithBridge Selector Generated Save Cache Supply Input History and Receipt Integration Research Installer")]
+-[assembly: AssemblyVersion("0.1.4.14")]
++[assembly: AssemblyVersion("0.1.4.15")]
+ [assembly: ComVisible(false)]
+ [assembly: TargetFramework(".NETFramework,Version=v4.8")]
+ namespace LilithSetup
+--- a/tools/installer-source/src/StorySetup.cs
++++ b/tools/installer-source/src/StorySetup.cs
+@@ -22,9 +22,9 @@
+   public static string Result(Snapshot snapshot,EditRequest edit){if(!edit.ConfigureStory)return "未选择向导配置随包语料，已有作品资料设置保持。";if(!Applies(snapshot,edit))return "随包文件已核对；已有作品资料选源/开关/许可保持，未按默认选项切换。";return "作品资料路径已配置，本地库已启用并按需读取；无需再手填路径或选库。"+(edit.AllowStoryModelData?"本次仅明确启用作品资料域的模型使用许可；其他总许可与登录不改。":"本次不新增模型使用许可；原作品资料许可保持。")+"ChatGPT由本人游戏内登录，随后点顶部“推荐使用设置”一次知情选择；仅登录不会授权资料发送。旧后台关闭项可用其中“明确开启普通记忆提取与反思工作”；提示需正常重进时照提示操作。";}
+  }
+  public static class BuildInfo {
+-  public const string Build="0.1.4.14-network-cn.candidate.3";
++  public const string Build="0.1.4.15-auto-resources.candidate.1";
+   public const string ProductHash="e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff";
+-  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .14 · network-cn.candidate.3";
++  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .15 · auto-resources.candidate.1";
+   public static string Feedback(CopyContext context){return "\r\n包构建："+Build+"；包内DLL："+ProductHash+"\r\n本次目标DLL："+context.PluginHash+"\r\n已有日志："+Path.Combine(context.GameRoot,"BepInEx/LogOutput.log")+"；"+Path.Combine(context.DataRoot,"telemetry/v4-native-events.jsonl")+"。反馈请附构建身份、发生时间和最短复现步骤；日志由本人选择，不自动上传，勿公开密钥/认证或整个资料目录。";}
+  }
+ }
+--- a/tools/installer-source/src/TrustedDownloads.cs
++++ b/tools/installer-source/src/TrustedDownloads.cs
+@@ -84,6 +84,8 @@
+             cancel.ThrowIfCancellationRequested();
+             string existing = FindResource(item, cache, offline, package, kind);
+             if (existing != null) { if (progress != null) progress(item.Name + " @ 已核本地缓存", item.Bytes, item.Bytes); return existing; }
++            string unpacked = OfflineResourceArchive.TryExtract(item, cache, offline, package, kind, progress, cancel);
++            if (unpacked != null) return unpacked;
+             return Acquire(item, cache, String.IsNullOrEmpty(offline) || String.IsNullOrEmpty(kind) ? offline : Path.Combine(offline, kind), allowNetwork, progress, cancel);
+         }
+         // Mirror transport only: the locked artifact, byte count and SHA-256 never change.
+--- a/tools/installer-source/src/Wizard.Core.cs
++++ b/tools/installer-source/src/Wizard.Core.cs
+@@ -36,7 +36,7 @@
+     public static class WizardCore
+     {
+         public const bool PreviewChannel = true;
+-        public const int InstallerSchema = 13, SupportedConfigSchema = 1;
++        public const int InstallerSchema = 14, SupportedConfigSchema = 1;
+         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
+         {
+             TrustedDownloads.UsePlatformTls();
+@@ -255,6 +255,9 @@
+             if (code == "LBWIZ_RUNTIME_INSTALL_FAILED") return "召回环境未通过检查，配置尚未切换。可重试，或检查系统运行库状态；脱敏技术记录在产品专用环境目录或数据目录的 .setup-checks 中。";
+             if (code == "LBSETUP_CONFIG_CHANGED_RECHECK") return "配置在操作期间发生变化，本次没有覆盖。点“重新读取”核对后再继续。";
+             if (code == "LBSETUP_NEW_SERVICE_REQUIRES_OWN_KEY_OR_EXPLICIT_CLEAR") return "服务地址已经更换。请填写新服务对应的 Key；原服务的 Key 尚未修改，也不会自动带到新服务。";
++            if (code == "LBWIZ_RESOURCE_ARCHIVE_HASH" || code == "LBWIZ_RESOURCE_ARCHIVE_CHANGED") return "旁边离线资源ZIP未通过完整性校验，该文件未投入使用。请重新取得完整资源包；现有资料不覆盖。";
++            if (code == "LBWIZ_RESOURCE_ARCHIVE_SPACE") return "自动解压资源的位置空间不足。请把完整小安装包和资源ZIP放在有足够空间的可写目录后继续。";
++            if (code == "LBWIZ_RESOURCE_ARCHIVE_CACHE_CHANGED") return "资源缓存目标发生变化或被占用，原文件保留。请核对后重试。";
+             if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从国内镜像或官方来源下载后继续。";
+             if (code == "LBWIZ_NOT_ENOUGH_FREE_SPACE") return "可用空间不足。勾选本地召回时建议预留至少 8 GiB；释放空间后可重新检查。";
+             if (code == "LBWIZ_DOWNLOAD_INTEGRITY_FAILED") return "下载未通过完整性校验，损坏文件已隔离。可重新开始下载，或选择完整离线包。";
+--- a/tools/installer-source/src/Wizard.Form.cs
++++ b/tools/installer-source/src/Wizard.Form.cs
+@@ -75,9 +75,9 @@
+             var advancedRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 }; advancedRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); advancedRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+             advanced.Text = "离线包 / 自定义地址 ▾"; advanced.AutoSize = true; network.Text = "允许从国内镜像或官方来源下载缺少的文件"; network.Checked = true; network.AutoSize = true;
+             var toggles = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false }; toggles.Controls.Add(advanced); toggles.Controls.Add(network); advancedRow.Controls.Add(toggles, 0, 0);
+-            advancedPanel.Dock = DockStyle.Fill; advancedPanel.Visible = false; offline.Name = "OfflineCache"; offline.Dock = DockStyle.Fill; offline.ReadOnly = true; offlineBrowse.Text = "选择离线包目录…"; offlineBrowse.AutoSize = true;
++            advancedPanel.Dock = DockStyle.Fill; advancedPanel.Visible = false; offline.Name = "OfflineCache"; offline.Dock = DockStyle.Fill; offline.ReadOnly = true; offlineBrowse.Text = "选择资源ZIP所在目录…"; offlineBrowse.AutoSize = true;
+             var advancedFields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 }; advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); advancedFields.Controls.Add(Line(offline, offlineBrowse), 0, 0); advancedFields.Controls.Add(endpoint, 1, 0); advancedPanel.Controls.Add(advancedFields); advancedRow.Controls.Add(advancedPanel, 0, 1); layout.Controls.Add(advancedRow, 0, 7);
+-            status.Name = "Status"; status.Multiline = true; status.ReadOnly = true; status.ScrollBars = ScrollBars.Vertical; status.Dock = DockStyle.Fill; status.BackColor = Color.White; status.Text = "请选择游戏目录。默认安装插件与所需加载器；本地召回可选。\r\n游戏首次准备完成前会停在等待状态，按提示主动启动游戏并退出后继续。"; layout.Controls.Add(status, 0, 8);
++            status.Name = "Status"; status.Multiline = true; status.ReadOnly = true; status.ScrollBars = ScrollBars.Vertical; status.Dock = DockStyle.Fill; status.BackColor = Color.White; status.Text = "请选择游戏目录。默认安装插件与所需加载器；本地召回可选。\r\n旁边的离线资源ZIP会在开始安装后自动解压校验，无需手工合并。游戏初始化按后续提示操作。"; layout.Controls.Add(status, 0, 8);
+             confirm.Name = "ConfirmSelection"; confirm.Text = "我已核对目标目录和勾选组件，允许安装并保存这些设置。"; confirm.Dock = DockStyle.Fill; layout.Controls.Add(confirm, 0, 9);
+             start.Text = "开始安装"; start.Name = "StartInstallation"; start.Width = 132; start.Height = 34; start.BackColor = Color.FromArgb(35, 97, 177); start.ForeColor = Color.White; start.FlatStyle = FlatStyle.Flat;
+             stop.Text = "停止"; stop.Width = 70; stop.Height = 34; stop.Enabled = false; update.Text = "检查项目更新"; recover.Text = "中断恢复"; rollback.Text = "回退上次插件";
+@@ -90,7 +90,7 @@
+             inspect.Click += async (s, e) => { if (root.Text.Length != 0) await SelectRoot(root.Text); };
+             start.Click += async (s, e) => await BeginInstall(); stop.Click += (s, e) => { if (commitInProgress) { status.Text = "已进入最终配置提交，此短步骤完成前不能取消。"; return; } if (cancellation != null) { cancellation.Cancel(); status.Text = "正在停止。下载会立即停止；环境安装将完成当前操作后停止，避免留下仍在写文件的子进程。"; } };
+             advanced.Click += (s, e) => { advancedPanel.Visible = !advancedPanel.Visible; layout.RowStyles[7].Height = advancedPanel.Visible ? 66 : 34; advanced.Text = advancedPanel.Visible ? "离线包 / 自定义地址 ▴" : "离线包 / 自定义地址 ▾"; };
+-            offlineBrowse.Click += async (s, e) => { using (var dialog = new FolderBrowserDialog { Description = "选择离线包根目录（含 wheelhouse、model 与官方安装包）", ShowNewFolderButton = false }) if (dialog.ShowDialog(this) == DialogResult.OK) { offline.Text = dialog.SelectedPath; await RefreshPlan(); } };
++            offlineBrowse.Click += async (s, e) => { using (var dialog = new FolderBrowserDialog { Description = "选择资源ZIP所在目录，或已解压的离线缓存目录", ShowNewFolderButton = false }) if (dialog.ShowDialog(this) == DialogResult.OK) { offline.Text = dialog.SelectedPath; await RefreshPlan(); } };
+             provider.SelectedIndexChanged += (s, e) => { if (loading) return; providerEdited = true; key.Clear(); if (provider.SelectedIndex == 1) { loading = true; endpoint.Text = ProviderPresets.DeepSeekUrl; model.Items.Clear(); model.Items.AddRange(ProviderPresets.Models); model.Text = ProviderPresets.DefaultModel; loading = false; } else if (provider.SelectedIndex == 2) { advancedPanel.Visible = true; layout.RowStyles[7].Height = 66; } ProviderNote(); Changed(); };
+             model.TextChanged += (s, e) => { if (!loading) { providerEdited = true; ProviderNote(); Changed(); } };
+             endpoint.TextChanged += (s, e) => { if (!loading) { key.Clear(); providerEdited = true; Changed(); } };
+--- a/tools/installer-source/src/Wizard.Planning.cs
++++ b/tools/installer-source/src/Wizard.Planning.cs
+@@ -35,8 +35,13 @@
+                 foreach (var item in TrustedDownloads.Wheels(Path.Combine(options.PackageRoot, "optional-recall/wheels.lock.json"))) downloads.Add(Tuple.Create(item, Path.Combine(options.CacheRoot, "wheelhouse"), "wheelhouse"));
+             }
+             if (options.Model && !modelReady) foreach (var item in TrustedDownloads.Model(Path.Combine(options.PackageRoot, "model-manifest.json"))) downloads.Add(Tuple.Create(item, Path.Combine(options.CacheRoot, "model"), "model"));
+-            long missing = 0; int cached = 0;
+-            foreach (var item in downloads) { if (TrustedDownloads.FindResource(item.Item1, item.Item2, offline, options.PackageRoot, item.Item3) == null) missing += item.Item1.Bytes; else cached++; }
++            long missing = 0; int cached = 0, archived = 0;
++            foreach (var item in downloads)
++            {
++                if (TrustedDownloads.FindResource(item.Item1, item.Item2, offline, options.PackageRoot, item.Item3) != null) cached++;
++                else if (OfflineResourceArchive.CanSupply(item.Item1, options.PackageRoot, offline, item.Item3)) archived++;
++                else missing += item.Item1.Bytes;
++            }
+             if (!options.Network) SetupCore.Require(missing == 0, "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE");
+             string ancestor = data; while (!Directory.Exists(ancestor)) ancestor = Path.GetDirectoryName(ancestor);
+             long free = new DriveInfo(Path.GetPathRoot(ancestor)).AvailableFreeSpace;
+@@ -44,7 +49,7 @@
+             SetupCore.Require(free >= budget, "LBWIZ_NOT_ENOUGH_FREE_SPACE");
+             string state = host.CanInstall ? "游戏接口检查通过" : host.State == "PendingFirstRun" || host.State == "PendingRegeneration" ? "需主动启动所选游戏完成接口生成，正常退出后重新检查再安装" : host.State == "InteropGenerationDisabled" ? "接口缓存缺失或过期，且自动生成已关闭；请启用生成后完成初始化再检查" : host.State == "NeedsInteropConfiguration" ? "接口生成路径或设置需核对，当前不能安装" : host.State == "NeedsLoader" ? "将按勾选准备缺少的游戏加载器" : "游戏运行条件需核对：" + host.State;
+             string origin = options.DownloadPlugin ? (options.Update == null ? "官方已核验发行" : options.Update.Tag + " / " + options.Update.Asset.Name) : "安装包内已核验版本";
+-            return state + "。" + ExistingDataRoot.Review(root).Summary + "\r\n" + (options.KeepService ? "保留原服务与登录；" + LoginGuidance.InGame : "仅保存明确填写的API字段，原OpenAI/ChatGPT选择不变。") + "\r\n" + StorySetup.Plan(storySnapshot, options, data) + "\r\n插件来源：" + origin + "。\r\n目标：" + root + "\r\n预计新增下载 " + (missing / 1048576.0).ToString("F1") + " MiB；已核验缓存 " + cached + " 项。建议可用空间 " + (budget / 1073741824.0).ToString("F1") + " GiB。已有设置、模型与记忆保留；配置在最后一次核验后保存。";
++            return state + "。" + ExistingDataRoot.Review(root).Summary + "\r\n" + (options.KeepService ? "保留原服务与登录；" + LoginGuidance.InGame : "仅保存明确填写的API字段，原OpenAI/ChatGPT选择不变。") + "\r\n" + StorySetup.Plan(storySnapshot, options, data) + "\r\n插件来源：" + origin + "。\r\n目标：" + root + "\r\n预计新增下载 " + (missing / 1048576.0).ToString("F1") + " MiB；已核验缓存 " + cached + " 项；旁边资源ZIP待自动解压并校验 " + archived + " 项。建议可用空间 " + (budget / 1073741824.0).ToString("F1") + " GiB。已有设置、模型与记忆保留；配置在最后一次核验后保存。";
+         }
+     }
+ }
+--- a/tools/setup/install-manifest.json
++++ b/tools/setup/install-manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "schema": 1,
+   "product": "LilithBridge",
+-  "id": "lilithbridge-103-network-cn-installer14-candidate3",
++  "id": "lilithbridge-103-cn15-auto-resources-candidate1",
+   "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+   "previous_plugin_hashes": [
+     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
+@@ -58,7 +58,7 @@
+     "BepInEx\\interop\\spine-unity.dll": "1a4dd245c72c3afc577f68d4460123c0e9c701fdc0f9d2ccfb11f519246b4ba7",
+     "BepInEx\\interop\\BehaviorDesigner.Runtime.dll": "0d8526748bcea88b184e8f6154912145d9cec2fbb315728138d13cacf3acb01f"
+   },
+-  "min_installer_schema": 13,
++  "min_installer_schema": 14,
+   "config_schema": 1,
+   "preparation_only": true
+ }

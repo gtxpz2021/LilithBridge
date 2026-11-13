@@ -10,6 +10,9 @@ def digest(path):
     with Path(path).open('rb') as stream: return hashlib.file_digest(stream,'sha256').hexdigest()
 def require(value):
     if not value: raise RuntimeError('Local recall verification failed')
+def stage(code):
+    print("LBPROGRESS " + code, file=sys.stderr, flush=True)
+
 def child():
     worker=Path(sys.argv[2]).resolve()
     require(digest(worker)==WORKER_HASH)
@@ -21,17 +24,25 @@ def child():
     socket.create_connection=denied
     socket.getaddrinfo=denied
     sys.argv=[str(worker)]+sys.argv[3:]
+    stage('MODEL_LOAD')
     runpy.run_path(str(worker),run_name='__main__')
+    # Reuse the exact Torch module loaded by the worker. Check after shutdown,
+    # so this operation does not precede worker thread-pool initialization.
+    import torch
+    require(torch.version.cuda is None)
+    require((torch.tensor([[1.,2.]])@torch.tensor([[3.],[4.]])).item()==11.)
 def main():
     p=argparse.ArgumentParser()
     for name in ('worker','model','work','lock'): p.add_argument('--'+name,required=True,type=Path)
     args=p.parse_args()
     require(digest(args.worker)==WORKER_HASH and digest(args.worker.parent/'model-manifest.json')==MANIFEST_HASH and digest(args.lock)==LOCK_HASH)
+    stage('PACKAGE_CHECK')
     rows=json.loads(args.lock.read_text(encoding='utf-8'))['wheels']
     require(len(rows)==34 and all(importlib.metadata.version(row['package'])==row['version'] for row in rows))
     manifest=json.loads((args.worker.parent/'model-manifest.json').read_text(encoding='utf-8'))
     require(len(manifest['files'])==11)
-    for row in manifest['files']:
+    for at, row in enumerate(manifest['files'], 1):
+        stage(f"MODEL_HASH {at}/11 {row['file']}")
         file=args.model/row['file']
         require(file.stat().st_size==row['bytes'] and digest(file)==row['sha256'])
     args.work.mkdir(parents=True,exist_ok=True)
@@ -44,18 +55,19 @@ def main():
     env={k:v for k,v in os.environ.items() if k.upper() in {'SYSTEMROOT','WINDIR','COMSPEC','PATH','PATHEXT','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','TEMP','TMP'}}
     env.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',HF_HUB_DISABLE_IMPLICIT_TOKEN='1',TOKENIZERS_PARALLELISM='false')
     with tempfile.TemporaryDirectory(prefix='synthetic-',dir=args.work) as temp:
-        command=[sys.executable,'-I','-X','utf8','-B',str(Path(__file__).resolve()),'--child',str(args.worker),'--model',str(args.model),'--manifest',str(args.worker.parent/'model-manifest.json'),'--index',temp]
-        result=subprocess.run(command,input='\n'.join(json.dumps(row,ensure_ascii=False) for row in requests)+'\n',stdout=subprocess.PIPE,stderr=subprocess.PIPE,encoding='utf-8',errors='replace',timeout=150,env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        command=[sys.executable,'-I','-u','-X','utf8','-B',str(Path(__file__).resolve()),'--child',str(args.worker),'--model',str(args.model),'--manifest',str(args.worker.parent/'model-manifest.json'),'--index',temp]
+        stage('WORKER_CHECK')
+        result=subprocess.run(command,input='\n'.join(json.dumps(row,ensure_ascii=False) for row in requests)+'\n',stdout=subprocess.PIPE,stderr=None,encoding='utf-8',errors='replace',timeout=150,env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         require(result.returncode==0)
         replies=[json.loads(line) for line in result.stdout.splitlines() if line.strip()]
         require(len(replies)==5 and replies[0]['event']=='ready' and replies[0]['records']==0)
         require([row.get('request_id') for row in replies[1:]]==['u','c','q','x'])
         require(all(row.get('status')=='ok' for row in replies[1:4]) and replies[4]['status']=='bye')
         require(replies[3]['candidates'][0]['event_id']=='SYNTH-RAIN')
-        import numpy as np, torch
+        stage('CHECK_RESULT')
+        import numpy as np
         matrix=np.load(Path(temp)/'vectors.npy',allow_pickle=False)
-        require(matrix.shape==(1,512) and np.isfinite(matrix).all() and torch.version.cuda is None)
-        require((torch.tensor([[1.,2.]])@torch.tensor([[3.],[4.]])).item()==11.)
+        require(matrix.shape==(1,512) and np.isfinite(matrix).all())
     print(json.dumps(dict(status='passed',scope='offline production worker; synthetic temporary record; no game integration',model_files=11,embedding_dimensions=512,cpu_operation=11,versions=34),ensure_ascii=False))
 if __name__=='__main__':
     try:

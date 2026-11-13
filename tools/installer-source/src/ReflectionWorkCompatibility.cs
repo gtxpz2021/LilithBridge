@@ -89,7 +89,7 @@ namespace LilithSetup
                 // .103 and model-options variant: same persisted readers, exact bound images.
                 || imageHash == "83168a8fd166b87c56d0ebc3fa9a5cae0f045b2f07b5622e38cb180a3bc54dda"
                 || imageHash == "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7"
-                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff";
+                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff" || imageHash == "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6";
         }
         static void Serial(object value)
         {

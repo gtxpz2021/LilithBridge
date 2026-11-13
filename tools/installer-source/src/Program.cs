@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 [assembly: AssemblyTitle("LilithBridge Selector Generated Save Cache Supply Input History and Receipt Integration Research Installer")]
-[assembly: AssemblyVersion("0.1.4.13")]
+[assembly: AssemblyVersion("0.1.4.19")]
 [assembly: ComVisible(false)]
 [assembly: TargetFramework(".NETFramework,Version=v4.8")]
 namespace LilithSetup
@@ -18,6 +18,8 @@ namespace LilithSetup
             try
             {
                 string root = null;
+                // The single-file launcher supplies only its download directory, never keys or configuration.
+                if (args.Length == 2 && args[0] == "--resource-dir") { TrustedDownloads.LauncherDirectory = SetupCore.SafePath(args[1], null); SetupCore.NoReparse(TrustedDownloads.LauncherDirectory); args = new string[0]; }
                 if (args.Length == 1 && args[0] == "--network-diagnostic") { using (var diagnostic = new NetworkDiagnosticForm()) Application.Run(diagnostic); return 0; }
                 WizardOptions handoff = null;
                 if (args.Length == 2 && args[0] == "--resume-handoff") { handoff = InstallerHandoff.Accept(args[1], AppDomain.CurrentDomain.BaseDirectory, WizardCore.InstallerSchema, WizardCore.SupportedConfigSchema); root = handoff.GameRoot; }

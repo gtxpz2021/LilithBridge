@@ -1,0 +1,282 @@
+--- a/tools/installer-source/src/Program.cs
++++ b/tools/installer-source/src/Program.cs
+@@ -5,7 +5,7 @@
+ using System.Runtime.InteropServices;
+ using System.Runtime.Versioning;
+ [assembly: AssemblyTitle("LilithBridge Selector Generated Save Cache Supply Input History and Receipt Integration Research Installer")]
+-[assembly: AssemblyVersion("0.1.4.13")]
++[assembly: AssemblyVersion("0.1.4.14")]
+ [assembly: ComVisible(false)]
+ [assembly: TargetFramework(".NETFramework,Version=v4.8")]
+ namespace LilithSetup
+--- a/tools/installer-source/src/StorySetup.cs
++++ b/tools/installer-source/src/StorySetup.cs
+@@ -22,9 +22,9 @@
+   public static string Result(Snapshot snapshot,EditRequest edit){if(!edit.ConfigureStory)return "未选择向导配置随包语料，已有作品资料设置保持。";if(!Applies(snapshot,edit))return "随包文件已核对；已有作品资料选源/开关/许可保持，未按默认选项切换。";return "作品资料路径已配置，本地库已启用并按需读取；无需再手填路径或选库。"+(edit.AllowStoryModelData?"本次仅明确启用作品资料域的模型使用许可；其他总许可与登录不改。":"本次不新增模型使用许可；原作品资料许可保持。")+"ChatGPT由本人游戏内登录，随后点顶部“推荐使用设置”一次知情选择；仅登录不会授权资料发送。旧后台关闭项可用其中“明确开启普通记忆提取与反思工作”；提示需正常重进时照提示操作。";}
+  }
+  public static class BuildInfo {
+-  public const string Build="0.1.4.13-normal-use-prep5";
++  public const string Build="0.1.4.14-network-cn.candidate.3";
+   public const string ProductHash="e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff";
+-  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .13 · normal-use-prep5";
++  public const string Caption="LilithBridge · 包内产品 .103/e4c865ca · 安装器 .14 · network-cn.candidate.3";
+   public static string Feedback(CopyContext context){return "\r\n包构建："+Build+"；包内DLL："+ProductHash+"\r\n本次目标DLL："+context.PluginHash+"\r\n已有日志："+Path.Combine(context.GameRoot,"BepInEx/LogOutput.log")+"；"+Path.Combine(context.DataRoot,"telemetry/v4-native-events.jsonl")+"。反馈请附构建身份、发生时间和最短复现步骤；日志由本人选择，不自动上传，勿公开密钥/认证或整个资料目录。";}
+  }
+ }
+--- a/tools/installer-source/src/TrustedDownloads.cs
++++ b/tools/installer-source/src/TrustedDownloads.cs
+@@ -44,7 +44,7 @@
+                 string file = (string)row["file"];
+                 // Model files use their immutable revision, never a URL supplied by the user.
+                 string url = "https://huggingface.co/BAAI/bge-small-zh-v1.5/resolve/" + SetupCore.ModelRevision + "/" + String.Join("/", file.Split('/').Select(Uri.EscapeDataString));
+-                result.Add(new DownloadSpec(file.Replace('/', '_'), url, Convert.ToInt64(row["bytes"]), (string)row["sha256"], "huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "cas-bridge.xethub.hf.co"));
++                result.Add(new DownloadSpec(file.Replace('/', '_'), url, Convert.ToInt64(row["bytes"]), (string)row["sha256"], "huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "cas-bridge.xethub.hf.co", "us.aws.cdn.hf.co"));
+             }
+             return result;
+         }
+@@ -61,7 +61,66 @@
+             }
+             return null;
+         }
++        public static IEnumerable<string> ResourceCacheRoots(string cache, string offline, string package, string kind)
++        {
++            var roots = new List<string>();
++            foreach (string root in new[] { offline, String.IsNullOrWhiteSpace(package) ? "" : Path.Combine(package, "offline-cache") })
++            {
++                if (String.IsNullOrWhiteSpace(root)) continue;
++                if (!String.IsNullOrEmpty(kind)) roots.Add(Path.Combine(root, kind));
++                roots.Add(root);
++            }
++            if (!String.IsNullOrWhiteSpace(cache)) roots.Add(cache);
++            return roots.Distinct(StringComparer.OrdinalIgnoreCase);
++        }
++        public static string FindResource(DownloadSpec item, string cache, string offline, string package, string kind)
++        {
++            // Never select a mismatched supplied file; leave it untouched and try
++            // the next exact locked copy. The pip helper receives only staged selections.
++            return Find(item, ResourceCacheRoots(cache, offline, package, kind));
++        }
++        public static string Acquire(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel, string package, string kind)
++        {
++            cancel.ThrowIfCancellationRequested();
++            string existing = FindResource(item, cache, offline, package, kind);
++            if (existing != null) { if (progress != null) progress(item.Name + " @ 已核本地缓存", item.Bytes, item.Bytes); return existing; }
++            return Acquire(item, cache, String.IsNullOrEmpty(offline) || String.IsNullOrEmpty(kind) ? offline : Path.Combine(offline, kind), allowNetwork, progress, cancel);
++        }
++        // Mirror transport only: the locked artifact, byte count and SHA-256 never change.
++        internal static IEnumerable<DownloadSpec> Sources(DownloadSpec item)
++        {
++            var uri = new Uri(item.Url);
++            if (uri.Host == "files.pythonhosted.org" && uri.AbsolutePath.StartsWith("/packages/", StringComparison.Ordinal))
++                yield return new DownloadSpec(item.Name, "https://mirrors.tuna.tsinghua.edu.cn/pypi/web" + uri.AbsolutePath, item.Bytes, item.Hash, "mirrors.tuna.tsinghua.edu.cn");
++            else if ((uri.Host == "download.pytorch.org" || uri.Host == "download-r2.pytorch.org") && uri.AbsolutePath.StartsWith("/whl/", StringComparison.Ordinal))
++                yield return new DownloadSpec(item.Name, "https://mirrors.sjtug.sjtu.edu.cn/pytorch-wheels/" + uri.AbsolutePath.Substring(5), item.Bytes, item.Hash, "mirrors.sjtug.sjtu.edu.cn", "s3.jcloud.sjtu.edu.cn");
++            else if (uri.Host == "huggingface.co" && String.IsNullOrEmpty(uri.Query) && uri.AbsolutePath.StartsWith("/BAAI/bge-small-zh-v1.5/resolve/" + SetupCore.ModelRevision + "/", StringComparison.Ordinal))
++                yield return new DownloadSpec(item.Name, "https://modelscope.cn/models/BAAI/bge-small-zh-v1.5/resolve/8399f11f8da998fe932df2684586c92024219d05/" + uri.AbsolutePath.Substring(("/BAAI/bge-small-zh-v1.5/resolve/" + SetupCore.ModelRevision + "/").Length), item.Bytes, item.Hash, "modelscope.cn", "cdn-lfs-cn-1.modelscope.cn");
++            yield return item;
++        }
+         public static string Acquire(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel)
++        {
++            // Keep offline/cache-first behavior; no network is needed for verified cached files.
++            var sources = Sources(item).ToArray();
++            for (int i = 0; i < sources.Length; i++)
++            {
++                cancel.ThrowIfCancellationRequested();
++                try { return AcquireSource(sources[i], cache, offline, allowNetwork, progress, cancel); }
++                catch (WebException error)
++                {
++                    cancel.ThrowIfCancellationRequested();
++                    if (error.Response != null) error.Response.Close();
++                    if (i == sources.Length - 1) throw;
++                }
++                catch (SetupException error)
++                {
++                    // A stale/missing mirror is not a reason to change pinned dependencies.
++                    if (i == sources.Length - 1 || !(error.Message.StartsWith("LBWIZ_DOWNLOAD_") || error.Message == "LBWIZ_TOO_MANY_REDIRECTS")) throw;
++                }
++            }
++            throw new SetupException("LBWIZ_DOWNLOAD_FAILED");
++        }
++        static string AcquireSource(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel)
+         {
+             cancel.ThrowIfCancellationRequested(); UsePlatformTls(); cache = SetupCore.SafePath(cache, null); SetupCore.NoReparse(cache);
+             string existing = Find(item, new[] { offline, cache });
+@@ -79,6 +138,7 @@
+             for (int redirects = 0; redirects <= 8; redirects++)
+             {
+                 cancel.ThrowIfCancellationRequested(); ValidateUri(uri, item);
++                if (progress != null) progress(item.Name + " @ " + uri.Host, resume, item.Bytes);
+                 var request = (HttpWebRequest)WebRequest.Create(uri); request.AllowAutoRedirect = false; request.Timeout = 45000; request.ReadWriteTimeout = 45000; request.UserAgent = "LilithBridge-Installer/0.2"; request.UseDefaultCredentials = false;
+                 if (resume > 0) request.AddRange(resume);
+                 // Framework/OS defaults validate certificates. No validation callback or protocol weakening.
+@@ -96,7 +156,7 @@
+                     {
+                         byte[] buffer = new byte[131072]; long total = start; int count;
+                         while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
+-                        { cancel.ThrowIfCancellationRequested(); total += count; SetupCore.Require(total <= item.Bytes, "LBWIZ_DOWNLOAD_SIZE_EXCEEDED"); output.Write(buffer, 0, count); if (progress != null) progress(item.Name, total, item.Bytes); }
++                        { cancel.ThrowIfCancellationRequested(); total += count; SetupCore.Require(total <= item.Bytes, "LBWIZ_DOWNLOAD_SIZE_EXCEEDED"); output.Write(buffer, 0, count); if (progress != null) progress(item.Name + " @ " + uri.Host, total, item.Bytes); }
+                         output.Flush(true);
+                     }
+                     if (!Matches(part, item)) { File.Move(part, part + ".invalid-" + Guid.NewGuid().ToString("N")); throw new SetupException("LBWIZ_DOWNLOAD_INTEGRITY_FAILED"); }
+--- a/tools/installer-source/src/Wizard.Core.cs
++++ b/tools/installer-source/src/Wizard.Core.cs
+@@ -36,7 +36,7 @@
+     public static class WizardCore
+     {
+         public const bool PreviewChannel = true;
+-        public const int InstallerSchema = 12, SupportedConfigSchema = 1;
++        public const int InstallerSchema = 13, SupportedConfigSchema = 1;
+         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
+         {
+             TrustedDownloads.UsePlatformTls();
+@@ -114,7 +114,7 @@
+             var result = new WizardResult(); string game = SetupCore.SafePath(options.GameRoot, null), package = SetupCore.SafePath(options.PackageRoot, null), cache = SetupCore.SafePath(options.CacheRoot, null);
+             SetupCore.NoReparse(game); SetupCore.NoReparse(package); SetupCore.NoReparse(cache);
+             string manifestRoot = package;
+-            Action<string, long, long> transfer = (name, done, total) => Say(report, "download", "working", "正在准备" + (name.EndsWith(".whl") ? "召回依赖" : name.EndsWith(".nupkg") ? "私有 Python" : name.StartsWith("BepInEx") ? "游戏加载器" : name.StartsWith("LilithBridge") ? "插件安装包" : "本地模型") + "（" + (done / 1048576) + " / " + Math.Max(1, total / 1048576) + " MiB）", total == 0 ? 0 : (int)(100 * done / total));
++            Action<string, long, long> transfer = (name, done, total) => Say(report, "download", "working", "正在准备" + (name.Contains(".whl") ? "召回依赖" : name.Contains(".nupkg") ? "私有 Python" : name.StartsWith("BepInEx") ? "游戏加载器" : name.StartsWith("LilithBridge") ? "插件安装包" : "本地模型") + "：" + name + "（" + (done / 1048576) + " / " + Math.Max(1, total / 1048576) + " MiB）", total == 0 ? 0 : (int)(100 * done / total));
+             Say(report, "check", "working", "检查游戏、已有组件与配置", 0); cancel.ThrowIfCancellationRequested();
+             string plugin = Path.Combine(game, InstallManifest.Plugin); CopyContext existing = null; Snapshot original = null;
+             if (File.Exists(plugin)) { existing = SetupCore.Inspect(game); original = SetupCore.ReadSnapshot(existing.ConfigPath); SetupCore.Require(original.Digest == options.ExpectedConfigDigest, "LBSETUP_CONFIG_CHANGED_RECHECK"); }
+@@ -122,7 +122,7 @@
+             if (options.Plugin && options.DownloadPlugin)
+             {
+                 DownloadSpec spec = options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset;
+-                string archive = TrustedDownloads.Acquire(spec, cache, options.OfflineRoot, options.Network, transfer, cancel);
++                string archive = TrustedDownloads.Acquire(spec, cache, options.OfflineRoot, options.Network, transfer, cancel, package, "");
+                 try { manifestRoot = StagePlugin(archive, spec, cache); }
+                 catch (SetupException error)
+                 {
+@@ -139,7 +139,7 @@
+             if (host.State == "NeedsLoader" && options.Loader)
+             {
+                 Say(report, "loader", "working", "准备游戏加载器（已有不同文件会保留并停止）", 10);
+-                string archive = TrustedDownloads.Acquire(TrustedDownloads.Loader, cache, options.OfflineRoot, options.Network, transfer, cancel);
++                string archive = TrustedDownloads.Acquire(TrustedDownloads.Loader, cache, options.OfflineRoot, options.Network, transfer, cancel, package, "loader");
+                 var preview = LoaderPreparation.PreviewZip(archive, game, Path.Combine(package, "loader-files.json")); SetupCore.Require(preview.Conflicts.Count == 0, "LBWIZ_LOADER_CONFLICT_EXISTING_FILES_PRESERVED");
+                 cancel.ThrowIfCancellationRequested(); var installed = LoaderPreparation.ExecuteZip(preview.Plan);
+                 SetupCore.Require(installed.State == "PendingFirstRun", "LBWIZ_LOADER_NOT_PREPARED"); host = HostCapabilities.Inspect(game, Path.Combine(manifestRoot, "payload/LilithBridge.dll"));
+@@ -186,16 +186,18 @@
+                 if (existingRuntime) { python = existingPaths.Python; worker = existingPaths.Worker; }
+                 else
+                 {
+-                    components = WizardProvisioning.ManagedRuntimeBase(context.DataRoot, options.RuntimeStorageRoot); string archive = TrustedDownloads.Acquire(TrustedDownloads.Python, cache, options.OfflineRoot, options.Network, transfer, cancel);
++                    components = WizardProvisioning.ManagedRuntimeBase(context.DataRoot, options.RuntimeStorageRoot);
++                    // Reuse explicit offline files first, then the package cache, then verified local cache.
++                    string archive = TrustedDownloads.Acquire(TrustedDownloads.Python, cache, options.OfflineRoot, options.Network, transfer, cancel, package, "");
+                     string basePython = WizardProvisioning.InstallPrivatePython(archive, components, cancel);
+                     var wheels = TrustedDownloads.Wheels(Path.Combine(package, "optional-recall/wheels.lock.json"));
+-                    foreach (var wheel in wheels) TrustedDownloads.Acquire(wheel, WizardProvisioning.PathIn(cache, "wheelhouse"), String.IsNullOrEmpty(options.OfflineRoot) ? "" : WizardProvisioning.PathIn(options.OfflineRoot, "wheelhouse"), options.Network, transfer, cancel);
++                    string verifiedWheelhouse = WizardProvisioning.PrepareWheels(wheels, package, cache, options.OfflineRoot, options.Network, transfer, cancel);
+                     string runtime = WizardProvisioning.PathIn(components, "runtime"); bool ready = File.Exists(Path.Combine(runtime, "install-result.json")) && File.Exists(Path.Combine(runtime, ".venv/Scripts/python.exe"));
+                     if (!ready && Directory.Exists(Path.Combine(runtime, ".venv")))
+                         WizardProvisioning.RunPython(basePython, new[] { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/runtime_setup.py"), "remove-venv", "--root", runtime }, components, Path.Combine(components, "incomplete-environment-recovery.log"), null, cancel);
+                     // Create the venv in its final location. Never rename/move an installed venv.
+-                    var arguments = new List<string> { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/runtime_setup.py"), ready ? "verify" : "install", "--root", runtime, "--wheel-cache", WizardProvisioning.PathIn(cache, "wheelhouse") };
+-                    if (!String.IsNullOrEmpty(options.OfflineRoot)) { arguments.Add("--wheel-cache"); arguments.Add(WizardProvisioning.PathIn(options.OfflineRoot, "wheelhouse")); }
++                    var arguments = new List<string> { "-I", "-X", "utf8", "-B", Path.Combine(package, "optional-recall/runtime_setup.py"), ready ? "verify" : "install", "--root", runtime };
++                    arguments.Add("--wheel-cache"); arguments.Add(verifiedWheelhouse);
+                     WizardProvisioning.RunPython(basePython, arguments, components, Path.Combine(components, "environment-check.log"), text => Say(report, "runtime", "working", "正在安装或检查隔离依赖，请稍候", 55), cancel);
+                     python = Path.Combine(runtime, ".venv/Scripts/python.exe"); worker = WizardProvisioning.DeployWorker(package, components);
+                 }
+@@ -253,7 +255,7 @@
+             if (code == "LBWIZ_RUNTIME_INSTALL_FAILED") return "召回环境未通过检查，配置尚未切换。可重试，或检查系统运行库状态；脱敏技术记录在产品专用环境目录或数据目录的 .setup-checks 中。";
+             if (code == "LBSETUP_CONFIG_CHANGED_RECHECK") return "配置在操作期间发生变化，本次没有覆盖。点“重新读取”核对后再继续。";
+             if (code == "LBSETUP_NEW_SERVICE_REQUIRES_OWN_KEY_OR_EXPLICIT_CLEAR") return "服务地址已经更换。请填写新服务对应的 Key；原服务的 Key 尚未修改，也不会自动带到新服务。";
+-            if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从官方来源下载后继续。";
++            if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从国内镜像或官方来源下载后继续。";
+             if (code == "LBWIZ_NOT_ENOUGH_FREE_SPACE") return "可用空间不足。勾选本地召回时建议预留至少 8 GiB；释放空间后可重新检查。";
+             if (code == "LBWIZ_DOWNLOAD_INTEGRITY_FAILED") return "下载未通过完整性校验，损坏文件已隔离。可重新开始下载，或选择完整离线包。";
+             if (code == "LBWIZ_SELECT_COMPONENT_FIRST") return "请至少选择一个需要准备或保存的组件。";
+--- a/tools/installer-source/src/Wizard.Form.cs
++++ b/tools/installer-source/src/Wizard.Form.cs
+@@ -73,7 +73,7 @@
+             stages.Name = "InstallationStages"; stages.Dock = DockStyle.Fill; stages.View = View.Details; stages.FullRowSelect = true; stages.HeaderStyle = ColumnHeaderStyle.Nonclickable; stages.Columns.Add("组件", 120); stages.Columns.Add("状态", 120); stages.Columns.Add("现在的进度 / 下一步", 670);
+             foreach (string name in new[] { "游戏检查", "游戏加载器", "插件", "召回环境", "本地模型", "离线验证", "配置" }) stages.Items.Add(new ListViewItem(new[] { name, "等待", "" })); layout.Controls.Add(stages, 0, 6);
+             var advancedRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 }; advancedRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); advancedRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+-            advanced.Text = "离线包 / 自定义地址 ▾"; advanced.AutoSize = true; network.Text = "允许从官方来源下载缺少的文件"; network.Checked = true; network.AutoSize = true;
++            advanced.Text = "离线包 / 自定义地址 ▾"; advanced.AutoSize = true; network.Text = "允许从国内镜像或官方来源下载缺少的文件"; network.Checked = true; network.AutoSize = true;
+             var toggles = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false }; toggles.Controls.Add(advanced); toggles.Controls.Add(network); advancedRow.Controls.Add(toggles, 0, 0);
+             advancedPanel.Dock = DockStyle.Fill; advancedPanel.Visible = false; offline.Name = "OfflineCache"; offline.Dock = DockStyle.Fill; offline.ReadOnly = true; offlineBrowse.Text = "选择离线包目录…"; offlineBrowse.AutoSize = true;
+             var advancedFields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 }; advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); advancedFields.Controls.Add(Line(offline, offlineBrowse), 0, 0); advancedFields.Controls.Add(endpoint, 1, 0); advancedPanel.Controls.Add(advancedFields); advancedRow.Controls.Add(advancedPanel, 0, 1); layout.Controls.Add(advancedRow, 0, 7);
+--- a/tools/installer-source/src/Wizard.Planning.cs
++++ b/tools/installer-source/src/Wizard.Planning.cs
+@@ -27,16 +27,16 @@
+                 }
+             }
+             else { string retained = InstallerCore.FindRetainedDataRoot(root); if (retained != null) { data = retained; storySnapshot = SetupCore.ReadSnapshot(Path.Combine(data, "config.json")); SetupCore.Require(storySnapshot.Digest == options.ExpectedConfigDigest, "LBSETUP_CONFIG_CHANGED_RECHECK"); } }
+-            if (options.Plugin && options.DownloadPlugin) downloads.Add(Tuple.Create(options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset, options.CacheRoot, offline));
+-            if (options.Loader && host.State == "NeedsLoader") downloads.Add(Tuple.Create(TrustedDownloads.Loader, options.CacheRoot, offline));
++            if (options.Plugin && options.DownloadPlugin) downloads.Add(Tuple.Create(options.Update == null ? TrustedDownloads.PluginRelease : options.Update.Asset, options.CacheRoot, ""));
++            if (options.Loader && host.State == "NeedsLoader") downloads.Add(Tuple.Create(TrustedDownloads.Loader, options.CacheRoot, "loader"));
+             if (options.Runtime && !runtimeReady)
+             {
+-                downloads.Add(Tuple.Create(TrustedDownloads.Python, options.CacheRoot, offline));
+-                foreach (var item in TrustedDownloads.Wheels(Path.Combine(options.PackageRoot, "optional-recall/wheels.lock.json"))) downloads.Add(Tuple.Create(item, Path.Combine(options.CacheRoot, "wheelhouse"), offline.Length == 0 ? "" : Path.Combine(offline, "wheelhouse")));
++                downloads.Add(Tuple.Create(TrustedDownloads.Python, options.CacheRoot, ""));
++                foreach (var item in TrustedDownloads.Wheels(Path.Combine(options.PackageRoot, "optional-recall/wheels.lock.json"))) downloads.Add(Tuple.Create(item, Path.Combine(options.CacheRoot, "wheelhouse"), "wheelhouse"));
+             }
+-            if (options.Model && !modelReady) foreach (var item in TrustedDownloads.Model(Path.Combine(options.PackageRoot, "model-manifest.json"))) downloads.Add(Tuple.Create(item, Path.Combine(options.CacheRoot, "model"), offline.Length == 0 ? "" : Path.Combine(offline, "model")));
++            if (options.Model && !modelReady) foreach (var item in TrustedDownloads.Model(Path.Combine(options.PackageRoot, "model-manifest.json"))) downloads.Add(Tuple.Create(item, Path.Combine(options.CacheRoot, "model"), "model"));
+             long missing = 0; int cached = 0;
+-            foreach (var item in downloads) { if (TrustedDownloads.Find(item.Item1, new[] { item.Item3, item.Item2 }) == null) missing += item.Item1.Bytes; else cached++; }
++            foreach (var item in downloads) { if (TrustedDownloads.FindResource(item.Item1, item.Item2, offline, options.PackageRoot, item.Item3) == null) missing += item.Item1.Bytes; else cached++; }
+             if (!options.Network) SetupCore.Require(missing == 0, "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE");
+             string ancestor = data; while (!Directory.Exists(ancestor)) ancestor = Path.GetDirectoryName(ancestor);
+             long free = new DriveInfo(Path.GetPathRoot(ancestor)).AvailableFreeSpace;
+--- a/tools/installer-source/src/Wizard.Provisioning.cs
++++ b/tools/installer-source/src/Wizard.Provisioning.cs
+@@ -104,6 +104,24 @@
+                 process.WaitForExit(); cancel.ThrowIfCancellationRequested(); SetupCore.Require(process.ExitCode == 0, "LBWIZ_RUNTIME_INSTALL_FAILED");
+             }
+         }
++        public static string PrepareWheels(IEnumerable<DownloadSpec> wheels, string package, string cache, string offline, bool network, Action<string, long, long> progress, CancellationToken cancel)
++        {
++            string verified = PathIn(cache, "wheelhouse");
++            foreach (var wheel in wheels)
++            {
++                cancel.ThrowIfCancellationRequested();
++                string input = TrustedDownloads.Acquire(wheel, verified, offline, network, progress, cancel, package, "wheelhouse");
++                string target = PathIn(verified, wheel.Name);
++                if (SetupCore.Same(input, target)) continue;
++                Directory.CreateDirectory(verified); SetupCore.NoReparse(target);
++                if (File.Exists(target) && !TrustedDownloads.Matches(target, wheel)) File.Move(target, target + ".invalid-" + Guid.NewGuid().ToString("N"));
++                CopyVerified(input, target, wheel.Hash);
++                SetupCore.Require(TrustedDownloads.Matches(target, wheel), "LBWIZ_DOWNLOAD_INTEGRITY_FAILED");
++            }
++            // runtime_setup.find_wheels remains strict. Do not pass raw manual/package
++            // directories after an invalid higher-priority wheel was safely skipped.
++            return verified;
++        }
+         public static string InstallModel(string package, string components, string cache, string offline, bool network, Action<string, long, long> progress, CancellationToken cancel)
+         {
+             string manifest = Path.Combine(package, "model-manifest.json"), target = PathIn(components, "models/bge-small-zh-v1.5");
+@@ -112,7 +130,7 @@
+             {
+                 cancel.ThrowIfCancellationRequested(); string dest = PathIn(target, (string)((Dictionary<string, object>)rows[i])["file"]);
+                 if (File.Exists(dest)) { SetupCore.Require(TrustedDownloads.Matches(dest, specs[i]), "LBWIZ_EXISTING_MODEL_CHANGED"); continue; }
+-                string input = TrustedDownloads.Acquire(specs[i], PathIn(cache, "model"), String.IsNullOrEmpty(offline) ? "" : PathIn(offline, "model"), network, progress, cancel); CopyVerified(input, dest, specs[i].Hash);
++                string input = TrustedDownloads.Acquire(specs[i], PathIn(cache, "model"), offline, network, progress, cancel, package, "model"); CopyVerified(input, dest, specs[i].Hash);
+             }
+             new ModelValidator(manifest).Verify(target); return target;
+         }
+--- a/tools/setup/install-manifest.json
++++ b/tools/setup/install-manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "schema": 1,
+   "product": "LilithBridge",
+-  "id": "lilithbridge-103-normal-use-installer13-prep5",
++  "id": "lilithbridge-103-network-cn-installer14-candidate3",
+   "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+   "previous_plugin_hashes": [
+     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
+@@ -58,7 +58,7 @@
+     "BepInEx\\interop\\spine-unity.dll": "1a4dd245c72c3afc577f68d4460123c0e9c701fdc0f9d2ccfb11f519246b4ba7",
+     "BepInEx\\interop\\BehaviorDesigner.Runtime.dll": "0d8526748bcea88b184e8f6154912145d9cec2fbb315728138d13cacf3acb01f"
+   },
+-  "min_installer_schema": 12,
++  "min_installer_schema": 13,
+   "config_schema": 1,
+   "preparation_only": true
+ }

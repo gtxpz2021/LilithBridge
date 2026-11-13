@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "assembly_version": "0.1.4.19",
+  "build": "0.1.4.19-cn-integrated.candidate.1",
+  "caption": "LilithBridge · 包内产品 .104/bfb40b65 · 安装器 .19 · cn-integrated.candidate.1",
+  "launcher_caption": "LilithBridge 安装 · .19 整合候选",
+  "manifest_id": "lilithbridge-104-cn19-integrated-candidate1",
+  "installer_schema": 14,
+  "config_schema": 1,
+  "handoff_protocol": 1,
+  "product_sha256": "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6",
+  "model_revision": "7999e1d3359715c523056ef9478215996d62a620",
+  "model_manifest_sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17",
+  "wheel_manifest_sha256": "17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891",
+  "worker_sha256": "6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036",
+  "assets": {
+    "python": {
+      "name": "python.3.12.10.nupkg",
+      "url": "https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg",
+      "bytes": 14515433,
+      "sha256": "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8",
+      "hosts": [
+        "api.nuget.org",
+        "globalcdn.nuget.org"
+      ]
+    },
+    "loader": {
+      "name": "BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip",
+      "url": "https://builds.bepinex.dev/projects/bepinex_be/769/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769%2B32fb12f.zip",
+      "bytes": 34325441,
+      "sha256": "12f70b8d7489c0931de5dada591b0e2eb6dc9d16a17161fe15f4144912f8924f",
+      "hosts": [
+        "builds.bepinex.dev"
+      ]
+    }
+  },
+  "sources": {
+    "pypi_prefix": "https://mirrors.tuna.tsinghua.edu.cn/pypi/web",
+    "pypi_hosts": [
+      "mirrors.tuna.tsinghua.edu.cn"
+    ],
+    "torch_prefix": "https://mirrors.sjtug.sjtu.edu.cn/pytorch-wheels/",
+    "torch_hosts": [
+      "mirrors.sjtug.sjtu.edu.cn",
+      "s3.jcloud.sjtu.edu.cn"
+    ],
+    "modelscope_prefix": "https://modelscope.cn/models/BAAI/bge-small-zh-v1.5/resolve/8399f11f8da998fe932df2684586c92024219d05/",
+    "modelscope_hosts": [
+      "modelscope.cn",
+      "cdn-lfs-cn-1.modelscope.cn"
+    ],
+    "hf_hosts": [
+      "huggingface.co",
+      "cdn-lfs.huggingface.co",
+      "cdn-lfs-us-1.hf.co",
+      "cas-bridge.xethub.hf.co",
+      "us.aws.cdn.hf.co"
+    ]
+  },
+  "product_version": "0.3.150.104-cn-install.candidate.1",
+  "min_installer_schema": 14,
+  "artifact_suffix": "cn19-c1"
+}

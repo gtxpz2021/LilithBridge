@@ -84,7 +84,7 @@ namespace LilithSetup
         public static void RunPython(string python, IEnumerable<string> arguments, string working, string log, Action<string> progress, CancellationToken cancel)
         {
             SetupCore.NoReparse(python); SetupCore.NoReparse(log); SetupCore.NoReparse(working); Directory.CreateDirectory(working); Directory.CreateDirectory(Path.GetDirectoryName(log));
-            var start = new ProcessStartInfo(python, String.Join(" ", arguments.Select(Quote))) { WorkingDirectory = working, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
+            var start = new ProcessStartInfo(python, String.Join(" ", new[] { "-u" }.Concat(arguments).Select(Quote))) { WorkingDirectory = working, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
             // Only this child receives an isolated environment; never persist machine/user settings.
             var keep = new HashSet<string>(new[] { "SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS" }, StringComparer.OrdinalIgnoreCase);
             foreach (string key in start.EnvironmentVariables.Keys.Cast<string>().ToArray()) if (!keep.Contains(key)) start.EnvironmentVariables.Remove(key);
@@ -94,15 +94,41 @@ namespace LilithSetup
             using (var writer = new StreamWriter(log, false, new UTF8Encoding(false)))
             using (var process = new Process { StartInfo = start })
             {
-                object gate = new object(); Action<string> line = value => { if (value == null) return; lock (gate) { writer.WriteLine(value); writer.Flush(); } if (progress != null && (value.StartsWith("Running ") || value.StartsWith("Import ") || value.StartsWith("Creating "))) progress(value); };
+                object gate = new object(); var elapsed = Stopwatch.StartNew(); string stage = "正在运行当前离线步骤"; long stageAt = 0, lastNotice = 0;
+                Action<string> line = value => {
+                    if (value == null) return; string label = RecallProgressText.Parse(value);
+                    lock (gate) { writer.WriteLine(value); writer.Flush(); if (label != null) { stage = label; stageAt = elapsed.ElapsedMilliseconds; lastNotice = stageAt; } }
+                    if (progress != null && label != null) progress(label);
+                };
                 process.OutputDataReceived += (s, e) => line(e.Data); process.ErrorDataReceived += (s, e) => line(e.Data);
                 process.Start(); process.StandardInput.Close(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
                 while (!process.WaitForExit(250))
                 {
-                    // Dependency scripts may have pip children: wait for their bounded operation instead of orphaning them.
+                    // Do not kill a child that may be writing a venv; report honest elapsed wait instead.
+                    string waiting = null;
+                    lock (gate) { long now = elapsed.ElapsedMilliseconds; if (now - lastNotice >= 10000) { lastNotice = now; waiting = (cancel.IsCancellationRequested ? "已请求停止，等待当前离线步骤退出" : stage) + "（本阶段已等待 " + ((now - stageAt) / 1000) + " 秒，进程尚未结束）"; writer.WriteLine("LBPROGRESS WAIT " + waiting); writer.Flush(); } }
+                    if (progress != null && waiting != null) progress(waiting);
                 }
                 process.WaitForExit(); cancel.ThrowIfCancellationRequested(); SetupCore.Require(process.ExitCode == 0, "LBWIZ_RUNTIME_INSTALL_FAILED");
             }
+        }
+        public static string PrepareWheels(IEnumerable<DownloadSpec> wheels, string package, string cache, string offline, bool network, Action<string, long, long> progress, CancellationToken cancel)
+        {
+            string verified = PathIn(cache, "wheelhouse");
+            foreach (var wheel in wheels)
+            {
+                cancel.ThrowIfCancellationRequested();
+                string input = TrustedDownloads.Acquire(wheel, verified, offline, network, progress, cancel, package, "wheelhouse");
+                string target = PathIn(verified, wheel.Name);
+                if (SetupCore.Same(input, target)) continue;
+                Directory.CreateDirectory(verified); SetupCore.NoReparse(target);
+                if (File.Exists(target) && !TrustedDownloads.Matches(target, wheel)) File.Move(target, target + ".invalid-" + Guid.NewGuid().ToString("N"));
+                CopyVerified(input, target, wheel.Hash);
+                SetupCore.Require(TrustedDownloads.Matches(target, wheel), "LBWIZ_DOWNLOAD_INTEGRITY_FAILED");
+            }
+            // runtime_setup.find_wheels remains strict. Do not pass raw manual/package
+            // directories after an invalid higher-priority wheel was safely skipped.
+            return verified;
         }
         public static string InstallModel(string package, string components, string cache, string offline, bool network, Action<string, long, long> progress, CancellationToken cancel)
         {
@@ -112,9 +138,9 @@ namespace LilithSetup
             {
                 cancel.ThrowIfCancellationRequested(); string dest = PathIn(target, (string)((Dictionary<string, object>)rows[i])["file"]);
                 if (File.Exists(dest)) { SetupCore.Require(TrustedDownloads.Matches(dest, specs[i]), "LBWIZ_EXISTING_MODEL_CHANGED"); continue; }
-                string input = TrustedDownloads.Acquire(specs[i], PathIn(cache, "model"), String.IsNullOrEmpty(offline) ? "" : PathIn(offline, "model"), network, progress, cancel); CopyVerified(input, dest, specs[i].Hash);
+                string input = TrustedDownloads.Acquire(specs[i], PathIn(cache, "model"), offline, network, progress, cancel, package, "model"); CopyVerified(input, dest, specs[i].Hash);
             }
-            new ModelValidator(manifest).Verify(target); return target;
+            new ModelValidator(manifest).Verify(target, text => { if (progress != null) progress(text, 0, 0); }); return target;
         }
         public static string DeployWorker(string package, string components)
         {

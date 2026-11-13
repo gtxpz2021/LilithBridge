@@ -16,13 +16,13 @@ namespace LilithSetup
         readonly ComboBox games = new ComboBox(), provider = new ComboBox(), model = new ComboBox(), source = new ComboBox();
         readonly CheckBox story = new CheckBox(), storyGrant = new CheckBox(), storySwitch = new CheckBox();
         readonly CheckBox plugin = new CheckBox(), loader = new CheckBox(), recall = new CheckBox(), configure = new CheckBox(), network = new CheckBox(), confirm = new CheckBox();
-        readonly Button browse = new Button(), inspect = new Button(), start = new Button(), stop = new Button(), update = new Button(), advanced = new Button(), offlineBrowse = new Button(), recover = new Button(), rollback = new Button();
+        readonly Button browse = new Button(), inspect = new Button(), start = new Button(), stop = new Button(), update = new Button(), advanced = new Button(), offlineBrowse = new Button(), recover = new Button(), rollback = new Button(), serviceOnly = new Button();
         readonly Label data = new Label(), keyState = new Label(), providerNote = new Label(), plan = new Label();
         readonly ProgressBar progress = new ProgressBar(); readonly ListView stages = new ListView();
         readonly TableLayoutPanel settings = new TableLayoutPanel(), layout = new TableLayoutPanel(); readonly Panel advancedPanel = new Panel();
         CancellationTokenSource cancellation; bool busy, loading, providerEdited, prepared; string expectedDigest = "MISSING", planSummary = ""; ReleaseUpdate release; RecoveryPlan recovery;
         readonly System.Windows.Forms.Timer planTimer = new System.Windows.Forms.Timer { Interval = 500 };
-        volatile bool commitInProgress;
+        volatile bool commitInProgress; bool hasExistingApiKey;
         public string LastState { get; private set; }
         public string LastError { get; private set; }
         public WizardForm(string packageRoot, string initialRoot) : this(packageRoot, initialRoot, null) { }
@@ -34,7 +34,7 @@ namespace LilithSetup
             foreach (int height in new[] { 58, 34, 36, 220, 28, 84, 0, 34, 76, 32, 44 }) layout.RowStyles.Add(height == 0 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, height)); Controls.Add(layout);
             var heading = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
             heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); heading.Controls.Add(new Label { Text = "把需要的组件一次准备好", Dock = DockStyle.Fill, Font = new Font(Font.FontFamily, 19, FontStyle.Bold) });
-            heading.Controls.Add(new Label { Text = "核对目录后一次准备；保留旧服务/登录/关闭项。ChatGPT登录后使用“推荐使用设置”一次核对资料与后台。", Dock = DockStyle.Fill, ForeColor = Color.FromArgb(75, 87, 103) }); layout.Controls.Add(heading, 0, 0);
+            heading.Controls.Add(new Label { Text = "首次请先选对话服务和模型；DeepSeek需填写Key。OpenAI/ChatGPT可在游戏内本人配置；旧连接保持。", Dock = DockStyle.Fill, ForeColor = Color.FromArgb(75, 87, 103) }); layout.Controls.Add(heading, 0, 0);
             games.Name = "DiscoveredGames"; games.DropDownStyle = ComboBoxStyle.DropDownList; games.Dock = DockStyle.Fill; games.Items.Add("已找到的游戏目录（请核对后选择）");
             foreach (var item in InstallerCore.Discover(package)) games.Items.Add(item); games.SelectedIndex = 0; layout.Controls.Add(games, 0, 1);
             root.Name = "GameRoot"; root.ReadOnly = true; root.Dock = DockStyle.Fill; browse.Text = "选择游戏目录…"; inspect.Text = "重新读取"; browse.AutoSize = inspect.AutoSize = true;
@@ -48,15 +48,15 @@ namespace LilithSetup
             foreach (var box in new[] { plugin, loader, recall, configure }) { box.Dock = DockStyle.Fill; box.Margin = new Padding(0); }
             plugin.Name = "SelectPlugin"; loader.Name = "SelectLoader"; recall.Name = "SelectRecall"; configure.Name = "SelectConfiguration";
             components.Controls.Add(plugin, 0, 1); components.Controls.Add(loader, 0, 2); components.Controls.Add(recall, 0, 3); components.Controls.Add(configure, 0, 4);
-            source.Name = "PluginSource"; source.DropDownStyle = ComboBoxStyle.DropDownList; source.Dock = DockStyle.Fill; source.Items.AddRange(new object[] { "插件来源：安装包内的已核验版本", "插件来源：官方发行下载" }); source.SelectedIndex = 0; components.Controls.Add(source, 0, 5); settings.Controls.Add(components, 0, 0);
+            source.Name = "PluginSource"; source.DropDownStyle = ComboBoxStyle.DropDownList; source.Dock = DockStyle.Fill; source.Items.AddRange(new object[] { "插件来源：安装包内的已核验版本", "插件来源：先检查项目更新再下载" }); source.SelectedIndex = 0; components.Controls.Add(source, 0, 5); settings.Controls.Add(components, 0, 0);
             var service = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6, BackColor = Color.White, Padding = new Padding(12, 8, 12, 8), Margin = new Padding(0, 3, 0, 3) };
             service.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42)); service.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
             foreach (int h in new[] { 25, 34, 28, 32, 30, 48 }) service.RowStyles.Add(new RowStyle(SizeType.Absolute, h));
-            service.Controls.Add(new Label { Text = "对话服务", Font = new Font(Font, FontStyle.Bold), Dock = DockStyle.Fill }, 0, 0); service.SetColumnSpan(service.GetControlFromPosition(0, 0), 2);
+            service.Controls.Add(new Label { Text = "对话服务（首次安装请先选择）", Font = new Font(Font, FontStyle.Bold), Dock = DockStyle.Fill }, 0, 0); service.SetColumnSpan(service.GetControlFromPosition(0, 0), 2);
             provider.Name = "Provider"; provider.DropDownStyle = ComboBoxStyle.DropDownList; provider.Dock = DockStyle.Fill; provider.Items.AddRange(new object[] { "保留服务 / 游戏内选 OpenAI、ChatGPT", "DeepSeek 官方", "自定义服务（高级）" });
             model.Name = "ApiModel"; model.Dock = DockStyle.Fill; model.DropDownStyle = ComboBoxStyle.DropDown; model.Items.AddRange(ProviderPresets.Models); model.Text = ProviderPresets.DefaultModel;
             service.Controls.Add(provider, 0, 1); service.Controls.Add(model, 1, 1);
-            service.Controls.Add(new Label { Text = "API Key（仅保存在所选数据目录）", Dock = DockStyle.Fill }, 0, 2); service.SetColumnSpan(service.GetControlFromPosition(0, 2), 2);
+            service.Controls.Add(new Label { Text = "所选服务API Key（隐藏，不回显）", Dock = DockStyle.Fill }, 0, 2); service.SetColumnSpan(service.GetControlFromPosition(0, 2), 2);
             key.Name = "ApiKey"; key.UseSystemPasswordChar = true; key.MaxLength = 4096; key.Dock = DockStyle.Fill; service.Controls.Add(key, 0, 3); service.SetColumnSpan(key, 2);
             keyState.Dock = DockStyle.Fill; keyState.ForeColor = Color.FromArgb(75, 87, 103); service.Controls.Add(keyState, 0, 4); service.SetColumnSpan(keyState, 2);
             endpoint.Name = "CustomEndpoint"; endpoint.Dock = DockStyle.Fill; endpoint.Text = ProviderPresets.DeepSeekUrl;
@@ -73,16 +73,17 @@ namespace LilithSetup
             stages.Name = "InstallationStages"; stages.Dock = DockStyle.Fill; stages.View = View.Details; stages.FullRowSelect = true; stages.HeaderStyle = ColumnHeaderStyle.Nonclickable; stages.Columns.Add("组件", 120); stages.Columns.Add("状态", 120); stages.Columns.Add("现在的进度 / 下一步", 670);
             foreach (string name in new[] { "游戏检查", "游戏加载器", "插件", "召回环境", "本地模型", "离线验证", "配置" }) stages.Items.Add(new ListViewItem(new[] { name, "等待", "" })); layout.Controls.Add(stages, 0, 6);
             var advancedRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 }; advancedRow.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); advancedRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            advanced.Text = "离线包 / 自定义地址 ▾"; advanced.AutoSize = true; network.Text = "允许从官方来源下载缺少的文件"; network.Checked = true; network.AutoSize = true;
+            advanced.Text = "离线包 / 自定义地址 ▾"; advanced.AutoSize = true; network.Text = "允许从国内镜像或官方来源下载缺少的文件"; network.Checked = true; network.AutoSize = true;
             var toggles = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false }; toggles.Controls.Add(advanced); toggles.Controls.Add(network); advancedRow.Controls.Add(toggles, 0, 0);
-            advancedPanel.Dock = DockStyle.Fill; advancedPanel.Visible = false; offline.Name = "OfflineCache"; offline.Dock = DockStyle.Fill; offline.ReadOnly = true; offlineBrowse.Text = "选择离线包目录…"; offlineBrowse.AutoSize = true;
+            advancedPanel.Dock = DockStyle.Fill; advancedPanel.Visible = false; offline.Name = "OfflineCache"; offline.Dock = DockStyle.Fill; offline.ReadOnly = true; offlineBrowse.Text = "选择资源ZIP所在目录…"; offlineBrowse.AutoSize = true;
             var advancedFields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 }; advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); advancedFields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); advancedFields.Controls.Add(Line(offline, offlineBrowse), 0, 0); advancedFields.Controls.Add(endpoint, 1, 0); advancedPanel.Controls.Add(advancedFields); advancedRow.Controls.Add(advancedPanel, 0, 1); layout.Controls.Add(advancedRow, 0, 7);
-            status.Name = "Status"; status.Multiline = true; status.ReadOnly = true; status.ScrollBars = ScrollBars.Vertical; status.Dock = DockStyle.Fill; status.BackColor = Color.White; status.Text = "请选择游戏目录。默认安装插件与所需加载器；本地召回可选。\r\n游戏首次准备完成前会停在等待状态，按提示主动启动游戏并退出后继续。"; layout.Controls.Add(status, 0, 8);
+            status.Name = "Status"; status.Multiline = true; status.ReadOnly = true; status.ScrollBars = ScrollBars.Vertical; status.Dock = DockStyle.Fill; status.BackColor = Color.White; status.Text = "请选择游戏目录。默认安装插件与所需加载器；本地召回可选。\r\n已下载的有效资源会自动复用；缺失项自动从国内镜像或官方来源下载，无需另备资源包。游戏初始化按后续提示操作。"; layout.Controls.Add(status, 0, 8);
             confirm.Name = "ConfirmSelection"; confirm.Text = "我已核对目标目录和勾选组件，允许安装并保存这些设置。"; confirm.Dock = DockStyle.Fill; layout.Controls.Add(confirm, 0, 9);
             start.Text = "开始安装"; start.Name = "StartInstallation"; start.Width = 132; start.Height = 34; start.BackColor = Color.FromArgb(35, 97, 177); start.ForeColor = Color.White; start.FlatStyle = FlatStyle.Flat;
             stop.Text = "停止"; stop.Width = 70; stop.Height = 34; stop.Enabled = false; update.Text = "检查项目更新"; recover.Text = "中断恢复"; rollback.Text = "回退上次插件";
-            foreach (var button in new[] { update, recover, rollback }) { button.AutoSize = true; button.Height = 34; }
-            var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false }; footer.Controls.Add(start); footer.Controls.Add(stop); footer.Controls.Add(update); footer.Controls.Add(rollback); footer.Controls.Add(recover);
+            serviceOnly.Text = "仅修改服务"; serviceOnly.Name = "ServiceConfigurationOnly";
+            foreach (var button in new[] { update, recover, rollback, serviceOnly }) { button.AutoSize = true; button.Height = 34; }
+            var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false }; footer.Controls.Add(start); footer.Controls.Add(stop); footer.Controls.Add(update); footer.Controls.Add(rollback); footer.Controls.Add(recover); footer.Controls.Add(serviceOnly);
             progress.Width = 115; progress.Height = 27; footer.Controls.Add(progress); layout.Controls.Add(footer, 0, 10);
             plan.Name = "PlanSummary";
             browse.Click += async (s, e) => { using (var dialog = new FolderBrowserDialog { Description = "选择包含 Lilith.exe 的游戏目录", ShowNewFolderButton = false }) if (dialog.ShowDialog(this) == DialogResult.OK) await SelectRoot(dialog.SelectedPath); };
@@ -90,8 +91,14 @@ namespace LilithSetup
             inspect.Click += async (s, e) => { if (root.Text.Length != 0) await SelectRoot(root.Text); };
             start.Click += async (s, e) => await BeginInstall(); stop.Click += (s, e) => { if (commitInProgress) { status.Text = "已进入最终配置提交，此短步骤完成前不能取消。"; return; } if (cancellation != null) { cancellation.Cancel(); status.Text = "正在停止。下载会立即停止；环境安装将完成当前操作后停止，避免留下仍在写文件的子进程。"; } };
             advanced.Click += (s, e) => { advancedPanel.Visible = !advancedPanel.Visible; layout.RowStyles[7].Height = advancedPanel.Visible ? 66 : 34; advanced.Text = advancedPanel.Visible ? "离线包 / 自定义地址 ▴" : "离线包 / 自定义地址 ▾"; };
-            offlineBrowse.Click += async (s, e) => { using (var dialog = new FolderBrowserDialog { Description = "选择离线包根目录（含 wheelhouse、model 与官方安装包）", ShowNewFolderButton = false }) if (dialog.ShowDialog(this) == DialogResult.OK) { offline.Text = dialog.SelectedPath; await RefreshPlan(); } };
+            offlineBrowse.Click += async (s, e) => { using (var dialog = new FolderBrowserDialog { Description = "选择资源ZIP所在目录，或已解压的离线缓存目录", ShowNewFolderButton = false }) if (dialog.ShowDialog(this) == DialogResult.OK) { offline.Text = dialog.SelectedPath; await RefreshPlan(); } };
             provider.SelectedIndexChanged += (s, e) => { if (loading) return; providerEdited = true; key.Clear(); if (provider.SelectedIndex == 1) { loading = true; endpoint.Text = ProviderPresets.DeepSeekUrl; model.Items.Clear(); model.Items.AddRange(ProviderPresets.Models); model.Text = ProviderPresets.DefaultModel; loading = false; } else if (provider.SelectedIndex == 2) { advancedPanel.Visible = true; layout.RowStyles[7].Height = 66; } ProviderNote(); Changed(); };
+            serviceOnly.Click += async (s, e) => {
+                loading = true; plugin.Checked = loader.Checked = recall.Checked = false; configure.Checked = true;
+                story.Checked = storyGrant.Checked = storySwitch.Checked = false; source.SelectedIndex = 0; loading = false;
+                prepared = false; Changed(); await RefreshPlan();
+                if (prepared) status.Text = "当前仅修改所选服务配置，不重新安装插件、加载器或召回组件。请填写服务/模型/Key并核对确认；仍需按提示退出游戏。\r\n" + planSummary;
+            };
             model.TextChanged += (s, e) => { if (!loading) { providerEdited = true; ProviderNote(); Changed(); } };
             endpoint.TextChanged += (s, e) => { if (!loading) { key.Clear(); providerEdited = true; Changed(); } };
             key.TextChanged += (s, e) => { if (!loading) Changed(); };
@@ -126,7 +133,7 @@ namespace LilithSetup
             for (int i = 0; i < buttons.Length; i++) { row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); row.Controls.Add(buttons[i], i + 1, 0); } return row;
         }
         void ProviderNote()
-        { bool preserve = provider.SelectedIndex == 0; model.Enabled = key.Enabled = !busy && !preserve; endpoint.ReadOnly = provider.SelectedIndex != 2; providerNote.Text = preserve ? "保留已有服务与登录。ChatGPT由本人登录后点顶部“推荐使用设置”：清楚核对当前提供方、资料范围和后台额度/费用；可关闭。" : provider.SelectedIndex == 1 ? ProviderPresets.ModelNote(model.Text) : "高级服务需兼容本项目请求格式。更换服务时请填写对应 Key。"; }
+        { bool preserve = provider.SelectedIndex == 0; model.Enabled = key.Enabled = !busy && !preserve; endpoint.ReadOnly = provider.SelectedIndex != 2; providerNote.Text = preserve ? "DeepSeek请在上方选服务、模型并填写Key。OpenAI / ChatGPT可在游戏内配置；暂不配置可保留此选项。已有连接保持。" : provider.SelectedIndex == 1 ? ProviderPresets.ModelNote(model.Text) + " 请选择模型并填写本人Key；已有同服务Key可保留。" : "高级服务需兼容本项目请求格式。更换服务时请填写对应 Key。"; }
         void ReviewExistingRoot(string game)
         {
             var review = ExistingDataRoot.Review(game);
@@ -139,12 +146,13 @@ namespace LilithSetup
         { confirm.Checked = false; confirm.Text = "我已核对目标目录和勾选组件，允许安装并保存这些设置。"; recovery = null; recover.Text = "中断恢复"; rollback.Text = "回退上次插件"; if (prepared) status.Text = planSummary; if (replan) { prepared = false; planTimer.Stop(); planTimer.Start(); } SetButtons(); }
         void SetButtons()
         {
-            foreach (Control control in new Control[] { browse, inspect, games, plugin, loader, recall, configure, story, storyGrant, storySwitch, network, source, provider, model, key, endpoint, offlineBrowse, update, recover, rollback, confirm, advanced }) control.Enabled = !busy;
+            foreach (Control control in new Control[] { browse, inspect, games, plugin, loader, recall, configure, story, storyGrant, storySwitch, network, source, provider, model, key, endpoint, offlineBrowse, update, recover, rollback, confirm, advanced, serviceOnly }) control.Enabled = !busy;
+            serviceOnly.Enabled = !busy && root.Text.Length != 0 && File.Exists(Path.Combine(root.Text, InstallManifest.Plugin));
             start.Enabled = !busy && prepared && confirm.Checked; stop.Enabled = busy && !commitInProgress; storyGrant.Enabled=storySwitch.Enabled=!busy&&story.Checked; ProviderNote();
         }
         async Task SelectRoot(string path)
         {
-            root.Text = path; expectedDigest = "MISSING"; prepared = false; confirm.Checked = false; confirm.Text = "我已核对目标目录和勾选组件，允许安装并保存这些设置。"; recovery = null; key.Clear(); LastError = null; loading=true;story.Checked=storyGrant.Checked=storySwitch.Checked=false;loading=false;
+            hasExistingApiKey = false; root.Text = path; expectedDigest = "MISSING"; prepared = false; confirm.Checked = false; confirm.Text = "我已核对目标目录和勾选组件，允许安装并保存这些设置。"; recovery = null; key.Clear(); LastError = null; loading=true;story.Checked=storyGrant.Checked=storySwitch.Checked=false;loading=false;
             loading = true; provider.SelectedIndex = 0; model.Text = ProviderPresets.DefaultModel; endpoint.Text = ProviderPresets.DeepSeekUrl; loading = false; providerEdited = false;
             try
             {
@@ -154,11 +162,12 @@ namespace LilithSetup
                 if (selectedContext != null || retainedRoot != null)
                 {
                     string selectedData = selectedContext == null ? retainedRoot : selectedContext.DataRoot; var snapshot = SetupCore.ReadSnapshot(Path.Combine(selectedData, "config.json")); expectedDigest = snapshot.Digest;
-                    var current = DataJson.EffectiveProvider(snapshot.Document); loading = true; story.Checked = !StorySetup.HasExistingChoice(snapshot.Document);
+                    var current = DataJson.EffectiveProvider(snapshot.Document); hasExistingApiKey = !String.IsNullOrWhiteSpace(DataJson.String(current, "api_key", "")); loading = true; story.Checked = !StorySetup.HasExistingChoice(snapshot.Document);
                     if (snapshot.Exists) { endpoint.Text = DataJson.String(current, "base_url", ProviderPresets.DeepSeekUrl); model.Text = DataJson.String(current, "model", ProviderPresets.DefaultModel); provider.SelectedIndex = 0; }
-                    loading = false; data.Text = "配置与记忆目录：" + selectedData; keyState.Text = "默认保留原服务和登录，不显示认证内容。OpenAI / ChatGPT 请在游戏内核对。";
+                    else provider.SelectedIndex = 1;
+                    loading = false; data.Text = "配置与记忆目录：" + selectedData; keyState.Text = snapshot.Exists ? "默认保留原服务和登录，不显示认证内容。OpenAI / ChatGPT 请在游戏内核对。" : "首次配置：请选择服务和模型，并填写自己的 API Key。";
                 }
-                else { loading=true;story.Checked=true;loading=false; data.Text = "配置与记忆目录：" + Path.Combine(absolute, "LilithBridgeData"); keyState.Text = "新安装：可选择API配置，或在游戏内选择OpenAI/ChatGPT并本人登录。"; }
+                else { loading=true;story.Checked=true;provider.SelectedIndex=1;loading=false; data.Text = "配置与记忆目录：" + Path.Combine(absolute, "LilithBridgeData"); keyState.Text = "首次配置：DeepSeek请在此选服务/模型并填写Key；OpenAI/ChatGPT可游戏内配置。"; }
                 ProviderNote(); await RefreshPlan();
             }
             catch (Exception error) { loading = false; LastError = WizardCore.Explain(error); status.Text = LastError; SetButtons(); }
@@ -168,7 +177,7 @@ namespace LilithSetup
         async Task RefreshPlan()
         {
             if (root.Text.Length == 0) return; busy = true; SetButtons(); var options = CaptureOptions(); status.Text = "正在检查已有文件与预计下载量…";
-            try { string summary = await Task.Run(() => WizardPlanning.Preview(options)); prepared = true; planSummary = summary; status.Text = summary; }
+            try { string summary = await Task.Run(() => WizardPlanning.Preview(options, text => ShowProgress(new WizardProgress("check", "working", text, 0)))); prepared = true; planSummary = summary; status.Text = summary; }
             catch (Exception error) { prepared = false; LastError = WizardCore.Explain(error); status.Text = LastError; }
             finally { busy = false; SetButtons(); }
         }
@@ -184,6 +193,8 @@ namespace LilithSetup
         async Task BeginInstall()
         {
             if (recovery != null) { Recovery(recovery.PendingOnly); return; }
+            if (configure.Checked && provider.SelectedIndex != 0 && String.IsNullOrWhiteSpace(key.Text) && !hasExistingApiKey)
+            { LastError = "所选API服务尚无Key。请填写本人Key并选择模型；若准备使用游戏内OpenAI/ChatGPT，请选择保留服务入口。"; status.Text = LastError; return; }
             var options = CaptureOptions(); bool switchInstaller = false; commitInProgress = false; busy = true; cancellation = new CancellationTokenSource(); SetButtons(); LastError = null;
             foreach (ListViewItem item in stages.Items) { item.SubItems[1].Text = "等待"; item.SubItems[2].Text = ""; }
             if (!options.Runtime) foreach (int at in new[] { 3, 4, 5 }) { stages.Items[at].SubItems[1].Text = "保持现状"; stages.Items[at].SubItems[2].Text = "未选择变更本地召回"; }
@@ -192,14 +203,14 @@ namespace LilithSetup
             {
                 // The same confirmed selection is revalidated, including cache sizes, immediately before applying.
                 WizardSession.Save(options, "Applying");
-                await Task.Run(() => WizardPlanning.Preview(options));
+                await Task.Run(() => WizardPlanning.Preview(options, text => ShowProgress(new WizardProgress("check", "working", text, 0))));
                 WizardResult result = await Task.Run(() => WizardCore.Execute(options, ShowProgress, cancellation.Token)); LastState = result.State; status.Text = result.Message;
                 WizardSession.Save(options, result.State);
                 if (result.State == "InstallerHandoffReady") { InstallerHandoff.LaunchHelper(package, result.HandoffPlanPath); loading = true; key.Clear(); loading = false; switchInstaller = true; }
                 else if (result.State == "WaitingForGame" || result.State == "WaitingForExit") start.Text = "继续安装";
-                else { start.Text = "再次检查 / 应用"; loading = true; key.Clear(); loading = false; if (result.DataRoot != null) expectedDigest = SetupCore.ReadSnapshot(Path.Combine(result.DataRoot, "config.json")).Digest; providerEdited = false; progress.Value = 100; }
+                else { start.Text = "再次检查 / 应用"; loading = true; key.Clear(); loading = false; if (result.DataRoot != null) { var savedSnapshot = SetupCore.ReadSnapshot(Path.Combine(result.DataRoot, "config.json")); expectedDigest = savedSnapshot.Digest; hasExistingApiKey = !String.IsNullOrWhiteSpace(DataJson.String(DataJson.EffectiveProvider(savedSnapshot.Document), "api_key", "")); } providerEdited = false; progress.Value = 100; }
             }
-            catch (Exception error) { LastState = "Incomplete"; LastError = WizardCore.Explain(error); status.Text = "所选流程尚未完成。\r\n" + LastError; start.Text = "重新检查并继续"; try { WizardSession.Save(options, "Incomplete"); } catch { } }
+            catch (Exception error) { LastState = "Incomplete"; LastError = WizardCore.Explain(error); status.Text = "所选流程尚未完成。\r\n" + LastError + "\r\n可点“重新检查并继续”重试；已校验资源及未完成下载会复用，原资料不会为重试而清空。"; start.Text = "重新检查并继续"; try { WizardSession.Save(options, "Incomplete"); } catch { } }
             finally { options.ApiKey = ""; cancellation.Dispose(); cancellation = null; busy = false; commitInProgress = false; SetButtons(); }
             if (switchInstaller) Close();
         }

@@ -94,9 +94,14 @@ def environment(root):
     return env
 
 
+def stage(code):
+    print("LBPROGRESS " + code, file=sys.stderr, flush=True)
+
+
 def find_wheels(rows, caches):
     found, missing = {}, []
-    for row in rows:
+    for at, row in enumerate(rows, 1):
+        stage(f"WHEEL_HASH {at}/{len(rows)} {row['filename']}")
         candidates = [c / row["filename"] for c in caches]
         valid = None
         for path in candidates:
@@ -165,6 +170,7 @@ def download(rows, root):
 
 
 def run(command, root, logname, timeout=900):
+    stage({"pip-install.log": "PIP_INSTALL", "pip-check.log": "PACKAGE_CHECK", "verify.log": "RUNTIME_IMPORTS"}.get(logname, "ENV_CHECK"))
     print("Running " + logname, flush=True)
     result = subprocess.run(command, cwd=root, env=environment(root), stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -237,6 +243,7 @@ def main():
     if venv_path.exists() and not (venv_path / "pyvenv.cfg").is_file():
         raise RuntimeError("Existing venv is incomplete; remove-venv then retry")
     if not venv_path.exists():
+        stage("ENV_CREATE")
         print("Creating ordinary isolated venv", flush=True)
         venv.EnvBuilder(with_pip=True, system_site_packages=False).create(venv_path)
     # Explicit file URLs prevent resolution/substitution and support spaces/Unicode.

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "stage": "local unpublished corpus preparation candidate",
+  "stage": "local unpublished automatic-resource candidate",
   "original_corpus": {
     "schema": 1,
     "file": "first-game.collection.jsonl",
@@ -47,5 +47,12 @@
   "redistribution_permission_evidence": "not_established",
   "embedded_original_excerpts": "PersonaDefaults.cs DefaultPrompt; original-work portions excluded from MIT",
   "third_party": "Mono.Cecil 0.11.4; LICENSES/Mono.Cecil.txt",
-  "corpus_delivery": "installer ZIP only; clean source contains notices/metadata"
+  "corpus_delivery": "installer ZIP only; clean source contains notices/metadata",
+  "runtime_preparation_resources": {
+    "normal_single_exe": "Python, exact BepInEx archive, 25 small wheels, 10 small model files",
+    "thin_update_zip": "Python only",
+    "clean_source_zip": "no runtime binaries/wheels/models; BepInEx upstream source and license only",
+    "exact_rows": "INSTALL-NETWORK-INVENTORY.json",
+    "bepinex_transitive_notice_review_complete": false
+  }
 }

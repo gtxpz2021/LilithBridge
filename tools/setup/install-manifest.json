@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "product": "LilithBridge",
-  "id": "lilithbridge-103-normal-use-installer13-prep5",
-  "plugin_sha256": "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+  "id": "lilithbridge-104-cn19-integrated-candidate1",
+  "plugin_sha256": "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6",
   "previous_plugin_hashes": [
     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
     "4d257ce576f4fcb15de8668d84351b7c6ef4570fb2bd36d25a39934ba0d2295b",
@@ -20,7 +20,8 @@
     "83168a8fd166b87c56d0ebc3fa9a5cae0f045b2f07b5622e38cb180a3bc54dda",
     "db3b6c17d43ea9143461d1be4ebe9bd4274d74ccf6a2c2d45d4ed59e01ab0e96",
     "447a8637702d5a1af8721246c0b51949ab4ff8e17caf1f6a67e3f3078160ca46",
-    "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7"
+    "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7",
+    "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff"
   ],
   "target_hashes": {},
   "compatibility_mode": "actual static interfaces and loader freshness; no game hash whitelist",
@@ -58,7 +59,7 @@
     "BepInEx\\interop\\spine-unity.dll": "1a4dd245c72c3afc577f68d4460123c0e9c701fdc0f9d2ccfb11f519246b4ba7",
     "BepInEx\\interop\\BehaviorDesigner.Runtime.dll": "0d8526748bcea88b184e8f6154912145d9cec2fbb315728138d13cacf3acb01f"
   },
-  "min_installer_schema": 12,
+  "min_installer_schema": 14,
   "config_schema": 1,
   "preparation_only": true
 }

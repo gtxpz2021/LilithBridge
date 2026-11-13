@@ -8,4 +8,4 @@ LilithBridge作者有权许可的自有源码、工具与文档采用根目录MI
 
 `src/LilithBridge/PersonaDefaults.cs` 内嵌的四段原作示例、两部作品/角色引用及相应编译常量也保留原作权利，不归项目MIT。
 
-安装器唯一随附第三方二进制为Mono.Cecil 0.11.4，MIT全文见 `LICENSES/Mono.Cecil.txt`。可选worker参考与依赖说明保留原通知。Python、模型、wheel、游戏本体、加载器及生成interop均未随本候选分发，另行取得时适用其原提供方许可。详见 `THIRD-PARTY-NOTICES.md`。
+Mono.Cecil 0.11.4保留MIT全文。普通单EXE候选另内嵌Python、固定BepInEx、25个小wheel与10个小模型文件；thin更新ZIP只内嵌Python。第三方均保留各自许可，不归项目MIT。BepInEx LGPL2.1+全文与精确上游源码随普通EXE准备payload保留，整个归档的依赖通知/源码范围尚未独立闭合，不宣称全面许可已核。游戏本体和生成interop不分发。详见INSTALL-CHAIN.zh-CN.md和包清单。

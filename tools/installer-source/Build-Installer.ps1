@@ -1,4 +1,7 @@
+param([string]$ReleaseProfile=(Join-Path $PSScriptRoot 'release-profile.json'))
 $ErrorActionPreference='Stop'
+& python (Join-Path $PSScriptRoot 'prepare_release.py') --profile $ReleaseProfile
+if($LASTEXITCODE -ne 0){throw 'Release input identity preparation failed; no installer was run.'}
 $setup=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\setup'))
 $facade=Join-Path $env:WINDIR 'Microsoft.NET\assembly\GAC_MSIL\netstandard\v4.0_2.0.0.0__cc7b13ffcd2ddd51\netstandard.dll'
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'

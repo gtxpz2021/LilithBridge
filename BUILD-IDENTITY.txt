@@ -1,7 +1,22 @@
-Package build: 0.1.4.13-normal-use-prep5
-Product version: 0.3.150.103-generated.validation.local.candidate.1
-Product SHA256: e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff
-Installer SHA256: b344bcebace3d5b1caccbbacf64f5a07ff2f93ba2d65b52c5583c5630242fafb
-Handoff SHA256: 67c3a99d032bf511adc6f65cee358445901bdae93fa5a862a10c6f5b333a845b
-Installer schema: 12 (unchanged protocol)
-Frozen candidate for coordinator publication; this task has not published or deployed. e4 is not prior831/afd unchanged manual-tested bytes.
+build: 0.1.4.19-cn-integrated.candidate.1
+product_version: 0.3.150.104-cn-install.candidate.1
+product_sha256: bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6
+product_pdb_sha256: 6e347faf8bbe3b4787134f7dcdc1edbdce265773c213d4df665ef56891940900
+product_deps_sha256: 29d438d769aadc35c595659525b93bdf8b1e7935724c97bb0beff2fe3a9d29f2
+installer_sha256: 2f9cab83fab52443dea1f9f3850c1cdabfce3e929c170174d9448163b5415008
+handoff_sha256: bba525c2a734050240bdc56f06e0ecb6933da8ef5af579b6cc62dd6fc32f496a
+manifest_sha256: 1880ede39122a94b101d40f4711f24fb3ae3525ddf7dd95dea431f5a9f49d34d
+release_profile_sha256: 971458900b07f0d7e450e6712ad737a2444df24516704e93b6ad0fb9dbbf5c74
+installer_schema: 14
+config_schema: 1
+handoff_protocol: 1
+bundled_resource_files: 0
+no_install_runtime_model_network_or_simulated_tests: True
+published: False
+prior_runtime_test_results_not_transferred: True
+performance_improvement_measured: False
+in_game_deepseek_key_source_added: True
+all_china_first_use_routes_verified: False
+corpus_redistribution_evidence: not_established
+bepinex_transitive_notice_review_complete: False
+distribution_mode: clean-source

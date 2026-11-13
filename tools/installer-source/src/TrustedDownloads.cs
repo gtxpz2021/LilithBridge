@@ -16,12 +16,20 @@ namespace LilithSetup
     public static class TrustedDownloads
     {
         public static readonly DownloadSpec PluginRelease = new DownloadSpec("LilithBridge-installer-20261029-r5.zip", "https://github.com/gtxpz2021/LilithBridge/releases/download/preview-20261029-r2/LilithBridge-installer-20261029-r5.zip", 1577555, "dfe9cd914a77607d96c3d7184e09bf7126750d82d0c44cd6fdd17b26ed33611a", "github.com", "release-assets.githubusercontent.com");
-        public static readonly DownloadSpec Python = new DownloadSpec("python.3.12.10.nupkg", "https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg", 14515433, "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8", "api.nuget.org", "globalcdn.nuget.org");
-        public static readonly DownloadSpec Loader = new DownloadSpec("BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip", "https://builds.bepinex.dev/projects/bepinex_be/769/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769%2B32fb12f.zip", 34325441, "12f70b8d7489c0931de5dada591b0e2eb6dc9d16a17161fe15f4144912f8924f", "builds.bepinex.dev");
+        public static readonly DownloadSpec Python = new DownloadSpec("python.3.12.10.nupkg", "https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg", 14515433L, "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8", "api.nuget.org", "globalcdn.nuget.org");
+        public static readonly DownloadSpec Loader = new DownloadSpec("BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769+32fb12f.zip", "https://builds.bepinex.dev/projects/bepinex_be/769/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.769%2B32fb12f.zip", 34325441L, "12f70b8d7489c0931de5dada591b0e2eb6dc9d16a17161fe15f4144912f8924f", "builds.bepinex.dev");
         public const string WheelManifestHash = "17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891";
         public static void UsePlatformTls() { ServicePointManager.SecurityProtocol = SecurityProtocolType.SystemDefault; }
         public static bool IsInstallerArchive(string name)
         { return name != null && System.Text.RegularExpressions.Regex.IsMatch(name, "^LilithBridge-(?:unified-)?installer-(?!source(?:-|\\.))(?!changes(?:-|\\.))(?!evidence(?:-|\\.))[A-Za-z0-9._-]+\\.zip$"); }
+        public const string MirrorPypiPrefix = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web";
+        public const string MirrorTorchPrefix = "https://mirrors.sjtug.sjtu.edu.cn/pytorch-wheels/";
+        public const string ModelScopePrefix = "https://modelscope.cn/models/BAAI/bge-small-zh-v1.5/resolve/8399f11f8da998fe932df2684586c92024219d05/";
+        internal static readonly string[] MirrorPypiHosts = new[] { "mirrors.tuna.tsinghua.edu.cn" };
+        internal static readonly string[] MirrorTorchHosts = new[] { "mirrors.sjtug.sjtu.edu.cn", "s3.jcloud.sjtu.edu.cn" };
+        internal static readonly string[] ModelScopeHosts = new[] { "modelscope.cn", "cdn-lfs-cn-1.modelscope.cn" };
+        internal static readonly string[] HfHosts = new[] { "huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "cas-bridge.xethub.hf.co", "us.aws.cdn.hf.co" };
+        public static string LauncherDirectory = "";
         public static string DefaultCache { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"LilithBridge\InstallerCache\v1"); } }
         public static List<DownloadSpec> Wheels(string manifest)
         {
@@ -44,7 +52,7 @@ namespace LilithSetup
                 string file = (string)row["file"];
                 // Model files use their immutable revision, never a URL supplied by the user.
                 string url = "https://huggingface.co/BAAI/bge-small-zh-v1.5/resolve/" + SetupCore.ModelRevision + "/" + String.Join("/", file.Split('/').Select(Uri.EscapeDataString));
-                result.Add(new DownloadSpec(file.Replace('/', '_'), url, Convert.ToInt64(row["bytes"]), (string)row["sha256"], "huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "cas-bridge.xethub.hf.co"));
+                result.Add(new DownloadSpec(file.Replace('/', '_'), url, Convert.ToInt64(row["bytes"]), (string)row["sha256"], HfHosts));
             }
             return result;
         }
@@ -61,7 +69,87 @@ namespace LilithSetup
             }
             return null;
         }
+        public static IEnumerable<string> ResourceCacheRoots(string cache, string offline, string package, string kind)
+        {
+            var roots = new List<string>();
+            foreach (string root in new[] { offline, String.IsNullOrWhiteSpace(LauncherDirectory) ? "" : Path.Combine(LauncherDirectory, "offline-cache"), LauncherDirectory, String.IsNullOrWhiteSpace(package) ? "" : Path.Combine(package, "offline-cache") })
+            {
+                if (String.IsNullOrWhiteSpace(root)) continue;
+                if (!String.IsNullOrEmpty(kind)) roots.Add(Path.Combine(root, kind));
+                roots.Add(root);
+            }
+            if (!String.IsNullOrWhiteSpace(cache)) roots.Add(cache);
+            return roots.Distinct(StringComparer.OrdinalIgnoreCase);
+        }
+        public static string FindResource(DownloadSpec item, string cache, string offline, string package, string kind)
+        {
+            // Never select a mismatched supplied file; leave it untouched and try
+            // the next exact locked copy. The pip helper receives only staged selections.
+            return Find(item, ResourceCacheRoots(cache, offline, package, kind));
+        }
+        public static string Acquire(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel, string package, string kind)
+        {
+            cancel.ThrowIfCancellationRequested();
+            if (progress != null) progress(item.Name + " @ 校验本地缓存SHA256", 0, item.Bytes);
+            string existing = FindResource(item, cache, offline, package, kind);
+            if (existing != null) { if (progress != null) progress(item.Name + " @ 已核本地缓存", item.Bytes, item.Bytes); return existing; }
+            string unpacked = OfflineResourceArchive.TryExtract(item, cache, offline, package, kind, progress, cancel);
+            if (unpacked != null) return unpacked;
+            return Acquire(item, cache, String.IsNullOrEmpty(offline) || String.IsNullOrEmpty(kind) ? offline : Path.Combine(offline, kind), allowNetwork, progress, cancel);
+        }
+        // Mirror transport only: the locked artifact, byte count and SHA-256 never change.
+        internal static IEnumerable<DownloadSpec> Sources(DownloadSpec item)
+        {
+            var uri = new Uri(item.Url);
+            if (uri.Host == "files.pythonhosted.org" && uri.AbsolutePath.StartsWith("/packages/", StringComparison.Ordinal))
+                yield return new DownloadSpec(item.Name, MirrorPypiPrefix + uri.AbsolutePath, item.Bytes, item.Hash, MirrorPypiHosts);
+            else if ((uri.Host == "download.pytorch.org" || uri.Host == "download-r2.pytorch.org") && uri.AbsolutePath.StartsWith("/whl/", StringComparison.Ordinal))
+                yield return new DownloadSpec(item.Name, MirrorTorchPrefix + uri.AbsolutePath.Substring(5), item.Bytes, item.Hash, MirrorTorchHosts);
+            else if (uri.Host == "huggingface.co" && String.IsNullOrEmpty(uri.Query) && uri.AbsolutePath.StartsWith("/BAAI/bge-small-zh-v1.5/resolve/" + SetupCore.ModelRevision + "/", StringComparison.Ordinal))
+                yield return new DownloadSpec(item.Name, ModelScopePrefix + uri.AbsolutePath.Substring(("/BAAI/bge-small-zh-v1.5/resolve/" + SetupCore.ModelRevision + "/").Length), item.Bytes, item.Hash, ModelScopeHosts);
+            yield return item;
+        }
         public static string Acquire(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel)
+        {
+            // Keep offline/cache-first behavior; no network is needed for verified cached files.
+            var sources = Sources(item).ToArray();
+            for (int i = 0; i < sources.Length; i++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                try
+                {
+                    try { return AcquireSource(sources[i], cache, offline, allowNetwork, progress, cancel); }
+                    catch (WebException transient)
+                    {
+                        cancel.ThrowIfCancellationRequested(); if (!Retryable(transient)) throw;
+                        if (transient.Response != null) transient.Response.Close();
+                        if (progress != null) progress(item.Name + " @ " + new Uri(sources[i].Url).Host + "：连接中断，自动重试一次；已下载部分保留", 0, item.Bytes);
+                        return AcquireSource(sources[i], cache, offline, allowNetwork, progress, cancel);
+                    }
+                }
+                catch (WebException error)
+                {
+                    cancel.ThrowIfCancellationRequested();
+                    if (error.Response != null) error.Response.Close();
+                    if (i == sources.Length - 1) throw;
+                    if (progress != null) progress(item.Name + " @ 镜像未完成，正在切换官方来源", 0, item.Bytes);
+                }
+                catch (SetupException error)
+                {
+                    // A stale/missing mirror is not a reason to change pinned dependencies.
+                    if (i == sources.Length - 1 || !(error.Message.StartsWith("LBWIZ_DOWNLOAD_") || error.Message == "LBWIZ_TOO_MANY_REDIRECTS")) throw;
+                    if (progress != null) progress(item.Name + " @ 镜像未通过下载校验，正在切换官方来源", 0, item.Bytes);
+                }
+            }
+            throw new SetupException("LBWIZ_DOWNLOAD_FAILED");
+        }
+        static bool Retryable(WebException error)
+        {
+            var response = error.Response as HttpWebResponse;
+            if (response != null) return response.StatusCode == HttpStatusCode.RequestTimeout || response.StatusCode == HttpStatusCode.BadGateway || response.StatusCode == HttpStatusCode.ServiceUnavailable || response.StatusCode == HttpStatusCode.GatewayTimeout;
+            return error.Status == WebExceptionStatus.Timeout || error.Status == WebExceptionStatus.ConnectFailure || error.Status == WebExceptionStatus.ConnectionClosed || error.Status == WebExceptionStatus.ReceiveFailure || error.Status == WebExceptionStatus.SendFailure;
+        }
+        static string AcquireSource(DownloadSpec item, string cache, string offline, bool allowNetwork, Action<string, long, long> progress, CancellationToken cancel)
         {
             cancel.ThrowIfCancellationRequested(); UsePlatformTls(); cache = SetupCore.SafePath(cache, null); SetupCore.NoReparse(cache);
             string existing = Find(item, new[] { offline, cache });
@@ -79,6 +167,7 @@ namespace LilithSetup
             for (int redirects = 0; redirects <= 8; redirects++)
             {
                 cancel.ThrowIfCancellationRequested(); ValidateUri(uri, item);
+                if (progress != null) progress(item.Name + " @ " + uri.Host, resume, item.Bytes);
                 var request = (HttpWebRequest)WebRequest.Create(uri); request.AllowAutoRedirect = false; request.Timeout = 45000; request.ReadWriteTimeout = 45000; request.UserAgent = "LilithBridge-Installer/0.2"; request.UseDefaultCredentials = false;
                 if (resume > 0) request.AddRange(resume);
                 // Framework/OS defaults validate certificates. No validation callback or protocol weakening.
@@ -96,7 +185,7 @@ namespace LilithSetup
                     {
                         byte[] buffer = new byte[131072]; long total = start; int count;
                         while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
-                        { cancel.ThrowIfCancellationRequested(); total += count; SetupCore.Require(total <= item.Bytes, "LBWIZ_DOWNLOAD_SIZE_EXCEEDED"); output.Write(buffer, 0, count); if (progress != null) progress(item.Name, total, item.Bytes); }
+                        { cancel.ThrowIfCancellationRequested(); total += count; SetupCore.Require(total <= item.Bytes, "LBWIZ_DOWNLOAD_SIZE_EXCEEDED"); output.Write(buffer, 0, count); if (progress != null) progress(item.Name + " @ " + uri.Host, total, item.Bytes); }
                         output.Flush(true);
                     }
                     if (!Matches(part, item)) { File.Move(part, part + ".invalid-" + Guid.NewGuid().ToString("N")); throw new SetupException("LBWIZ_DOWNLOAD_INTEGRITY_FAILED"); }

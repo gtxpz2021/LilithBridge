@@ -467,12 +467,17 @@ namespace LilithSetup
             }
             return SetupCore.Hash(Encoding.UTF8.GetBytes(b.ToString()));
         }
-        public void Verify(string root)
+        public void Verify(string root) { Verify(root, null); }
+        public void Verify(string root, Action<string> progress)
         {
             string stamp = Fingerprint(root), prior;
             if (cache.TryGetValue(root, out prior) && prior == stamp) return;
+            int at = 0;
             foreach (Dictionary<string, object> spec in (object[])manifest["files"])
+            {
+                if (progress != null) progress("正在校验模型文件 " + (++at) + "/11：" + (string)spec["file"]);
                 SetupCore.Require(SetupCore.FileHash(SetupCore.SafePath((string)spec["file"], root)) == (string)spec["sha256"], "LBSETUP_MODEL_HASH_MISMATCH");
+            }
             SetupCore.Require(stamp == Fingerprint(root), "LBSETUP_LOCAL_FILES_CHANGED_RECHECK"); cache[root] = stamp;
         }
     }
