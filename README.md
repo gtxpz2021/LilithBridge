@@ -45,7 +45,7 @@ OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。Cha
 
 ## 当前发行版
 
-**当前源码：0.3.150.104 / 61122db5**，安装器 **0.1.4.20**。新附件已封装，Release待发布；此前已发布cn19保留。本次补齐国内安装路径、游戏内 DeepSeek Key 入口和召回准备进度；Unity 首启基础库仍可能联网，网络可用性不作保证。本轮仅构建与静态核对，未执行安装或运行验收。
+**当前源码：0.3.150.104 / 61122db5**，安装器 **0.1.4.20**。[本版 Release 已发布](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.104-61122db5)，提供单文件安装器、更新包、源码包和 SHA-256 校验文件；此前已发布 cn19 保留。本次补齐国内安装路径、游戏内 DeepSeek Key 入口和召回准备进度；Unity 首启基础库仍可能联网，网络可用性不作保证。本轮仅构建与静态核对，未执行安装或运行验收。
 
 从 RC3 至今，重点完善了完整对话的上下文供给、回看与反思接续，减少重复来源检查和播放期间的工作量，修复公开片段保存竞态，并更新了官方新版游戏适配、模型选择与安装流程。[查看累计更新](RELEASE-NOTES.zh-CN.md)。
 
@@ -67,4 +67,4 @@ OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。Cha
 - [本地召回依赖](docs/DEPENDENCIES.md)：可选语义检索的准备方法。
 - [Issues](https://github.com/gtxpz2021/LilithBridge/issues)：报告问题或交流建议。
 
-核心源码位于 src/LilithBridge/，安装器位于 tools/installer-source/。main已同步61122db5对应源码与.20安装器；新Release附件尚待发布。SOURCE-FILES.json / SOURCE-IDENTITY.json记录专门源码附件的冻结快照，main文档可单独更新。旧Release与标签保留。
+核心源码位于 src/LilithBridge/，安装器位于 tools/installer-source/。main已同步61122db5对应源码与.20安装器；[本版Release附件已发布](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.104-61122db5)。SOURCE-FILES.json / SOURCE-IDENTITY.json记录专门源码附件的冻结快照，main文档可单独更新。旧Release与标签保留。

@@ -1,4 +1,4 @@
-> 源码与封装已就绪；本版Release附件尚未公开。
+> [本版 Release 与四项下载附件已发布](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.104-61122db5)。
 
 # LilithBridge .104 · 61122db5
 
