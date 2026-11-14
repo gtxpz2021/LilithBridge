@@ -249,7 +249,7 @@ internal sealed class ReviewProcess
     }
 }
 
-internal sealed class ReviewHandoff
+internal sealed partial class ReviewHandoff
 {
     private readonly object _gate=new();
     internal ReviewProcess? Current {get;private set;}

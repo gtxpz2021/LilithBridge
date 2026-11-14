@@ -10,6 +10,8 @@ internal sealed partial class DeepSeekClient
         ReviewToolArgs args, MemoryStore owner, CancellationToken token, MethodSource[] derived, MethodOffer? offer)
     {
         token.ThrowIfCancellationRequested();
+        if(args.Traversal != null)
+            return ExecuteExperienceTraversal(config,request,args,owner,token,derived,offer);
         if(args.Message?.Reference.StartsWith("generated/",StringComparison.Ordinal)==true)
             return ExecuteGeneratedReplyRead(config,request,args,owner,token,derived,offer);
         if (!request.ReviewToolEnabled || !ReferenceEquals(request.ReviewStore, owner)

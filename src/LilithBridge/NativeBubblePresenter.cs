@@ -50,11 +50,11 @@ internal static partial class NativeBubblePresenter
             && reply.Response.Outcome is "accepted" or "accepted_without_finish_reason")
             BridgeController.Instance?.CaptureGeneratedPublicReply(reply);
         if (reply.Error.Length > 0 || reply.Response.Outcome == "cancelled"
-            || reply.DialogueRequest?.IsCancelled == true || MemoryStore.Clean(reply.Text).Length == 0)
+            || reply.DialogueRequest?.IsCancelled == true || reply.PublicTextForDisplay.Length == 0)
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
         if (delivery.GeneratedReceivedAtUtc != null) return;
-        delivery.MarkGenerated(MemoryStore.Clean(reply.Text));
+        delivery.MarkGenerated(reply.PublicTextForDisplay);
         reply.DialogueRequest?.WaitStatus.MarkGenerationReceived();
         TraceDelivery("ai.generation_received", reply, delivery, "", "");
     }
@@ -70,7 +70,7 @@ internal static partial class NativeBubblePresenter
         if (reply.DeliveryOutcome.Length > 0)
             return;
         if (BridgeController.Instance?.NativeLinkageAllows(reply) == false) return;
-        string text = MemoryStore.Clean(reply.Text);
+        string text = reply.PublicTextForDisplay;
         if (text.Length == 0)
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
@@ -82,7 +82,7 @@ internal static partial class NativeBubblePresenter
     public static void Show(ApiResult reply)
     {
         if (BridgeController.Instance?.NativeLinkageAllows(reply) == false) return;
-        string text = MemoryStore.Clean(reply.Text);
+        string text = reply.PublicTextForDisplay;
         if (text.Length == 0)
             return;
         if (ReferenceEquals(_activeReply, reply) || reply.DeliveryOutcome.Length > 0)
@@ -259,7 +259,7 @@ internal static partial class NativeBubblePresenter
         if (reply.DeliveryOutcome.Length > 0)
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
-        string text = MemoryStore.Clean(reply.Text);
+        string text = reply.PublicTextForDisplay;
         if(!PublicFinalHandoff.Prepare(reply,text,delivery))
         {CancelUndispatched(reply,"public_prefix_changed","local_final_text_differs_from_streamed_prefix");return;}
         delivery.MarkQueued(delivery.PrepareFinalDisplayPlan(text));
@@ -275,7 +275,7 @@ internal static partial class NativeBubblePresenter
         if (ReferenceEquals(_activeReply, reply))
             return;
         ReplyDeliveryRecord delivery = EnsureDelivery(reply);
-        string text = MemoryStore.Clean(reply.Text);
+        string text = reply.PublicTextForDisplay;
         delivery.CancelBeforeDisplay(text, SplitNaturalChunks(text).Count, outcome, reason);
         reply.DeliveryOutcome = outcome;
         BridgeController.Instance?.RecordGeneratedPublicEnd(reply, outcome);

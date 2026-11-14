@@ -7,18 +7,18 @@ using System.Threading.Tasks;
 namespace LilithBridge;
 
 // Kept only inside a completion transaction; never persisted as character state.
-internal enum NativeToolKind { Screen, Review, RejectAll, MethodManage, MethodRead, WorkReference, ExpressionYield }
+internal enum NativeToolKind { Screen, Review, RejectAll, MethodManage, MethodRead, WorkReference, ExpressionYield, RevisitAction }
 
 // Actual declarations of this single HTTP, never copied into another completion.
 internal sealed record NativeToolOffer(bool Screen, bool Review, ReviewProcess? StopTarget,
     ReviewProcess? Budget, bool SelectionAllowed, MethodOffer? Methods = null, bool WorkReference = false,bool Reconsider = false, bool Archive = false,
-    bool ExpressionYield = false);
+    bool ExpressionYield = false, ThoughtRevisitTarget[]? RevisitTargets = null);
 internal sealed record RejectedToolCall(string Id, string Message, string Reason = "");
 
 internal sealed record PendingNativeCall(NativeToolKind Kind, string Id, JsonElement AssistantMessage,
     ReviewToolArgs? Review = null, string Error = "",
     IReadOnlyList<RejectedToolCall>? RejectedExtras = null, ReviewProcess? DeclaredStopTarget = null,
-    MethodAction? Method = null, MethodOffer? MethodSnapshot = null, string WorkQuery = "", ExpressionYieldArgs? Expression = null);
+    MethodAction? Method = null, MethodOffer? MethodSnapshot = null, string WorkQuery = "", ExpressionYieldArgs? Expression = null, ThoughtRevisitChoice? Revisit = null);
 
 internal sealed partial class DeepSeekClient
 {
@@ -51,7 +51,7 @@ internal sealed partial class DeepSeekClient
             : request.ReviewHandoff?.Cancellable(request, request.ReviewStore);
         if (screen) tools.Add(ScreenToolDefinition());
         bool workReference = request.StoryToolEnabled;
-        if (workReference) tools.Add(WorkReferenceToolDefinition());
+        if (workReference) tools.Add(WorkReferenceToolDefinition(request));
         string retainedResult = review ? request.ReviewResultOperationId : "";
         if (review && (newReviewRead||retainedResult.Length>0||stop!=null))
             tools.Add(ReviewContext.ToolDefinition(retainedResult.Length > 0 ? retainedResult : stop?.Id ?? "",
@@ -61,7 +61,9 @@ internal sealed partial class DeepSeekClient
         if(request.MethodHttpOffer!=null) {tools.Add(MethodToolDefinition(true));tools.Add(MethodToolDefinition(false));}
         bool expressionYield = request.WorkPrototype?.CanYield == true && request.CanChooseNativeTool;
         if (expressionYield) tools.Add(ExpressionYieldToolDefinition());
-        offer = new NativeToolOffer(screen, review&&(newReviewRead||retainedResult.Length>0||stop!=null), stop, request.ReviewBudget, request.CanChooseNativeTool,request.MethodHttpOffer,workReference,Reconsider:review&&request.CanStartReviewReconsider,Archive:newReviewRead&&request.ReviewStore?.HasLegacyArchive==true,ExpressionYield:expressionYield);
+        var revisitTargets = request.RevisitActionOffer();
+        if (revisitTargets.Length > 0) tools.Add(RevisitActionToolDefinition(revisitTargets));
+        offer = new NativeToolOffer(screen, review&&(newReviewRead||retainedResult.Length>0||stop!=null), stop, request.ReviewBudget, request.CanChooseNativeTool,request.MethodHttpOffer,workReference,Reconsider:review&&request.CanStartReviewReconsider,Archive:newReviewRead&&request.ReviewStore?.HasLegacyArchive==true,ExpressionYield:expressionYield, RevisitTargets:revisitTargets);
         return tools.ToArray();
     }
 
@@ -116,10 +118,10 @@ internal sealed partial class DeepSeekClient
             {
                 if (modeValue.ValueKind != JsonValueKind.String) { error = "mode must be a string"; return false; }
                 mode = (modeValue.GetString() ?? "").Trim().ToLowerInvariant();
-                if (mode is not ("read" or "discover" or "message" or "history" or "artifact" or "archive" or "reconsider" or "take" or "status" or "stop")) { error = "mode must be read, discover, message, history, artifact, archive, reconsider, take, status or stop"; return false; }
+                if (mode is not ("read" or "discover" or "message" or "history" or "artifact" or "revisit" or "thought" or "archive" or "reconsider" or "take" or "status" or "stop")) { error = "mode must be read, discover, message, history, artifact, revisit, thought, archive, reconsider, take, status or stop"; return false; }
             }
 
-            if(mode is "read" or "discover" or "message" or "history" or "artifact" or "archive" or "reconsider" && questionText.Length==0){error="question is required";return false;}
+            if(mode is "read" or "discover" or "message" or "history" or "artifact" or "revisit" or "thought" or "archive" or "reconsider" && questionText.Length==0){error="question is required";return false;}
             string query = "";
             if (root.TryGetProperty("query", out JsonElement queryValue) && queryValue.ValueKind == JsonValueKind.String)
             {
@@ -153,9 +155,9 @@ internal sealed partial class DeepSeekClient
             if (root.TryGetProperty("offset", out JsonElement offsetValue))
             {
                 if (offsetValue.ValueKind != JsonValueKind.Number || !offsetValue.TryGetInt32(out offset)
-                    || offset < 0 || (mode is not ("history" or "artifact")&&offset > ReviewContext.MaxRecordOffset))
+                    || offset < 0 || (mode is not ("history" or "artifact" or "revisit" or "thought")&&offset > ReviewContext.MaxRecordOffset))
                 { error = "offset must be a non-negative integer within range"; return false; }
-                if (offset > 0 && refs.Count != 1 && mode is not ("history" or "artifact"))
+                if (offset > 0 && refs.Count != 1 && mode is not ("history" or "artifact" or "revisit" or "thought"))
                 { error = "offset requires exactly one source_refs entry"; return false; }
             }
 
@@ -163,6 +165,9 @@ internal sealed partial class DeepSeekClient
             if(root.TryGetProperty("operation_id",out var operation))
             {if(operation.ValueKind!=JsonValueKind.String || (operationId=operation.GetString()??"").Length>64){error="operation_id invalid";return false;}}
             if(mode is "take" or "status" or "stop" && operationId.Length==0){error="operation_id required";return false;}
+            string revisitId="";
+            if(root.TryGetProperty("revisit_id",out var ri))
+            {if(mode!="revisit"||ri.ValueKind!=JsonValueKind.String||(revisitId=ri.GetString()??"").Length==0||revisitId.Length>256){error="revisit_id requires revisit mode and a bounded returned identity";return false;}}
             string rootVersion="";
             if(root.TryGetProperty("root_version",out var version))
             {
@@ -170,7 +175,7 @@ internal sealed partial class DeepSeekClient
                 {error="root_version must be an exact 32-character relationship EventId";return false;}
                 rootVersion=version.GetString()!;
             }
-            if(mode is "history" or "artifact" && (refs.Count>0 || includePrior))
+            if(mode is "history" or "artifact" or "revisit" or "thought" && (refs.Count>0 || includePrior))
             {error="history uses typed history_ref; source_refs and prior thought are unsupported";return false;}
             string scope="focus",historyRef="",cursor="",historyFind="";int before=0,bodyChars=700;
             bool hasBodyChars=root.TryGetProperty("history_body_chars",out var bc);
@@ -187,18 +192,21 @@ internal sealed partial class DeepSeekClient
             {if(hc.ValueKind!=JsonValueKind.String||(cursor=hc.GetString()??"").Length>160){error="history_cursor invalid";return false;}}
             if(root.TryGetProperty("before_revision",out var br))
             {if(br.ValueKind!=JsonValueKind.Number||!br.TryGetInt32(out before)||before<0){error="before_revision invalid";return false;}}
-            if(mode is not ("history" or "artifact")&&(historyRef.Length>0||cursor.Length>0||before>0||root.TryGetProperty("history_scope",out _)))
+            if(mode is not ("history" or "artifact" or "revisit" or "thought")&&(historyRef.Length>0||cursor.Length>0||before>0||root.TryGetProperty("history_scope",out _)))
             {error="history options require history mode";return false;}
-            if(mode is "history" or "artifact"&&((scope!="record"&&offset!=0)||(scope=="record"&&historyRef.Length==0)||(scope!="versions"&&before>0)||(mode=="history"&&scope=="focus"&&cursor.Length>0)))
+            if(mode is "history" or "artifact" or "revisit" or "thought"&&((scope!="record"&&offset!=0)||(scope=="record"&&historyRef.Length==0)||(scope!="versions"&&before>0)||(mode=="history"&&scope=="focus"&&cursor.Length>0)))
             {error="history options do not match selected scope";return false;}
-            if((hasBodyChars||hasFind)&&(mode is not ("history" or "artifact")||scope!="record")
+            if((hasBodyChars||hasFind)&&(mode is not ("history" or "artifact" or "revisit" or "thought")||scope!="record")
                 ||historyFind.Length>0&&(offset!=0||cursor.Length>0))
             {error="expanded/literal history options require record scope; literal finding cannot use a continuation cursor";return false;}
             if(mode=="history"&&scope=="versions"&&before>0&&cursor.Length>0)
             {error="choose either before_revision or history_cursor, not both";return false;}
-            if(mode is not ("history" or "artifact") && rootVersion.Length>0){error="root_version requires history mode";return false;}
+            if(mode is not ("history" or "artifact" or "revisit" or "thought") && rootVersion.Length>0){error="root_version requires history mode";return false;}
             if(mode=="artifact"&&(scope=="versions"||before>0||scope!="focus"&&rootVersion.Length==0))
             {error="artifact supports focus discovery or a known root with sources/record";return false;}
+            if(mode=="revisit" && (rootVersion.Length>0 || scope=="versions" || before>0 || historyFind.Length>0
+                || scope!="focus"&&revisitId.Length==0 || scope=="focus"&&(historyRef.Length>0||cursor.Length>0)))
+            {error="revisit supports latest focus or a retained revisit_id with sources/record";return false;}
             LegacyArchiveQuery? archive=null;
             string Field(string name)=>root.TryGetProperty(name,out var f)?f.ValueKind==JsonValueKind.String?f.GetString()??"":throw new ArgumentException(name):"";
             try {
@@ -241,8 +249,10 @@ internal sealed partial class DeepSeekClient
                 message=new(messageRef,messageCursor,messageOffset,messageBodyChars);
             }
             else if(hasMessageFields){error="message fields require message mode";return false;}
+            if(!ParseExperienceTraversalOptions(root,mode,out var traversal,out error))return false;
             if(!ParseContextDiscoveryOptions(root,mode,out var discovery,out error))return false;
-            args = new ReviewToolArgs(questionText, mode, query, refs, includePrior, offset,operationId,rootVersion,HistoryOptions:mode is "history" or "artifact"?new ChatHistoryReadOptions(scope,historyRef,before,offset,cursor,bodyChars,historyFind):null,Archive:archive,Message:message,Discovery:discovery);
+            if(!ParseThoughtReadOptions(root,mode,scope,historyRef,out var thoughtVersion,out var thoughtDomain,out error))return false;
+            args = new ReviewToolArgs(questionText, mode, query, refs, includePrior, offset,operationId,rootVersion,HistoryOptions:mode is "history" or "artifact" or "revisit" or "thought"?new ChatHistoryReadOptions(scope,historyRef,before,offset,cursor,bodyChars,historyFind):null,Archive:archive,Message:message,Discovery:discovery,Traversal:traversal,RevisitId:revisitId,ThoughtVersion:thoughtVersion,ThoughtDomain:thoughtDomain);
             return true;
         }
     }
@@ -352,6 +362,8 @@ internal sealed partial class DeepSeekClient
             return ReadMethodCall(toolName,args.GetString()!,id.GetString()!,message,extras,envelope);
         if (toolName == WorkReferenceToolName)
             return ReadWorkReferenceCall(args.GetString()!, id.GetString()!, message, extras, envelope);
+        if (toolName == RevisitActionToolName)
+            return ReadRevisitActionCall(args.GetString()!, id.GetString()!, message, extras, envelope);
         if (toolName == ExpressionYieldToolName)
             return ReadExpressionYieldCall(args.GetString()!, id.GetString()!, message, extras, envelope);
         if (toolName == ScreenToolName)
@@ -429,7 +441,7 @@ internal sealed partial class DeepSeekClient
             bool reconsider = reviewArgs!.Mode == "reconsider";
             if(reconsider&&!offer.Reconsider)
             {envelope.PendingNativeCall=new PendingNativeCall(NativeToolKind.Review,id.GetString()!,message.Clone(),reviewArgs,"limit:reconsider_not_offered",extras);return "";}
-            if(reviewArgs.Mode is "history" or "artifact" or "archive")request.ChatHistoryBudgetActive=true;
+            if(reviewArgs.Mode is "history" or "artifact" or "revisit" or "thought" or "archive")request.ChatHistoryBudgetActive=true;
             string rejection="";
             if (!control && !request.TryAcceptReviewCall(reconsider, out rejection))
             {
@@ -476,6 +488,7 @@ internal sealed partial class DeepSeekClient
         Func<Task<SemanticMessageRefresh?>>? refreshMaterials = null)
     {
         DialogueRequest request = envelope.DialogueRequest!;
+        request.ResetRevisitToolContext(); // This actual transcript only; the once-per-request receipt survives rebuilding.
         int successful = 0, prompts = 0, completions = 0, reasoning = 0, hits = 0, misses = 0;
         ApiResult current = envelope;
         int baseCount=messages.Count;
@@ -517,6 +530,8 @@ internal sealed partial class DeepSeekClient
                 if(!MethodProtocolPermitted(request))
                 { current.Error="Method source changed; obsolete protocol will not be replayed";current.Response.Outcome="method_source_changed";return null; }
                 request.ReviewAuxiliaryBudgetAllowed=CanBudgetReconsider(config,request,payload,messages);
+                request.PreparingWorkMaterial = request.AvailableWorkReferenceRead() is { InlineEntries.Length: > 0, LocalDispatchAt: not null };
+            PrepareNativeOffer:
                 request.MethodHttpOffer=PrepareMethodOffer(request,memoryOwner);
                 object[] tools = NativeToolDefinitions(request, out NativeToolOffer offer);
                 current.NativeToolOffer = offer;
@@ -539,6 +554,19 @@ internal sealed partial class DeepSeekClient
                 }
                 object? workReceipt = request.WorkPrototype?.ReceiptMessage();
                 if(workReceipt!=null)messages.Add(workReceipt);
+                // Optional previous-turn work data is separate from native tool protocol.
+                // Fit after declarations/host receipts, against the complete adapted request.
+                object? previousWork = FitPreviousWorkMaterial(config, payload, messages, request);
+                if (previousWork == null && request.PreparingWorkMaterial)
+                {
+                    if(workReceipt!=null)messages.Remove(workReceipt);
+                    if(methodHost!=null)messages.Remove(methodHost);
+                    request.PreparingWorkMaterial=false;
+                    goto PrepareNativeOffer; // One retry without the optional body or its method-tracking restriction.
+                }
+                if (previousWork != null)
+                { request.BindPreviousWorkMaterial(); messages.Insert(1, previousWork); }
+                request.PreparingWorkMaterial=false;
                 payload["messages"] = messages.ToArray();
                 CaptureExpressionSourceFootprint(memoryOwner,request,history,current,imageAttached);
                 string? text;
@@ -550,6 +578,7 @@ internal sealed partial class DeepSeekClient
                 }
                 finally
                 {
+                    if(previousWork!=null)messages.Remove(previousWork);
                     if(workReceipt!=null)messages.Remove(workReceipt);
                     if(methodHost!=null)messages.Remove(methodHost);
                 }
@@ -599,6 +628,12 @@ internal sealed partial class DeepSeekClient
                     }
                 }
                 if (call.Kind == NativeToolKind.RejectAll) continue;
+                if (call.Kind == NativeToolKind.RevisitAction)
+                {
+                    string receipt = await ExecuteRevisitAction(request, call, current).ConfigureAwait(false);
+                    messages.Add(new { role = "tool", tool_call_id = call.Id, content = receipt });
+                    continue;
+                }
                 if (call.Kind == NativeToolKind.ExpressionYield)
                 {
                     string receipt = ExecuteExpressionYield(request, call, current, memoryOwner);
@@ -728,7 +763,9 @@ internal sealed partial class DeepSeekClient
                 misses += outcome.PromptCacheMissTokens;
                 token.ThrowIfCancellationRequested();
                 // Fit each material type using its own projection and continuation contract.
-                if(outcome.ContextDiscovery!=null)
+                if(outcome.ExperienceTraversal!=null)
+                    outcome=FitExperienceTraversalOutcome(config,payload,messages,call,request,outcome,readReceipts);
+                else if(outcome.ContextDiscovery!=null)
                     outcome=FitContextDiscoveryOutcome(config,payload,messages,call,request,outcome,readReceipts);
                 else if(outcome.GeneratedReply!=null)
                     outcome=FitGeneratedReplyOutcome(config,payload,messages,call,request,outcome,readReceipts);
@@ -736,20 +773,30 @@ internal sealed partial class DeepSeekClient
                     outcome=FitLogicalMessageOutcome(config,payload,messages,call,request,outcome,readReceipts);
                 else if(outcome.LegacyArchive!=null)
                     outcome=FitLegacyArchive(config,request,call.Review!,memoryOwner,payload,messages,call.Id,outcome,readReceipts);
+                else if(outcome.B1Directory!=null)
+                    outcome=FitB1Directory(config,payload,messages,call,request,memoryOwner,outcome,readReceipts);
+                else if(outcome.ThoughtRead!=null)
+                    outcome=FitThoughtRead(config,payload,messages,call,request,memoryOwner,outcome,readReceipts);
+                else if(outcome.RevisitRead!=null)
+                    outcome=FitRevisitRead(config,payload,messages,call,request,memoryOwner,outcome,readReceipts);
                 else if(outcome.DayArtifacts!=null)
                     outcome=FitDayArtifacts(config,payload,messages,call,request,memoryOwner,outcome,readReceipts);
                 else if(outcome.SourceSnapshot?.HasChatHistory==true)
                     outcome=FitChatHistoryOutcome(config,payload,messages,call,request,memoryOwner,outcome,readReceipts);
-                if (call.Kind == NativeToolKind.Review && call.Review?.Mode is "read" or "discover" or "message" or "history" or "artifact" or "archive" && outcome.ReadDataVersion.Length > 0)
+                if (call.Kind == NativeToolKind.Review && call.Review?.Mode is "read" or "discover" or "message" or "history" or "artifact" or "revisit" or "thought" or "archive" && outcome.ReadDataVersion.Length > 0)
                     outcome = outcome with { Json = readReceipts.Project(ReviewContext.ToolName,
                         System.Text.Json.JsonSerializer.Serialize(call.Review), outcome.ReadDataVersion, call.Id, outcome.Json) };
+                if(outcome.ExperienceTraversal!=null)
+                    outcome = outcome with { Json = TraversalTextReferences.Project(outcome.Json, messages, call.Id) };
                 if(outcome.LegacyArchive!=null)LegacyArchiveBoundaryForTests?.Invoke("before_registration");
                 if (!request.RegisterReviewOutcome(outcome,()=>
                 {
                     if(outcome.IsControlReceipt)request.ReviewControlReceipts.Add(outcome.Json);
                     else request.ReviewSuppliedText.Add(outcome.Json);
                     messages.Add(new { role = "tool", tool_call_id = call.Id, content = outcome.Json });
+                    request.StageB1ReadIndex(call.Id, outcome);
                     memoryOwner.AppendReflectionToolBasis(request, outcome);
+                    memoryOwner.AppendRevisitToolTargets(request, outcome, call.Id);
                 }))
                 {
                     current.Error = "Review source identity changed before continuation";

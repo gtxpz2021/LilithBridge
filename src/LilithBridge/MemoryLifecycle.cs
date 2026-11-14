@@ -23,6 +23,11 @@ internal sealed class MemoryPatch
 internal sealed class ReflectionResult
 {
     [System.Text.Json.Serialization.JsonIgnore] internal B1SelectionSnapshot? SelectionSnapshot { get; set; }
+    // Only the explicit optional protocol field changes ordinary opportunity pacing.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool DeferOrdinary { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal DateTimeOffset? OrdinaryDeferralObservedAtUtc { get; set; }
     public ReflectionNoteProposal? Note { get; set; }
     public ReflectionLessonProposal? Lesson { get; set; }
     public RelationshipReadingProposal? Relationship { get; set; }

@@ -36,7 +36,7 @@ OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。Cha
 ## 快速开始
 
 1. 准备 **Windows x64** 和已安装的正版游戏。当前发行版面向官方 **1.2.1**。
-2. 打开[最新版发布页](https://github.com/gtxpz2021/LilithBridge/releases/latest)，下载 **LilithBridge-Setup-0.3.150.104-cn19-c1.exe**；无需手工合并资源包。
+2. 打开[最新版发布页](https://github.com/gtxpz2021/LilithBridge/releases/latest)，下载 **LilithBridge-Setup-0.3.150.104-cn20-61122db5.exe**；无需手工合并资源包。
 3. 正常退出游戏，双击下载的单文件安装器，选择游戏目录，按向导安装。
 4. 启动游戏，在 **⋯ → 模型与资料** 中选择 DeepSeek 或 OpenAI。选择 DeepSeek 后可在“密钥与隐私”保存或清除自己的 Key；使用 ChatGPT 时，在认证账户中点 **Continue with ChatGPT**。
 5. 按 **推荐使用设置** 完成资料与后台选项，然后按回车开始聊天。
@@ -45,11 +45,14 @@ OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。Cha
 
 ## 当前发行版
 
-**0.3.150.104 / cn19 / bfb40b65**，安装器 **0.1.4.19**。本次补齐国内安装路径、游戏内 DeepSeek Key 入口和召回准备进度；Unity 首启基础库仍可能联网，网络可用性不作保证。本轮仅构建与静态核对，未执行安装或运行验收。
+**当前源码：0.3.150.104 / 61122db5**，安装器 **0.1.4.20**。新附件已封装，Release待发布；此前已发布cn19保留。本次补齐国内安装路径、游戏内 DeepSeek Key 入口和召回准备进度；Unity 首启基础库仍可能联网，网络可用性不作保证。本轮仅构建与静态核对，未执行安装或运行验收。
 
 从 RC3 至今，重点完善了完整对话的上下文供给、回看与反思接续，减少重复来源检查和播放期间的工作量，修复公开片段保存竞态，并更新了官方新版游戏适配、模型选择与安装流程。[查看累计更新](RELEASE-NOTES.zh-CN.md)。
 
 旧版本说明保留在[历史 Releases](https://github.com/gtxpz2021/LilithBridge/releases)，不再混入当前安装步骤。
+
+
+本版继续完善相邻轮材料承接、旧理解回看和反思恢复；模型明确选择暂缓后，普通自动反思机会等待五分钟，主动reflect可越过这项软等待。并非固定周期，真实频率、自然效果和费用尚未验证。已有关闭项保留，进入游戏后由本人在推荐使用设置知情选择理解保存和按需回看。
 
 ## 数据与控制
 
@@ -64,4 +67,4 @@ OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。Cha
 - [本地召回依赖](docs/DEPENDENCIES.md)：可选语义检索的准备方法。
 - [Issues](https://github.com/gtxpz2021/LilithBridge/issues)：报告问题或交流建议。
 
-核心源码位于 `src/LilithBridge/`，安装器位于 `tools/installer-source/`。当前 main 已同步本版源码；本版 Release 的准确源码也随专门的 **source ZIP** 提供。本版已创建的标签仍指向旧 main，GitHub 自动生成的 Source code 不是 .104 源码；请下载 Release 专门的 source ZIP。main 此次同步源码，历史标签保持原状。SOURCE-FILES.json / SOURCE-IDENTITY.json 记录专门源码附件的冻结快照，main 的发布说明可能单独更新。
+核心源码位于 src/LilithBridge/，安装器位于 tools/installer-source/。main已同步61122db5对应源码与.20安装器；新Release附件尚待发布。SOURCE-FILES.json / SOURCE-IDENTITY.json记录专门源码附件的冻结快照，main文档可单独更新。旧Release与标签保留。

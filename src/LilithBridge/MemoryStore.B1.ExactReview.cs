@@ -5,18 +5,27 @@ using System.Linq;
 namespace LilithBridge;
 
 // A page is actual bounded historical supply, not an endorsement or hidden reasoning.
-internal sealed record B1ExactReviewPage(string Version, int Offset, string Json, string Fingerprint);
+internal sealed record B1ExactReviewPage(string Version, int Offset, string Json, string Fingerprint)
+{
+    internal IReadOnlyList<B1ReadLink> ReadLinks { get; init; } = Array.Empty<B1ReadLink>();
+    internal int UnindexedRows { get; init; }
+    internal bool IncludesReadIndex { get; init; }
+}
 
 internal sealed partial class MemoryStore
 {
-    internal B1ExactReviewPage ReadExactB1(string version, int offset, string query, BridgeConfig config)
+    internal B1ExactReviewPage ReadExactB1(string version, int offset, string query, BridgeConfig config, bool includeReadIndex = true)
     {
         lock (_experienceLock)
         {
+            var readLinks = new List<B1ReadLink>();
+            int unindexedRows = 0;
+            bool includesReadIndex = false;
             B1ExactReviewPage Result(object value)
             {
                 string json = ReviewContext.Serialize(value);
-                return new(version, offset, json, B1Hash(json));
+                return new(version, offset, json, B1Hash(json)) { ReadLinks = readLinks,
+                    UnindexedRows = unindexedRows, IncludesReadIndex = includesReadIndex };
             }
             if (!Guid.TryParseExact(version, "N", out _) || offset < 0 || offset > ReviewContext.MaxRecordOffset)
                 return Result(new { status="invalid_arguments", reason="exact_b1_guid_and_bounded_offset_required" });
@@ -59,6 +68,9 @@ internal sealed partial class MemoryStore
                 var locator=new B1Material(dependency,"","",default,"saved_permission_footprint","body_not_recorded","");
                 rows.Add(("formation_dependency_without_saved_body",locator,"body_not_recorded;current_availability:"+now.Reason,""));
             }
+            var readIndex = includeReadIndex ? ReadB1ReadIndex(entry, doc) : null;
+            includesReadIndex = readIndex != null;
+            rows.AddRange(B1ReadIndexRows(readIndex, doc, query, config));
             // Offset counts UTF-16 text units plus one separator per row, even
             // unavailable/empty rows. This gives those rows a bounded page slot.
             int position=0, remaining=2500, next=offset;
@@ -73,6 +85,14 @@ internal sealed partial class MemoryStore
                 int count=Math.Min(remaining,row.Text.Length-start);
                 if(count>0 && start+count<row.Text.Length && char.IsHighSurrogate(row.Text[start+count-1]))count--;
                 var m=row.Material;
+                if (count > 0)
+                {
+                    if (row.Kind is "retained_opinion" or "saved_formation_supply")
+                        readLinks.Add(new(row.Kind == "retained_opinion" ? "exact_opinion" : "exact_formation",
+                            version, m.Ref, B1Hash(row.Text), "", start, count, row.Text.Length,
+                            B1Hash(row.Text.Substring(start, count)), Array.Empty<string>()));
+                    else unindexedRows++; // Do not recursively copy/re-index an older reading history.
+                }
                 records.Add(new { type=row.Kind, source_ref=m.Ref.Key, source_sha256=m.Ref.Sha256,
                     status=row.Status, original_time=m.At==default?null:m.At.ToString("O"), origin=m.Origin,
                     scope=row.Text.Length>0?m.Scope:null, relation=row.Text.Length>0?m.Relation:null,
@@ -95,6 +115,14 @@ internal sealed partial class MemoryStore
                 formation_status=entry.Packet.Materials.Count==0?"no_material_recorded":"recorded_finite_supply",
                 packet_id=entry.Packet.Id, packet_protocol=entry.Packet.ProtocolVersion,
                 omitted_material_count=entry.Packet.Omissions.Count,
+                reading_index=new {
+                    status=readIndex==null?"not_recorded_or_unreadable":"recorded_finite_locators",
+                    attempt_id=readIndex?.AttemptId, dispatch_observed_at=readIndex?.DispatchObservedAt,
+                    meaning="Tool bodies present in this thought's accepted attempt; supplied, not declared basis or proof of use. Exact retained versions or verified indexed work entries; unavailable originals leave gaps.",
+                    coverage="exact B1 opinion/packet, day artifact, and indexed collection work entries; no recursive older reading index, legacy short work entries, automatic work supply, or no-retention history",
+                    indexed_rows=readIndex?.Links.Length ?? 0, unindexed_body_rows=readIndex?.UnindexedRows,
+                    indexed_work_entries=readIndex?.WorkLinks?.Length ?? 0,
+                    repeated_tool_receipts=readIndex?.Repeats },
                 records, offset, total_units=total, next_offset=nextOffset,
                 next_locator=nextOffset.HasValue?new {mode="read",source_refs=new[]{"b1:"+version},offset=nextOffset}:null,
                 pagination="Each page rechecks live permission; availability changes can change offsets. Restart at zero after a source change.",
@@ -106,7 +134,10 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock)
         {
-            var current=ReadExactB1(page.Version,page.Offset,query,config);
+            // A best-effort index attached after this page was read must not
+            // invalidate its already lawful original rows. Recheck only the
+            // index domain that this particular page could actually include.
+            var current=ReadExactB1(page.Version,page.Offset,query,config,page.IncludesReadIndex);
             return current.Fingerprint==page.Fingerprint && use();
         }
     }

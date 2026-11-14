@@ -94,7 +94,7 @@ internal sealed class B1Entry
     public List<B1Ref> Sources { get; init; } = new();
     public B1Packet Packet { get; init; } = new();
 }
-internal sealed record B1Receipt(string StepId, string ResultVersion, string Outcome, string AttemptId,
+internal sealed partial record B1Receipt(string StepId, string ResultVersion, string Outcome, string AttemptId,
     int HttpAttempts, DateTimeOffset At);
 internal sealed record B1Delivery(string StepId, string RequestId, string EventId, int StartChar,
     string Text, string Outcome, DateTimeOffset At);

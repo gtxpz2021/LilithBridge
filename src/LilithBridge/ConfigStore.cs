@@ -139,8 +139,14 @@ internal sealed partial class BridgeConfig
     public bool ActionPoseClothingAuditEnabled { get; set; } = false;
     public bool ReflectionEnabled { get; set; } = true;
     public bool ReflectionOnlyWhenIdle { get; set; } = true;
+    // Enabled recovery budget. False restores the previous retry policy.
+    public bool ReflectionRetryBudgetEnabled { get; set; } = true;
     public int ReflectionIntervalSeconds { get; set; } = 7200;
     public int ReflectionMinIdleSeconds { get; set; } = 90;
+    // Current complete dialogue uses material age and service spacing, not a
+    // silence clock. Explicit zero on either field restores the legacy pacing.
+    public int ReflectionDialogueServiceSeconds { get; set; } = 60;
+    public int ReflectionDialogueAgeSeconds { get; set; } = 60;
     /// <summary>
     /// How much new conversation has to accumulate before a pass, counted in
     /// dialogue lines (a player line and her reply are two). Raised from 1 to 8 on
@@ -948,6 +954,8 @@ internal static partial class ConfigStore
                     ReadBoolean(meta, "reflection_enabled", config.ReflectionEnabled);
                 config.ReflectionOnlyWhenIdle =
                     ReadBoolean(meta, "reflection_only_when_idle", config.ReflectionOnlyWhenIdle);
+                config.ReflectionRetryBudgetEnabled =
+                    ReadBoolean(meta, "reflection_retry_budget_enabled", config.ReflectionRetryBudgetEnabled);
                 config.ReflectionTestTrigger =
                     ReadBoolean(meta, "reflection_test_trigger", config.ReflectionTestTrigger);
                 config.ReflectionRecallInChat =
@@ -965,6 +973,14 @@ internal static partial class ConfigStore
                     meta, "proactive_random_chance", config.ProactiveRandomChance);
                 config.MicroReactionRandomChance = ReadDouble(
                     meta, "micro_reaction_random_chance", config.MicroReactionRandomChance);
+                if (meta.TryGetProperty("reflection_dialogue_service_seconds", out JsonElement dialogueService)
+                    && dialogueService.ValueKind == JsonValueKind.Number
+                    && dialogueService.TryGetInt32(out int serviceSeconds))
+                    config.ReflectionDialogueServiceSeconds = serviceSeconds;
+                if (meta.TryGetProperty("reflection_dialogue_age_seconds", out JsonElement dialogueAge)
+                    && dialogueAge.ValueKind == JsonValueKind.Number
+                    && dialogueAge.TryGetInt32(out int ageSeconds))
+                    config.ReflectionDialogueAgeSeconds = ageSeconds;
                 if (meta.TryGetProperty("reflection_interval_seconds", out JsonElement reflectionInterval)
                     && reflectionInterval.TryGetInt32(out int parsedReflectionInterval))
                 {

@@ -92,6 +92,7 @@ internal sealed partial class MemoryStore
         var ordered=items.OrderByDescending(c=>(double.IsNegativeInfinity(c.DiscoveryScore)?0:1d/(60+ranks[c.Id]))+1d/(60+lexRanks[c.Id]))
             .ThenBy(c=>c.Id,StringComparer.Ordinal).ToArray();
         var presented=new List<ContextRelevanceItem>();snapshot.Discovered=ordered.Length;
+        var dispositions=new List<ContextRelevanceDisposition>();
         int limit=Math.Clamp(config.ContextRelevanceMaxUtf8Bytes,16384,1048576);
         snapshot.Id=new string('0',64);
         // Per-item JSON sizes are additive. Reserve scalar-count growth and then
@@ -113,11 +114,23 @@ internal sealed partial class MemoryStore
                     :new[]{new ContextRelevanceExcerpt(0,item.Text[..Math.Min(600,item.Text.Length)]),new ContextRelevanceExcerpt(start,item.Text.Substring(start,count))};
             }
             int bytes=Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(item.Wire(),DialogueMaterialEnvelope.DataJson))+1;
-            if(used+bytes>limit){snapshot.CapacityDeferred++;continue;}
+            if(used+bytes>limit)
+            {
+                snapshot.CapacityDeferred++;
+                dispositions.Add(new(item.Id,item.Version,"inspection","capacity_deferred",bytes));
+                continue;
+            }
+            dispositions.Add(new(item.Id,item.Version,"inspection","within_capacity",bytes));
             presented.Add(item);used+=bytes;
         }
         snapshot.Candidates=presented.ToArray();
-        if(Encoding.UTF8.GetByteCount(snapshot.Payload())>limit){snapshot.Status="current_context_exceeds_inspection_budget";snapshot.Candidates=Array.Empty<ContextRelevanceItem>();snapshot.CapacityDeferred=items.Count;}
+        if(Encoding.UTF8.GetByteCount(snapshot.Payload())>limit)
+        {
+            snapshot.Status="current_context_exceeds_inspection_budget";snapshot.Candidates=Array.Empty<ContextRelevanceItem>();snapshot.CapacityDeferred=items.Count;
+            for(int i=0;i<dispositions.Count;i++)
+                dispositions[i]=dispositions[i] with {Reason="current_context_exceeds_inspection_budget"};
+        }
+        snapshot.Dispositions=dispositions.ToArray();
         snapshot.Id=SemanticTextHash(JsonSerializer.Serialize(new {owner,generation,query,root=_root,session=_sessionId,snapshot.ContextHash,snapshot.Model,snapshot.Index,
             owner_view_schema=ContextRelevanceViewIdentity.Schema,
             history_views=snapshot.HistoryIdentities.OrderBy(p=>p.Key,StringComparer.Ordinal).Select(p=>new{event_id=p.Key,identity=p.Value.Wire()}).ToArray(),

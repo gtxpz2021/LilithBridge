@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
         if (_loaded) return;
         if (_harmony != null || _ownedHost != null)
             throw new InvalidOperationException("Previous LilithBridge cleanup is incomplete");
-        Log.LogInfo("Lilith Native Bridge 0.3.150.104-cn-install.candidate.1 loading (candidate: game key setup and installer integration)");
+        Log.LogInfo("Lilith Native Bridge 0.3.150.104-cn19-reflection-ordinary-defer.candidate.1 loading (isolated candidate: c1 plus reading locators, activity observations and disposition diagnostics)");
         _harmony = new Harmony("local.lilith.native");
         try
         {

@@ -59,9 +59,20 @@ internal sealed partial class BridgeController
     }
 
     private bool QueueReflectionPreparation(ReflectionHistorySelection selection, ReflectionWork? recovery = null)
+        => QueueReflectionPreparation(selection, recovery, ordinaryCurrentOnly: false);
+
+    private bool QueueReflectionPreparation(ReflectionHistorySelection selection, ReflectionWork? recovery, bool ordinaryCurrentOnly)
     {
+        if (recovery is { Purpose: not ReflectionWorkPurpose.Dialogue }) return false;
         if (_reflectionPreparation != null) return false;
-        if (recovery == null && _reflectionWindow.Snapshot.Work == null)
+        // Recheck at the real queue boundary. Frozen ordinary/B1 work keeps its
+        // recovery route; an explicit reflect request bypasses only this soft wait.
+        if (recovery == null && _memory.ReadB1ReflectionJournal()?.Work == null
+            && OrdinaryReflectionDeferred(_config.ReflectionTestTrigger && !_lastReflectionTestTrigger)) return false;
+        // An opportunity that only the current material clock earned cannot
+        // be handed to B1, old material or a recovered Work.
+        if (ordinaryCurrentOnly && (recovery != null || !CurrentDialogueReflection(selection))) return false;
+        if (!ordinaryCurrentOnly && recovery == null && _reflectionWindow.Snapshot.Work == null)
         {
             if (_memory.B1ReflectionOpportunityAlreadyUsed(_reflectionWindow)) return false;
             // Timely normal dialogue may yield a completed pass's cooldown;
@@ -75,6 +86,7 @@ internal sealed partial class BridgeController
         double runtimeMs = total.Elapsed.TotalMilliseconds;
         var owner = memory.PrepareReflection(selection.History, ++_reflectionGeneration);
         if (owner == null) return false;
+        owner.RetryBudgetEnabled = config.ReflectionRetryBudgetEnabled;
         long coveredFactActivity = memory.MeasureMemoryActivity();
         long coveredModelRequest = _reflectionWindow.ModelRequestVersion;
         bool capturedModelRequest = _reflectionWindow.ModelRequested;
@@ -140,6 +152,7 @@ internal sealed partial class BridgeController
                     + ";owner_queue_ms=" + ownerQueueMs.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
                     + ";final_capture_ms=" + finalTiming.Elapsed.TotalMilliseconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
                     + ";owner_total_ms=" + total.Elapsed.TotalMilliseconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
+                var retryAttempt = owner.RetryBudgetEnabled ? new ReflectionRetryAttempt() : null;
                 ReflectionDispatch dispatch = (send, token) =>
                 {
                     var completion = new TaskCompletionSource<Task<HttpResponseMessage>?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -151,8 +164,16 @@ internal sealed partial class BridgeController
                             if (!CurrentReflectionPreparation(owner, memory) || token.IsCancellationRequested)
                             { completion.TrySetCanceled(token.IsCancellationRequested ? token : new CancellationToken(true)); return; }
                             Task<HttpResponseMessage>? sent = null;
+                            ReflectionRetryAttemptStep? retryStep = null;
                             bool allowed = memory.TryUseReflectionRequest(owner, snapshot, () =>
                             {
+                                if (retryAttempt != null)
+                                {
+                                    retryStep = DispatchOrdinaryReflectionWithBudget(retryAttempt, owner, memory, snapshot,
+                                        selection, recovery, coveredFactActivity, coveredModelRequest, progressiveService, token, send);
+                                    sent = retryStep.Request;
+                                    return true; // Deferral must not take the false => discard Work path.
+                                }
                                 // Only a real outbound attempt stages consumption.
                                 if (recovery == null) memory.StageReflectionWindow(_reflectionWindow, selection, coveredFactActivity, coveredModelRequest);
                                 else memory.StageRecoveredReflection(_reflectionWindow);
@@ -168,6 +189,10 @@ internal sealed partial class BridgeController
                                 sent = send(); return true;
                             }, recovering: recovery != null);
                             if (!allowed && recovery != null) memory.CancelReflectionWork(_reflectionWindow);
+                            if (allowed && retryStep != null && retryStep.Request == null)
+                                DeferOrdinaryReflectionRetry(owner, memory, snapshot, retryStep);
+                            else if (retryStep?.Kind == ReflectionRetryAttemptKind.Entered)
+                                TraceReflectionRetry(snapshot.RequestId, "local_entry", "fact=" + retryStep.Fact);
                             completion.TrySetResult(allowed ? sent : null);
                         }
                         catch (Exception error) { completion.TrySetException(error); }
@@ -177,31 +202,12 @@ internal sealed partial class BridgeController
                 };
                 Task.Run(async () =>
                 {
-                    ReflectionResult? response = null;
-                    try { response = await _client.RunReflectionAsync(config, snapshot.Source, owner.Token, dispatch).ConfigureAwait(false); }
+                    ReflectionLocalOutcome outcome = ReflectionLocalOutcome.Unobserved;
+                    try { outcome = await _client.RunReflectionOutcomeAsync(config, snapshot.Source, owner.Token, dispatch).ConfigureAwait(false); }
                     catch (OperationCanceledException) { }
                     catch (Exception error) { NativeEventLog.Trace("memory.reflection.error", "mod", "system", error.GetType().Name, "window_retained=true"); }
-                    _mainThread.Enqueue(() => HoldReflectionStep(owner, memory, () => ReflectionMayApply(response), () =>
-                    {
-                        if (!ReferenceEquals(owner, _reflectionPreparation)) { owner.Dispose(); return; }
-                        if (!CurrentReflectionPreparation(owner, memory)) { CancelReflectionPreparation("owner_changed_before_result"); return; }
-                        if (owner.Staged)
-                        {
-                            // Recheck ALL material actually read, not only the
-                            // proposal's citations. New append-only exchanges do
-                            // not invalidate this old window; changed versions do.
-                            if (!memory.TryUseReflectionRequest(owner, snapshot, () =>
-                                { OnReflectionResult(response, snapshot); return true; }, recovering: recovery != null))
-                            { CancelReflectionPreparation("source_or_version_changed_before_apply"); return; }
-                        }
-                        else
-                        {
-                            _nextReflectionPreparationAt = ReflectionClock() + ReflectionPreparationRetrySeconds;
-                            NativeEventLog.Trace("memory.reflection.not_sent", "mod", "system", "reflection window remains unconsumed", "owner=" + owner.Id);
-                        }
-                        _reflectionPreparation = null; _reflectionInProgress = false;
-                        owner.Dispose();
-                    }));
+                    _mainThread.Enqueue(() => HoldReflectionStep(owner, memory, () => ReflectionMayApply(outcome.Result),
+                        () => CompleteOrdinaryReflectionResponse(owner, memory, snapshot, outcome.Result, recovery != null, outcome)));
                 });
             }));
         });

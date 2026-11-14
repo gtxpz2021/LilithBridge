@@ -15,6 +15,7 @@ internal sealed partial class MemoryStore
     private static bool ReflectionWorkReferences(ReflectionWork work, HashSet<string> ids)
     {
         var request = work.Request;
+        if (request.RevisitContext is {} revisit && (ids.Contains(revisit.Target.EventId) || ids.Contains(revisit.CauseId) || MainRevisitOriginReferences(revisit.Main, ids))) return true;
         if (request.PurposeContexts.Any(c => ReflectionIntentReferences(c.Intent, ids))
             || work.Target.PendingIntents?.Any(i => ReflectionIntentReferences(i, ids)) == true) return true;
         if (request.RequestOriginContext?.Origin is {} origin && ids.Contains(origin.UserEventId)
@@ -68,8 +69,10 @@ internal sealed partial class MemoryStore
             bool dropWork = saved.Work is { } work && ReflectionWorkReferences(work, ids);
             bool dropOrigin = saved.RequestOrigin is {} origin && ids.Contains(origin.UserEventId);
             bool dropPurpose = saved.PendingIntents?.Any(i => ReflectionIntentReferences(i, ids)) == true;
-            if ((dropWork || dropOrigin || dropPurpose) && !WriteReflectionWindow(saved with {
-                Work = dropWork ? null : saved.Work, RequestOrigin = dropOrigin ? null : saved.RequestOrigin,
+            bool dropCompletion = SnapshotRevisitCompletionReferences(saved, ids);
+            var clean = ForgetRevisitCompletion(saved, ids);
+            if ((dropWork || dropOrigin || dropPurpose || dropCompletion) && !WriteReflectionWindow(clean with {
+                Work = dropWork ? null : clean.Work, RequestOrigin = dropOrigin ? null : saved.RequestOrigin,
                 PendingIntents = saved.PendingIntents?.Where(i => !ReflectionIntentReferences(i, ids)).ToArray() })) return false;
         }
         string temp = ReflectionWindowPath + ".tmp";
@@ -79,7 +82,8 @@ internal sealed partial class MemoryStore
             if (pending.InputId == null) return false;
             if (pending.Work is { } work && ReflectionWorkReferences(work, ids)
                 || pending.RequestOrigin is {} origin && ids.Contains(origin.UserEventId)
-                || pending.PendingIntents?.Any(i => ReflectionIntentReferences(i, ids)) == true) File.Delete(temp);
+                || pending.PendingIntents?.Any(i => ReflectionIntentReferences(i, ids)) == true
+                || SnapshotRevisitCompletionReferences(pending, ids)) File.Delete(temp);
         }
         return true;
     }

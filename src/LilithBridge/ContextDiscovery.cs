@@ -6,32 +6,34 @@ using System.Text.Json;
 
 namespace LilithBridge;
 
-internal sealed record ContextDiscoveryOptions(string Cursor = "", int PageBytes = 24576);
+internal sealed record ContextDiscoveryOptions(string Cursor = "", int PageBytes = 24576, ContextDiscoveryScope? Scope = null);
 
 // Discovery is an inspection page, not a relevance verdict or writable source.
 // Both owners retain their original identities: generated public text never
 // becomes a delivered utterance merely because MAIN found it in this page.
 internal sealed record ContextDiscoveryItem(string Reference, LogicalDialogueUnit? Unit,
     GeneratedReplySnapshot? Generated, int Offset, string Text,
-    LogicalDialogueUnit? SourceQuestion = null, bool SourceQuestionBodyIncluded = true)
+    LogicalDialogueUnit? SourceQuestion = null, bool SourceQuestionBodyIncluded = true, ContextDiscoveryMatch? ScopeMatch = null)
 {
     internal string Body => Unit?.Text ?? Generated!.BodyText;
     internal string Version => Unit?.VersionFingerprint ?? Generated!.VersionFingerprint;
     internal string Kind => Unit == null ? "generated_public_answer" : Unit.IsMessage ? "logical_message" : "independent_utterance";
-    internal object Wire() => new {
+    internal object Wire()
+    {
+        var payload = new {
         message_ref = Reference, source_kind = Kind, version_fingerprint = Version,
         original_message_ref=Generated?.LogicalOwnerKey,
         body_sha256 = MemoryStore.SemanticTextHash(Body), role = Unit?.Role ?? "assistant",
         origin = Unit?.Origin ?? "generated_public_answer",
         session_id = Unit?.SessionId ?? Generated!.Metadata.SessionId,
-        time = (Unit?.Timestamp ?? Generated!.Metadata.CapturedAtUtc).ToString("O"),
+        time = ScopeMatch == null ? (Unit?.Timestamp ?? Generated!.Metadata.CapturedAtUtc).ToString("O") : ScopeMatch.ViewAt?.ToString("O"),
         source_user_event_id = Unit?.SourceEventId ?? Generated!.SourceUserId,
         original_user_question_status = SourceQuestion == null ? "not_available_or_not_applicable;not_proof_of_absence"
             : SourceQuestionBodyIncluded ? "exact_qualified_original;historical_context_not_new_input" : "body_omitted_page_capacity;not_proof_of_absence",
         original_user_question = SourceQuestion == null ? null : new {
             event_id = SourceQuestion.AnchorEventId, message_ref = SourceQuestion.Key,
             role = SourceQuestion.Role, origin = SourceQuestion.Origin, session_id = SourceQuestion.SessionId,
-            time = SourceQuestion.Timestamp.ToString("O"), version_fingerprint = SourceQuestion.VersionFingerprint,
+            time = ScopeMatch == null ? SourceQuestion.Timestamp.ToString("O") : ScopeMatch.QuestionAt?.ToString("O"), version_fingerprint = SourceQuestion.VersionFingerprint,
             body_sha256 = SourceQuestion.TextHash, total_chars = SourceQuestion.Text.Length,
             body_included = SourceQuestionBodyIncluded, text = SourceQuestionBodyIncluded ? SourceQuestion.Text : null,
             qualification = "exact_source_user_id_context_dependency;not_a_new_recall_seed_or_writable_source_alias",
@@ -48,12 +50,14 @@ internal sealed record ContextDiscoveryItem(string Reference, LogicalDialogueUni
         citation_eligibility = "only_supplied_excerpt;locator_not_read_permission;no_writable_source_alias",
         next_read = new { mode = "message", message_ref = Reference, message_body_chars = 0 }
     };
+        return ScopeMatch == null ? payload : ContextDiscoveryScope.Attach(payload, "recorded_match", ScopeMatch.Wire());
+    }
 }
 
 internal sealed record ContextDiscoverySnapshot(string Root, string Session, string PermissionQuery,
     string SearchQuery, string Fingerprint, string SemanticStatus, int CandidateCount, int Start,
     IReadOnlyList<ContextDiscoveryItem> Items, LogicalMessageReadPacket LogicalMessages,
-    string NextCursor, int MaxUtf8Bytes, int UnreadableRecords)
+    string NextCursor, int MaxUtf8Bytes, int UnreadableRecords, ContextDiscoveryScope? Scope = null)
 {
     internal const int MinPageBytes = 4096, MaxPageBytes = 65536;
     // Repeated on every small inspection page, so keep this bounded. Exact maps
@@ -62,8 +66,10 @@ internal sealed record ContextDiscoverySnapshot(string Root, string Session, str
     internal const string OwnerViewContract="Generated original_message_ref names its logical request owner; message_ref names this view. Same owner is not another occurrence or an HTTP attempt, nor proof of full displayed-view coverage: exact host event/fingerprint mapping is required. Shared text/user/time never joins owners. Generated tails are not speech/read receipts.";
     internal string CursorAt(int offset) => Fingerprint + ":" + offset;
     internal string Json => Render();
-    internal string Render(bool omitted = false) => ReviewContext.Serialize(new {
-        status = omitted ? "body_omitted" : Items.Count == 0 ? "no_candidates_in_available_snapshot" : NextCursor.Length > 0 ? "candidate_page" : "candidate_snapshot_exhausted",
+    internal string Render(bool omitted = false)
+    {
+        var payload = new {
+        status = omitted ? "body_omitted" : Items.Count == 0 ? Scope == null ? "no_candidates_in_available_snapshot" : "no_candidates_in_requested_scope" : NextCursor.Length > 0 ? "candidate_page" : "candidate_snapshot_exhausted",
         mode = "discover", reason = omitted ? "existing_history_request_budget" : "main_requested_independent_archive_discovery",
         query = SearchQuery, snapshot_id = Fingerprint,
         read_domain = "qualified_available_archive_dialogue_and_generated_public_answers_read_only",
@@ -78,7 +84,10 @@ internal sealed record ContextDiscoverySnapshot(string Root, string Session, str
         candidates = omitted ? Array.Empty<object>() : Items.Select(i => i.Wire()).ToArray(),
         more = omitted ? Start < CandidateCount : NextCursor.Length > 0,
         next_cursor = omitted ? CursorAt(Start) : NextCursor,
-        continuation = "Use discovery_cursor unchanged with the same query. Changed source scope/order expires the cursor. Calls still share the existing per-turn budget.",
+        continuation = Scope == null ? "Use discovery_cursor unchanged with the same query. Changed source scope/order expires the cursor. Calls still share the existing per-turn budget."
+            : "Copy discovery_cursor with the same query and all scope fields. Changed scope/source/order expires it. Existing per-turn budget applies.",
         completeness_note = "No fixed rank or relevance floor removes candidates. This measured page is an inspection capacity, not all history. Missing, restricted, corrupt, generated-but-not-received, and not-yet-expanded text remains unknown. Read a located message to inspect its full available original; hashes and locators do not mean unseen text was supplied. Generated text is not a told/read receipt. No B1 writing authority is created."
-    });
+    };
+        return ReviewContext.Serialize(Scope == null ? payload : ContextDiscoveryScope.Attach(payload, "requested_scope", Scope.Wire()));
+    }
 }

@@ -12,9 +12,11 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         {
             _reflectionCursors.Add(cursor);
-            if (cursor.Snapshot.Work is { } existing) return existing.Request.RequestId == request.RequestId;
+            if (request.RevisitContext != null) return false;
+            if (cursor.Snapshot.Work is { } existing) return existing.Purpose == ReflectionWorkPurpose.Dialogue
+                && existing.Request.RequestId == request.RequestId;
             var work = new ReflectionWork(request, selection.History.Select(t => t.Copy()).ToArray(),
-                cursor.Snapshot with { Work = null, RequestOrigin = null, PendingIntents = null });
+                cursor.Snapshot with { Work = null, RequestOrigin = null, PendingIntents = null }) { StartedInSessionId = _sessionId };
             if (!SaveReflectionWindow(cursor.DurableSnapshot with { Work = work })) return false;
             cursor.SetWork(work);
             return true;
@@ -28,16 +30,38 @@ internal sealed partial class MemoryStore
         {
             if (cursor.Snapshot.Work is not { } work || work.Request.RequestId != request.RequestId) return false;
             var accepted = work with { Result = result };
-            if (!SaveReflectionWindow(cursor.DurableSnapshot with { Work = accepted })) return false;
-            cursor.SetWork(accepted);
-            return true;
+            return SaveAcceptedReflectionResponse(cursor, work, accepted);
         }
+    }
+
+    // Same atomic write as the accepted value; local retries keep the first
+    // observation time. This is independent of whether any artifact was produced.
+    private bool SaveAcceptedReflectionResponse(ReflectionWindowCursor cursor, ReflectionWork before, ReflectionWork accepted)
+    {
+        var deferral = cursor.DurableSnapshot.OrdinaryDeferral;
+        if (before.Result == null && accepted.Result is { DeferOrdinary: true } result
+            && before.StartedInSessionId == _sessionId && deferral?.RequestId != before.Request.RequestId
+            && ReflectionMaterialsCurrent(before.Request, recovering: true))
+        {
+            var observed = result.OrdinaryDeferralObservedAtUtc ??= DateTimeOffset.UtcNow;
+            if (deferral == null || deferral.SessionId != _sessionId || observed > deferral.ObservedAtUtc)
+                deferral = new(before.Request.RequestId, _sessionId, observed,
+                    observed.AddSeconds(ReflectionOrdinaryDeferral.DelaySeconds));
+        }
+        if (!SaveReflectionWindow(cursor.DurableSnapshot with { Work = accepted, OrdinaryDeferral = deferral })) return false;
+        cursor.SetWork(accepted); cursor.SetOrdinaryDeferral(deferral);
+        return true;
     }
 
     internal void StageRecoveredReflection(ReflectionWindowCursor cursor)
     {
+        if (cursor.Snapshot.Work is { Purpose: not ReflectionWorkPurpose.Dialogue })
+            throw new InvalidOperationException("Revisit recovery cannot restore dialogue coverage");
         if (!cursor.PassActive && cursor.Snapshot.Work is { } work)
             cursor.BeginPass(work.Target with { Work = work,
+                // The accepted intention lives in the current receipt, not the
+                // earlier frozen coverage target; recovery never restarts it.
+                OrdinaryDeferral = cursor.Snapshot.OrdinaryDeferral,
                 // A request arriving after the original capture remains pending.
                 ModelRequested = work.Target.ModelRequested || work.RequestedAgain,
                 RequestOrigin = cursor.Snapshot.RequestOrigin,
@@ -52,6 +76,8 @@ internal sealed partial class MemoryStore
         reason = "no_pending_response"; chains = null;
         lock (_experienceLock)
         {
+            if (cursor.Snapshot.Work is { Purpose: not ReflectionWorkPurpose.Dialogue })
+            { reason = "work_purpose_mismatch"; return false; }
             if (cursor.Snapshot.Work is not { Result: { } result } work) return false;
             StageRecoveredReflection(cursor);
             bool finished = ChainFinished(work, "note") && ChainFinished(work, "lesson") && ChainFinished(work, "reading");

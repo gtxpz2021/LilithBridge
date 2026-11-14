@@ -14,6 +14,8 @@ internal sealed record ReflectionRequestSnapshot(string RequestId,
     IReadOnlyList<MemoryTurn> Lessons, IReadOnlyList<MemoryTurn> Readings,
     IReadOnlyList<MemoryTurn> DayArtifacts, IReadOnlyList<MemoryTurn> Settled)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReflectionRevisitInvocation? RevisitContext { get; init; }
     // Optional request provenance, not a semantic target or a new citation pool.
     public ReflectionRequestOriginContext? RequestOriginContext { get; init; }
     public ReflectionPurposeContext[] PurposeContexts { get; init; } = Array.Empty<ReflectionPurposeContext>();

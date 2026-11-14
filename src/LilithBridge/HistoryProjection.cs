@@ -88,10 +88,21 @@ internal sealed class HistoryProjectionSummary
 internal static class HistoryProjection
 {
     public static HistoryProjectionResult Build(
+        IReadOnlyList<MemoryTurn>? available, int maxMessages, bool groupReplies, bool windowInMessages)
+        => BuildCore(available, maxMessages, groupReplies, windowInMessages, preserveStoredText: false);
+
+    // The request carrier uses already stored characters verbatim. Keep the
+    // existing projection entry point for other consumers such as compression.
+    internal static HistoryProjectionResult BuildForRequest(
+        IReadOnlyList<MemoryTurn>? available, int maxMessages, bool groupReplies, bool windowInMessages)
+        => BuildCore(available, maxMessages, groupReplies, windowInMessages, preserveStoredText: true);
+
+    private static HistoryProjectionResult BuildCore(
         IReadOnlyList<MemoryTurn>? available,
         int maxMessages,
         bool groupReplies,
-        bool windowInMessages)
+        bool windowInMessages,
+        bool preserveStoredText)
     {
         IReadOnlyList<MemoryTurn> records = available ?? Array.Empty<MemoryTurn>();
         int budget = Math.Max(1, maxMessages);
@@ -100,7 +111,7 @@ internal static class HistoryProjection
         int start = expandWindow
             ? HistoryBoundary.WindowStart(records, budget, keepAdjacentUserRoot: true)
             : Math.Max(0, records.Count - budget);
-        List<ProjectedHistoryTurn> turns = BuildTurns(records, start, groupReplies);
+        List<ProjectedHistoryTurn> turns = BuildTurns(records, start, groupReplies, preserveStoredText);
         int selected = 0;
         foreach (ProjectedHistoryTurn turn in turns)
             selected += Math.Max(1, turn.Records.Count);
@@ -125,7 +136,8 @@ internal static class HistoryProjection
     private static List<ProjectedHistoryTurn> BuildTurns(
         IReadOnlyList<MemoryTurn> records,
         int start,
-        bool groupReplies)
+        bool groupReplies,
+        bool preserveStoredText)
     {
         var turns = new List<ProjectedHistoryTurn>();
         int index = Math.Max(0, start);
@@ -147,7 +159,7 @@ internal static class HistoryProjection
                     turns.Add(new ProjectedHistoryTurn
                     {
                         Role = "assistant",
-                        Text = string.Concat(members.Select(member => MemoryStore.Clean(member.Text))),
+                        Text = string.Concat(members.Select(member => preserveStoredText ? member.Text : MemoryStore.Clean(member.Text))),
                         Records = members,
                         LastRecordIndex = next - 1,
                         IdentityGuaranteed = true,
@@ -165,7 +177,7 @@ internal static class HistoryProjection
             turns.Add(new ProjectedHistoryTurn
             {
                 Role = first.Role,
-                Text = MemoryStore.Clean(first.Text),
+                Text = preserveStoredText ? first.Text ?? "" : MemoryStore.Clean(first.Text),
                 Record = first,
                 Records = new[] { first },
                 LastRecordIndex = index,

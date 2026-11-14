@@ -89,9 +89,47 @@ namespace LilithSetup
                 // .103 and model-options variant: same persisted readers, exact bound images.
                 || imageHash == "83168a8fd166b87c56d0ebc3fa9a5cae0f045b2f07b5622e38cb180a3bc54dda"
                 || imageHash == "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7"
-                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff" || imageHash == "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6";
+                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff" || imageHash == "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6" || imageHash == "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802" || imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5";
         }
-        static void Serial(object value)
+        // Exact private image whose converter supports explicit and MAIN revisit receipts.
+        // Header preflight only; no migration, Work replay or data downgrade.
+        static bool SupportsRevisitReceipt(string imageHash)
+        { return imageHash == "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802" || imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5"; }
+        static bool SupportsFinalReceipt(string imageHash)
+        { return imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5"; }
+        static void RequiredText(Dictionary<string, object> value, string key)
+        { SetupCore.Require(DataJson.Get(value, key) is string && !String.IsNullOrWhiteSpace((string)value[key]) && ((string)value[key]).Length <= 256, "LBINSTALL_WORK_STATE_UNKNOWN"); }
+        static DateTimeOffset RequiredTime(Dictionary<string, object> value, string key)
+        {
+            DateTimeOffset result;
+            SetupCore.Require(DataJson.Get(value, key) is string && DateTimeOffset.TryParse((string)value[key], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out result), "LBINSTALL_WORK_STATE_UNKNOWN");
+            return DateTimeOffset.Parse((string)value[key], System.Globalization.CultureInfo.InvariantCulture);
+        }
+        static void FinalMetadata(Dictionary<string, object> doc, string imageHash)
+        {
+            foreach (string key in new[] { "LastDialogueService", "LastCurrentDialogueService", "OrdinaryDeferral" })
+            {
+                object item = DataJson.Get(doc, key); if (item == null) continue;
+                SetupCore.Require(SupportsFinalReceipt(imageHash), "LBINSTALL_RECEIPT_TARGET_UNVERIFIED");
+                var value = item as Dictionary<string, object>;
+                SetupCore.Require(value != null, "LBINSTALL_WORK_STATE_UNKNOWN");
+                RequiredText(value, "RequestId");
+                if (key == "OrdinaryDeferral")
+                {
+                    Known(value, "RequestId", "SessionId", "ObservedAtUtc", "UntilUtc");
+                    RequiredText(value, "SessionId");
+                    SetupCore.Require(RequiredTime(value, "UntilUtc") - RequiredTime(value, "ObservedAtUtc") == TimeSpan.FromSeconds(300), "LBINSTALL_WORK_STATE_UNKNOWN");
+                }
+                else
+                {
+                    Known(value, "RequestId", "CompletedInSessionId", "CurrentSessionCoverage", "CoverageCompletionObservedAtUtc");
+                    RequiredText(value, "CompletedInSessionId");
+                    SetupCore.Require(DataJson.Get(value, "CurrentSessionCoverage") is bool, "LBINSTALL_WORK_STATE_UNKNOWN");
+                    RequiredTime(value, "CoverageCompletionObservedAtUtc");
+                }
+            }
+        }
+        static void Serial(object value, string imageHash)
         {
             if (Integer(value)) return;
             var serial = value as Dictionary<string, object>;
@@ -101,7 +139,9 @@ namespace LilithSetup
                 && DataJson.Get(serial, "reader") is string, "LBINSTALL_WORK_STATE_UNKNOWN");
             string reader = (string)serial["reader"];
             SetupCore.Require(reader == "reflection-purpose-journal-v1"
-                || reader == "reflection-purpose-expression-journal-v1", "LBINSTALL_RECEIPT_READER_UNSUPPORTED");
+                || reader == "reflection-purpose-expression-journal-v1"
+                || SupportsRevisitReceipt(imageHash) && (reader == "reflection-explicit-revisit-journal-v1"
+                    || reader == "reflection-main-revisit-origin-v1"), "LBINSTALL_RECEIPT_READER_UNSUPPORTED");
         }
         static void Origin(object value)
         {
@@ -117,9 +157,18 @@ namespace LilithSetup
         }
         static void CompletedFields(Dictionary<string, object> doc, string imageHash)
         {
-            string[] fields = { "ModelRequestSerial", "RequestOrigin", "PendingIntents", "ImportedTransfers", "RecentPassesSinceBacklog" };
+            string[] fields = { "ModelRequestSerial", "RequestOrigin", "PendingIntents", "ImportedTransfers", "RecentPassesSinceBacklog", "LastRevisitCompletion", "LastDialogueService", "LastCurrentDialogueService", "OrdinaryDeferral" };
             if (!fields.Any(doc.ContainsKey)) return;
-            if (doc.ContainsKey("ModelRequestSerial")) Serial(doc["ModelRequestSerial"]);
+            if (doc.ContainsKey("ModelRequestSerial")) Serial(doc["ModelRequestSerial"], imageHash);
+            object revisit = DataJson.Get(doc, "LastRevisitCompletion");
+            if (revisit != null)
+            {
+                // Opaque completed metadata is preserved for the bound product's full reader.
+                // Installer only checks the capability/header; it never rewrites the journal.
+                SetupCore.Require(revisit is Dictionary<string, object>, "LBINSTALL_WORK_STATE_UNKNOWN");
+                SetupCore.Require(SupportsRevisitReceipt(imageHash), "LBINSTALL_RECEIPT_TARGET_UNVERIFIED");
+            }
+            FinalMetadata(doc, imageHash);
             Origin(DataJson.Get(doc, "RequestOrigin"));
             if (doc.ContainsKey("RecentPassesSinceBacklog"))
                 SetupCore.Require(Integer(doc["RecentPassesSinceBacklog"])
@@ -138,7 +187,7 @@ namespace LilithSetup
         static void Receipt(Dictionary<string, object> doc, bool target, string imageHash)
         {
             Known(doc, "InputId", "FactActivity", "ModelRequested", "RecentConsumed", "RecentInitialized", "Work",
-                "ModelRequestSerial", "RequestOrigin", "PendingIntents", "ImportedTransfers", "RecentPassesSinceBacklog");
+                "ModelRequestSerial", "RequestOrigin", "PendingIntents", "ImportedTransfers", "RecentPassesSinceBacklog", "LastRevisitCompletion", "LastDialogueService", "LastCurrentDialogueService", "OrdinaryDeferral");
             SetupCore.Require(DataJson.Get(doc, "InputId") is string && Integer(DataJson.Get(doc, "FactActivity"))
                 && DataJson.Get(doc, "ModelRequested") is bool, "LBINSTALL_WORK_STATE_UNKNOWN");
             if (doc.ContainsKey("RecentInitialized")) SetupCore.Require(doc["RecentInitialized"] is bool, "LBINSTALL_WORK_STATE_UNKNOWN");
@@ -226,8 +275,8 @@ namespace LilithSetup
                 if (value != null)
                 {
                     var work = value as Dictionary<string, object>; SetupCore.Require(work != null, "LBINSTALL_WORK_STATE_UNKNOWN");
-                    Work(work);
                     SetupCore.Require(SupportsWork(imageHash), "LBINSTALL_UNFINISHED_WORK_TARGET_UNVERIFIED");
+                    Work(work);
                 }
                 return SetupCore.Hash(bytes);
             }

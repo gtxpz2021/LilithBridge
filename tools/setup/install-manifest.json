@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "product": "LilithBridge",
-  "id": "lilithbridge-104-cn19-integrated-candidate1",
-  "plugin_sha256": "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6",
+  "id": "lilithbridge-104-ordinary-defer-61122db5",
+  "plugin_sha256": "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5",
   "previous_plugin_hashes": [
     "08cef63c6315d9564f59f8d97b510c4671e4eb5ed7e71ca3e21fde76f8755bd7",
     "4d257ce576f4fcb15de8668d84351b7c6ef4570fb2bd36d25a39934ba0d2295b",
@@ -21,7 +21,10 @@
     "db3b6c17d43ea9143461d1be4ebe9bd4274d74ccf6a2c2d45d4ed59e01ab0e96",
     "447a8637702d5a1af8721246c0b51949ab4ff8e17caf1f6a67e3f3078160ca46",
     "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7",
-    "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff"
+    "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff",
+    "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6",
+    "e5dc6991dd642af7b5b0583156c5ba0249a83beeac2b91673d163434005f0992",
+    "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802"
   ],
   "target_hashes": {},
   "compatibility_mode": "actual static interfaces and loader freshness; no game hash whitelist",

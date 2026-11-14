@@ -229,7 +229,10 @@ internal sealed partial class MemoryStore
             return false;
         return ReadExperiences().Any(turn => turn.EventId == eventId
             && turn.Role == "user" && turn.Origin == "user" && turn.DeliveryState == "received"
-            && string.Equals(turn.Text, Clean(quote), StringComparison.Ordinal));
+            // Preserve the existing whole-quote normalization policy now that
+            // stored player text can retain formatting. Exact body/version
+            // permissions still use the original text and its fingerprint.
+            && string.Equals(Clean(turn.Text), Clean(quote), StringComparison.Ordinal));
     }
 
     public IReadOnlyList<MemoryTurn> GetExperienceCandidates(string? query, int max, IEnumerable<string>? excludedIds = null, bool previousSession = false, string requestedRole = "", string? acceptedBridgeAnchorId = null, string? scoringQueryOverride = null, Action<IReadOnlyList<MemoryTurn>>? onAnchorSelection = null, Action<IReadOnlyList<MemoryTurn>>? onDirectSelection = null)

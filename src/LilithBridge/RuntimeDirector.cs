@@ -76,7 +76,8 @@ internal static class RuntimeDirector
         bool resumedPendingWindow = false,
         bool settledIncompleteWindow = false,
         int budgetLimitedDialogueLines = 0,
-        bool currentDialogue = false)
+        bool currentDialogue = false,
+        bool? currentWindowQualified = null)
     {
         if (!config.ReflectionEnabled
             || !systemReady
@@ -91,6 +92,12 @@ internal static class RuntimeDirector
         // Frozen-work/failure cooldown and provider/resource/source gates still
         // apply; this does not create a request on ordinary turns. Timing is not target selection.
         if (requestedByModel && newDeliveredTurns >= 2) return true;
+        // Known current-window age plus service spacing replaces only the pure
+        // silence pacing. The caller has checked the spacing; all execution,
+        // native-state, owner and source guards still use the existing path.
+        // Like explicit reflect, this grants an opportunity, not a conclusion.
+        if (currentDialogue && currentWindowQualified.HasValue)
+            return currentWindowQualified.Value;
         if (newDeliveredTurns < Math.Max(1, config.ReflectionMinNewTurns)
             // A short current conversation should not wait forever for a third
             // exchange. It still waits for the same natural pause; this does not
@@ -104,17 +111,29 @@ internal static class RuntimeDirector
                 && budgetLimitedDialogueLines >= Math.Max(1, config.ReflectionMinNewTurns))
             && !settledIncompleteWindow)
             return false;
-        if (idleSeconds < config.ReflectionMinIdleSeconds)
-            return false;
         // A real change in what she knows, or her own request, may start a pass at
         // any time. Ordinary material waits for a pause in the conversation, so the
         // passage is over before she looks back at it. `novelMaterial` still feeds
         // the telemetry reason, but it no longer starts a pass on its own.
         _ = novelMaterial;
-        if (significantChange || requestedByModel)
-            return true;
-        return idleSeconds >= config.ReflectionNaturalPauseSeconds;
+        return ReflectionIdleOpportunity(config, idleSeconds, significantChange || requestedByModel);
     }
+
+    // The original idle conjunction, shared with fair replacement. This checks
+    // no dialogue floor, source, owner, cooldown or progressive-service deadline.
+    internal static bool ReflectionIdleOpportunity(BridgeConfig config, double idleSeconds, bool significantChange)
+    {
+        if (idleSeconds < config.ReflectionMinIdleSeconds) return false;
+        return significantChange || idleSeconds >= config.ReflectionNaturalPauseSeconds;
+    }
+
+    // Only fresh ordinary old-material admission uses the additional activity
+    // fact. Current-session admission and explicit requests keep their policy.
+    // Recovery is handled before this seam by the controller.
+    internal static double ReflectionSelectionIdleSeconds(BridgeConfig config, bool currentDialogue,
+        bool requestedByModel, double nativeIdleSeconds, double? dialogueIdleSeconds) =>
+        config.ReflectionOnlyWhenIdle && !currentDialogue && !requestedByModel && dialogueIdleSeconds.HasValue
+            ? Math.Min(nativeIdleSeconds, dialogueIdleSeconds.Value) : nativeIdleSeconds;
 
     /// <summary>Human-readable reason for the telemetry record.</summary>
     /// <summary>

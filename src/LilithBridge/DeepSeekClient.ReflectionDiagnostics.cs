@@ -9,46 +9,51 @@ internal sealed partial class DeepSeekClient
 {
     // Parse the complete response, then validate proposal shape atomically.
     // Provenance, persistence and pending consumption remain caller-owned.
-    private async Task<ReflectionResult?> RunReflectionWithDiagnosticsAsync(
+    internal async Task<ReflectionLocalOutcome> RunReflectionOutcomeAsync(
         BridgeConfig config, string source, CancellationToken cancellationToken,
         ReflectionDispatch? dispatch)
     {
+        var sendObservation = new ReflectionSendObservation();
         if (string.IsNullOrWhiteSpace(config.ApiKey) || string.IsNullOrWhiteSpace(source))
         {
             TraceReflectionParse(null, "precondition", string.IsNullOrWhiteSpace(config.ApiKey)
                 ? "not_configured" : "no_source", 0, 0, "", null, null);
-            return null;
+            return ReflectionLocalOutcome.Capture(sendObservation, null, null, "precondition",
+                string.IsNullOrWhiteSpace(config.ApiKey) ? "not_configured" : "no_source");
         }
         ApiResult? envelope = null;
         string stage = "send", code = "no_completion", exceptionType = "";
         int contentChars = 0, normalizedChars = 0;
         long? jsonLine = null, jsonByte = null;
         string? publicContent = null, parserInput = null;
+        ReflectionLocalOutcome Finish(ReflectionResult? result = null) =>
+            ReflectionLocalOutcome.Capture(sendObservation, envelope, result, stage, code);
         try
         {
             // These are the sender's real identities, not a second diagnostic
             // request or a correlation inferred from log timing.
-            envelope = new ApiResult();
+            envelope = new ApiResult { ReflectionSend = sendObservation };
             string? text = await SendTextAsync(config, config.ReflectionModel,
                 BuildReflectionPrompt(), source, config.ReflectionMaxTokens, 0.2, false,
                 cancellationToken, "reflection", reflectionDispatch: dispatch,
                 envelopeOverride: envelope).ConfigureAwait(false);
             contentChars = envelope.Response.ContentChars;
-            if (string.IsNullOrWhiteSpace(text)) return null;
+            if (string.IsNullOrWhiteSpace(text)) return Finish();
             contentChars = text.Length;
             publicContent = text;
             stage = "strip_fence";
             text = StripJsonFences(text).Trim();
             parserInput = text;
             normalizedChars = text.Length;
-            if (text.Length == 0) { code = "empty_after_fence"; return null; }
+            if (text.Length == 0) { code = "empty_after_fence"; return Finish(); }
             stage = "root";
-            if (!text.StartsWith('{')) { code = "non_object_prefix"; return null; }
+            if (!text.StartsWith('{')) { code = "non_object_prefix"; return Finish(); }
             using JsonDocument doc = JsonDocument.Parse(text);
             stage = "shape";
             string? shapeFailure = ReflectionResponseShape.RejectCode(doc.RootElement);
-            if (shapeFailure != null) { code = shapeFailure; return null; }
-            var result = new ReflectionResult { SelectionSnapshot = envelope.SelectionSnapshot };
+            if (shapeFailure != null) { code = shapeFailure; return Finish(); }
+            var result = new ReflectionResult { SelectionSnapshot = envelope.SelectionSnapshot,
+                DeferOrdinary = doc.RootElement.TryGetProperty("defer_ordinary", out var defer) && defer.GetBoolean() };
             stage = "note";
             if (doc.RootElement.TryGetProperty("note", out JsonElement note) && note.ValueKind == JsonValueKind.Object)
             {
@@ -120,7 +125,7 @@ internal sealed partial class DeepSeekClient
             code = result.Note == null && result.Lesson == null && result.Relationship == null
                 ? "parsed_empty" : "parsed_proposal";
             stage = "complete";
-            return result;
+            return Finish(result);
         }
         catch (Exception error)
         {
@@ -132,7 +137,7 @@ internal sealed partial class DeepSeekClient
             }
             code = stage == "send" ? "completion_exception"
                 : error is JsonException ? "json_parse_error" : "field_read_error";
-            return null;
+            return Finish();
         }
         finally
         {

@@ -15,9 +15,10 @@ internal sealed partial class DeepSeekClient
         options = null; error = "";
         bool hasFields = root.TryGetProperty("discovery_cursor", out var cursorValue)
             | root.TryGetProperty("discovery_page_bytes", out var bytesValue);
+        hasFields |= ContextDiscoveryScope.FieldNames.Any(name => root.TryGetProperty(name, out _));
         if (mode != "discover")
         { if (hasFields) { error = "discovery fields require discover mode"; return false; } return true; }
-        if (root.EnumerateObject().Any(p => p.Name is not ("mode" or "question" or "query" or "operation_id" or "discovery_cursor" or "discovery_page_bytes")))
+        if (root.EnumerateObject().Any(p => p.Name is not ("mode" or "question" or "query" or "operation_id" or "discovery_cursor" or "discovery_page_bytes" or "discovery_contains" or "discovery_recorded_after" or "discovery_recorded_before")))
         { error = "discover mode uses its own query/cursor and cannot mix raw/message/history/archive/prior-thought fields"; return false; }
         if (root.TryGetProperty("query", out var query) && query.ValueKind != JsonValueKind.String)
         { error = "discover query must be a string"; return false; }
@@ -28,7 +29,8 @@ internal sealed partial class DeepSeekClient
         if (bytesValue.ValueKind != JsonValueKind.Undefined && (bytesValue.ValueKind != JsonValueKind.Number
             || !bytesValue.TryGetInt32(out bytes) || bytes < ContextDiscoverySnapshot.MinPageBytes || bytes > ContextDiscoverySnapshot.MaxPageBytes))
         { error = "discovery_page_bytes must be within 4096..65536"; return false; }
-        options = new(cursor, bytes); return true;
+        if (!ContextDiscoveryScope.TryParse(root, out var scope, out error)) return false;
+        options = new(cursor, bytes, scope); return true;
     }
 
     private async Task<ReviewToolOutcome> ExecuteContextDiscoveryAsync(BridgeConfig config, DialogueRequest request,

@@ -17,15 +17,7 @@ internal sealed record NativeMemoResultInput(MemoryStore MemoryOwner, string Que
     {
         original_question = Question, undelivered_draft = Draft,
         proposed_native_write = new { memo = MemoProposed, scratch = ScratchProposed, annotation = AnnotationProposed },
-        actual_result = new { counts_known = Outcome.Known,
-            valid_proposals = Outcome.Known ? (int?)Outcome.Eligible : null,
-            attempted = Outcome.Known ? (int?)Outcome.Attempted : null,
-            confirmed_succeeded = Outcome.Known ? (int?)Outcome.Succeeded : null,
-            unconfirmed = Outcome.Known ? (int?)Outcome.Unconfirmed : null,
-            unprocessed = Outcome.Known ? (int?)Outcome.Unprocessed : null,
-            all_confirmed = Outcome.AllConfirmed, status = Outcome.Status,
-            items = Outcome.Known ? Outcome.Items?.Select(item => new {
-                kind = item.Kind, request_index = item.RequestIndex, body = item.Body, status = item.Status }) : null },
+        actual_result = Outcome.ModelResult(),
         already_delivered_text = AlreadyDelivered
     }, DialogueMaterialEnvelope.DataJson);
 

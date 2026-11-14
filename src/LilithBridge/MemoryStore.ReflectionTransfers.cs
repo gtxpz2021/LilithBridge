@@ -31,9 +31,12 @@ internal sealed partial class MemoryStore
                     var keep = snapshot.PendingIntents?.Where(i => !ReflectionIntentReferences(i, ids)).ToArray();
                     bool dropWork = snapshot.Work is {} work && ReflectionWorkReferences(work, ids);
                     bool dropOrigin = snapshot.RequestOrigin is {} origin && ids.Contains(origin.UserEventId);
-                    if (!dropWork && !dropOrigin && (keep?.Length ?? 0) == (snapshot.PendingIntents?.Length ?? 0)) continue;
-                    var clean = snapshot with { Work = dropWork ? null : snapshot.Work, PendingIntents = keep,
+                    bool dropCompletion = SnapshotRevisitCompletionReferences(snapshot, ids);
+                    if (!dropWork && !dropOrigin && !dropCompletion && (keep?.Length ?? 0) == (snapshot.PendingIntents?.Length ?? 0)) continue;
+                    var cleaned = ForgetRevisitCompletion(snapshot, ids);
+                    var clean = cleaned with { Work = dropWork ? null : cleaned.Work, PendingIntents = keep,
                         RequestOrigin = dropOrigin ? null : snapshot.RequestOrigin };
+                    using var readerRequirement = ReflectionSerialJsonConverter.ForSnapshot(clean);
                     packet[field] = JsonNode.Parse(JsonSerializer.Serialize(clean)); changed = true;
                 }
                 if (!changed) continue;

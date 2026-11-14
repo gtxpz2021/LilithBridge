@@ -345,7 +345,11 @@ internal sealed partial class MemoryStore
                     if (doc == null) return new(false, "store_" + B1StorageStatus);
                     string step = request.Id + "/b1";
                     var prior = doc.Receipts.FirstOrDefault(r => r.StepId == step);
-                    if (prior != null) return new(true, "already_committed_" + prior.Outcome, prior.ResultVersion);
+                    if (prior != null)
+                    {
+                        TrySaveB1ReadIndex(request, result, prior.ResultVersion);
+                        return new(true, "already_committed_" + prior.Outcome, prior.ResultVersion);
+                    }
                     if ((result.SelectionSnapshot?.Generation ?? 0) != doc.ControlGeneration
                         || result.SelectionSnapshot != null && !ReferenceEquals(result.SelectionSnapshot.Store, this))
                         return new(false, "selection_generation_changed");
@@ -499,7 +503,9 @@ internal sealed partial class MemoryStore
                     // Recheck the live feature and owner at the actual transaction boundary.
                     if (!request.B1CanWrite || !isOwner())
                     { request.DisableB1("disabled_or_owner_lost_before_save"); return new(false, "b1_disabled_or_owner_lost"); }
-                    return SaveB1(next) ? new(true, outcome, version) : new(false, "save_failed_or_uncertain");
+                    if (!SaveB1(next)) return new(false, "save_failed_or_uncertain");
+                    TrySaveB1ReadIndex(request, result, version);
+                    return new(true, outcome, version);
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new(false, "store_busy_or_io"); }
             }

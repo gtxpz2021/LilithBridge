@@ -21,13 +21,35 @@ internal readonly record struct ReflectionWindowSnapshot(string InputId, long Fa
     int RecentPassesSinceBacklog = 0)
 {
     public static readonly ReflectionWindowSnapshot Empty = new("", 0L, false);
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReflectionRevisitCompletion? LastRevisitCompletion { get; init; } = null;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReflectionServiceCompletion? LastDialogueService { get; init; } = null;
+    // Independent coverage fact: old-lane completion must not erase the last
+    // current-session completion. Missing legacy data stays unknown.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReflectionServiceCompletion? LastCurrentDialogueService { get; init; } = null;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReflectionOrdinaryDeferral? OrdinaryDeferral { get; init; } = null;
 }
+
+internal enum ReflectionWorkPurpose { Dialogue, ExplicitRevisit }
 
 // One unfinished reflection, in the existing consumption file. Target never
 // contains another Work. The response is saved before any artifact is changed.
 internal sealed record ReflectionWork(ReflectionRequestSnapshot Request, MemoryTurn[] Window,
     ReflectionWindowSnapshot Target, ReflectionResult? Result = null, ReflectionChainOutcome? Progress = null,
-    bool RequestedAgain = false);
+    bool RequestedAgain = false)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public ReflectionWorkPurpose Purpose { get; init; }
+    // Optional retry facts, written only while the ordinary reflection budget is enabled.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public ReflectionRetryHistory? RetryHistory { get; init; }
+    // Missing legacy provenance cannot authorize a new pacing intention.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? StartedInSessionId { get; init; }
+}
 
 internal static class ReflectionWindow
 {
@@ -97,6 +119,13 @@ internal sealed class ReflectionWindowCursor
         _current = _current with { Work = work };
         if (_beforePass is { } previous) _beforePass = previous with { Work = work };
     }
+    internal void SetOrdinaryDeferral(ReflectionOrdinaryDeferral? deferral)
+    {
+        _current = _current with { OrdinaryDeferral = deferral };
+        if (_beforePass is {} previous) _beforePass = previous with { OrdinaryDeferral = deferral };
+    }
+    internal void SetDialogueServices(ReflectionServiceCompletion? completion, ReflectionServiceCompletion? currentCompletion)
+        => _current = _current with { LastDialogueService = completion, LastCurrentDialogueService = currentCompletion };
     // In-flight material has not been consumed. Persist only the previous
     // receipt, plus any model request that arrived while this pass was running.
     public ReflectionWindowSnapshot DurableSnapshot => _beforePass is { } previous
@@ -123,6 +152,8 @@ internal sealed class ReflectionWindowCursor
 
     internal void ForgetRequestOrigin(HashSet<string> ids)
     {
+        _current = MemoryStore.ForgetRevisitCompletion(_current, ids);
+        if (_beforePass is {} earlier) _beforePass = MemoryStore.ForgetRevisitCompletion(earlier, ids);
         _current = _current with { PendingIntents = _current.PendingIntents?.Where(i => !MemoryStore.ReflectionIntentReferences(i, ids)).ToArray() };
         if (_beforePass is {} priorIntents) _beforePass = priorIntents with { PendingIntents = priorIntents.PendingIntents?.Where(i => !MemoryStore.ReflectionIntentReferences(i, ids)).ToArray() };
         if (_current.RequestOrigin is {} current && ids.Contains(current.UserEventId)) _current = _current with { RequestOrigin = null };

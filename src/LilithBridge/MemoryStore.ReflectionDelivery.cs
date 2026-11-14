@@ -13,7 +13,13 @@ internal sealed partial class MemoryStore
     // generated text is never duplicated here. One latest receipt per user.
     private sealed record ReflectionDeliveryReceipt(int Version, string UserId, string RequestId,
         string SessionId, string Outcome, bool Complete, string LastShownEventId, int ShownChunks = 0,
-        long InteractionOrder = 0, string GeneratedPublicKey = "");
+        long InteractionOrder = 0, string GeneratedPublicKey = "")
+    {
+        // Actual terminal presenter observation, supplied by its delivery record.
+        // Legacy/missing observations remain unknown; no archive/request clock.
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public DateTimeOffset? FullDeliveryCompletedAtUtc { get; init; }
+    }
     private Dictionary<string, ReflectionDeliveryReceipt>? _reflectionDeliveries;
     private long _reflectionMaterialGeneration;
     internal long ReflectionMaterialGeneration => System.Threading.Interlocked.Read(ref _reflectionMaterialGeneration);
@@ -74,12 +80,14 @@ internal sealed partial class MemoryStore
         EndReflectionDelivery(userId, id, "not_started", false);
     }
     internal void EndReflectionDelivery(string userId, string requestId, string outcome, bool complete,
-        string lastShownEventId = "", int shownChunks = 0)
+        string lastShownEventId = "", int shownChunks = 0, DateTimeOffset? completedAtUtc = null)
     {
         if (!ReflectionDeliveries().TryGetValue(userId, out var receipt)
             || receipt.RequestId != requestId || receipt.SessionId != _sessionId || receipt.Outcome != "open") return;
         ReflectionDeliveries()[userId] = receipt with { Outcome = outcome, Complete = complete && shownChunks > 0,
-            LastShownEventId = lastShownEventId, ShownChunks = shownChunks };
+            LastShownEventId = lastShownEventId, ShownChunks = shownChunks,
+            FullDeliveryCompletedAtUtc = outcome == "completed" && complete && shownChunks > 0
+                && completedAtUtc is { } at && at != default ? at : null };
         SaveReflectionDeliveries();
         ReflectionMaterialChanged();
     }

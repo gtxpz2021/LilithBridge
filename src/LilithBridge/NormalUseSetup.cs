@@ -24,6 +24,13 @@ internal static class NormalUseSetup
         var memory = Object(doc, "memory");
         Missing(memory, "user_write_enabled", JsonValue.Create(true)!);
         Missing(memory, "autonomous_memory_enabled", JsonValue.Create(true)!);
+        // Ordinary continuity is offered by the existing informed user action.
+        // Fill missing gates only; explicit current and legacy choices survive.
+        Missing(memory, "derived_write_enabled", JsonValue.Create(true)!);
+        Missing(Object(doc, "b1"), "enabled", JsonValue.Create(true)!);
+        bool legacyReviewChoice = (doc["meta"] as JsonObject)?.ContainsKey("review_context_mode") == true;
+        if (!legacyReviewChoice)
+            Missing(Object(doc, "review_context"), "mode", JsonValue.Create(ReviewContextModes.OnDemand)!);
         Missing(Object(doc, "meta"), "reflection_enabled", JsonValue.Create(true)!);
         if (current.IsOpenAI)
         {
@@ -79,6 +86,13 @@ internal static class NormalUseSetup
         string text = "已补齐推荐缺省；已有选择和关闭项保留。";
         if (c.IsOpenAI && !c.OpenAIDataConsent) text += "资料发送仍按原设置关闭。";
         if (!BackgroundEnabled(c)) text += "后台仍有原关闭项。";
+        text += B1CapabilityOwner.Enabled(c) ? "理解保存可用。" : "理解保存仍有关闭项。";
+        text += ReviewContextModes.Normalize(c.ReviewContextMode) switch
+        {
+            ReviewContextModes.OnDemand => "可按需回看历史。",
+            ReviewContextModes.Request => "回看仍需本轮授权。",
+            _ => "历史回看仍关闭。"
+        };
         if (!c.StoryDataConsent) text += "作品许可未开启（原关闭项或未选可读资料）。";
         if (c.UsesChatGPT && (!models.Contains(c.ChatGPTModel) || !models.Contains(c.ChatGPTBackgroundModel)))
             text += "账户目录缺少所选主/后台模型；请在模型页选择，未替换原值或改用API。";

@@ -7,8 +7,8 @@ using System.Threading;
 
 namespace LilithBridge;
 
-// Read-only feasibility slice. Not registered as a product tool. A traversal is
-// a revisable reading plan, not a claim that a session is one semantic episode.
+// Shared read-only traversal. The message tool exposes only exchange/before/after;
+// a traversal is a reading plan, not a claim of one semantic episode.
 internal sealed record ExperienceTraversalOptions(string Scope = "connected", string Cursor = "", int PageBytes = 16384);
 internal sealed record ExperienceTraversalLink(string From, string To, string Kind, string Qualification);
 internal sealed record ExperienceTraversalNode(string Reference, string Exchange, LogicalDialogueUnit? Unit, GeneratedReplySnapshot? Generated)
@@ -60,15 +60,18 @@ internal sealed record ExperienceTraversalGraph(string Root,string Session,strin
 internal sealed record ExperienceTraversalPage(ExperienceTraversalGraph Graph,IReadOnlyList<object> Entries,string NextCursor,
     int EntryStart,int OffsetStart,int PageBytes)
 {
-    internal string Json => ReviewContext.Serialize(new {
-        status=NextCursor.Length>0?"traversal_page":"selected_traversal_exhausted",mode="experience_traversal_prototype",
-        snapshot_id=Graph.Fingerprint,anchor=Graph.Anchor,scope=Graph.Scope,
+    internal string Json => Render();
+    internal string Render(bool omitted=false) => ReviewContext.Serialize(new {
+        status=omitted?"body_omitted":NextCursor.Length>0?"traversal_page":"selected_traversal_exhausted",mode="message",
+        reason=omitted?"existing_request_budget":"",
+        snapshot_id=Graph.Fingerprint,message_ref=Graph.Anchor,message_scope=Graph.Scope,
         archive_coverage="qualified_available_sources_only;not_proof_of_absence",
         organization="exact_question_response_groups;available_order_and_explicit_correction_links;not_semantic_episode_certification",
         qualified_catalog_nodes=Graph.QualifiedCatalogNodes,selected_source_nodes=Graph.Nodes.Count,selected_links=Graph.Links.Count,
         unreadable_or_omitted_records=Graph.UnreadableRecords,entry_start=EntryStart,body_offset_start=OffsetStart,
-        page_utf8_limit=PageBytes,entries=Entries,next_cursor=NextCursor,more=NextCursor.Length>0,
-        next_read="Continue unchanged cursor with same anchor/scope. Open scope=timeline on a located anchor to inspect that session, or scope=connected for exact correction closure. Model chooses where to stop or change path.",
+        page_utf8_limit=PageBytes,entries=omitted?Array.Empty<object>():Entries,
+        next_cursor=omitted?Graph.Fingerprint+":"+EntryStart+":"+OffsetStart:NextCursor,more=omitted||NextCursor.Length>0,
+        next_read="Continue mode=message with the same message_ref/message_scope and traversal_cursor=next_cursor. Other returned references can be new anchors; unread neighbours remain unknown.",
         completeness_note="Exhaustion means this selected available traversal only, not complete experience or all archive. Available order is not cause, same topic is not same event, source correction is user report not independently certified truth. Unread text and non-displayed generated text are not speech or player knowledge. Read-only locators grant no write authority."
     });
 }
@@ -250,7 +253,13 @@ internal sealed partial class MemoryStore
             if(fresh==null||fresh.Fingerprint!=g.Fingerprint)return false;
             string cursor=g.Fingerprint+":"+page.EntryStart+":"+page.OffsetStart;
             var exact=CaptureExperienceTraversal(permissionQuery,g.Anchor,config,new(g.Scope,cursor,page.PageBytes),CancellationToken.None,out _);
-            if(exact==null||exact.Json!=page.Json)return false;
+            if(exact==null)return false;
+            // The whole qualified catalog count is a capture-time diagnostic,
+            // not part of this selected graph. An unrelated append may change
+            // it without changing any supplied entry, link, range or version.
+            // Compare all other rendered fields exactly, including omissions.
+            var comparable=exact with { Graph=exact.Graph with { QualifiedCatalogNodes=g.QualifiedCatalogNodes } };
+            if(comparable.Json!=page.Json)return false;
             // Fail closed if public body/display metadata or correction context
             // changed after capture. This does not claim to erase prior exposure.
             return TryUseLogicalMessageRead(g.LogicalMessages,permissionQuery,config,

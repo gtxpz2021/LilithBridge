@@ -9,7 +9,7 @@ internal static class ReflectionResponseShape
 {
     private static readonly HashSet<string> KnownFields = new(StringComparer.Ordinal)
     {
-        "note", "lesson", "relationship", "reflection", "thought", "memories",
+        "note", "lesson", "relationship", "reflection", "thought", "memories", "defer_ordinary",
         "text", "revises", "settles", "settle_reason", "source_event_ids", "source_day_ids", "source_note_ids"
     };
 
@@ -20,7 +20,11 @@ internal static class ReflectionResponseShape
         foreach (JsonProperty property in root.EnumerateObject())
         {
             if (!seen.Add(property.Name)) return "schema_duplicate_field";
-            if (property.Name is "note" or "lesson" or "relationship")
+            if (property.Name == "defer_ordinary")
+            {
+                if (property.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return "schema_type_error";
+            }
+            else if (property.Name is "note" or "lesson" or "relationship")
             {
                 if (property.Value.ValueKind == JsonValueKind.Null) continue;
                 if (property.Value.ValueKind != JsonValueKind.Object) return "schema_type_error";

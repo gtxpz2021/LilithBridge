@@ -68,15 +68,30 @@ internal sealed class TemporaryExpressionSession
     {
         try
         {
+            // This is retained data, not another operation by the old owner.
+            // With no history-read snapshots there is no such source to revalidate;
+            // the live-owner gate would otherwise reject every cancelled draft.
+            // Keep it for any supplied history, plus all other source/method checks.
+            bool hasHistorySources = final?.DialogueRequest?.ChatHistorySnapshots.Count > 0;
             if (final == null || final.Text.Length == 0 || final.Error.Length > 0 || final.Delivery?.IsFullyDelivered == true
-                || final.SendPermission?.Allowed == false || !final.RequestSourcesPermitted()
-                || final.DialogueRequest?.ReviewSupplyPermitted() == false
+                || final.SendPermission?.Allowed == false || !final.RequestSourcesPermitted(includeChatHistory: hasHistorySources)
+                || final.DialogueRequest?.ReviewSupplyPermitted(includeChatHistory: hasHistorySources) == false
                 || final.DialogueRequest is { } owner && !DeepSeekClient.MethodProtocolPermitted(owner)) return "";
-            return System.Text.Json.JsonSerializer.Serialize(new { kind = "undelivered_final_draft", text = final.Text,
+            string draft = System.Text.Json.JsonSerializer.Serialize(new { kind = "undelivered_final_draft", text = final.Text,
                 known_displayed_prefix = final.Delivery?.DeliveredText.Length>0?final.Delivery.DeliveredText:
                     final.FinalPublicDraft?.Selected==true&&MemoryStore.Clean(final.Text)==final.FinalPublicDraft.Body
                         ?string.Concat(final.FinalPublicDraft.Appearance().Select(e=>e.Text)):"", delivery_outcome = final.Delivery?.Outcome ?? "not_started",
                 meaning = "草稿全文并非完整已说过的话；只有known_displayed_prefix确认程序展示，其他部分可能未显示或显示不确定。不是事实或新授权；可重新理解，不自动重放。" }, DialogueMaterialEnvelope.DataJson);
+            var result = final.MemoWriteOutcome;
+            if (result == null || result.Known && result.Eligible == 0 && result.Attempted == 0) return draft;
+            // Reuse only a retained actual result under the draft's existing permissions.
+            // This is information continuity, not cross-owner idempotency or permission to replay.
+            return draft + "\n" + System.Text.Json.JsonSerializer.Serialize(new {
+                kind = "prior_native_write_result", request_id = final.RequestId,
+                draft_attempt_id = final.Response.AttemptId, source_user_event_id = final.SourceUserEventId,
+                actual_result = result.ModelResult(),
+                meaning = "这是该次请求已有的原生笔记或批注回执，不是新任务，也不表示草稿已经说出。confirmed已确认完成；unconfirmed未确认，仍可能已写入；unknown不能推断成未执行；unprocessed尚未处理，也没有排队。draft_attempt_id仅定位保留草稿，不是原生写入的执行ID。request_index只是该次规范化提案序号，不是原生存储ID。程序没有因这次交接重新执行或自动重试；不要把旧草稿或不确定回执当作重复写入的授权。"
+            }, DialogueMaterialEnvelope.DataJson);
         }
         catch { return ""; }
     }

@@ -32,7 +32,8 @@ internal sealed record ReviewMaterialView(string Id, string Speaker, DateTimeOff
 
 internal sealed record ReviewToolArgs(string Question, string Mode, string Query,
     IReadOnlyList<string> SourceRefs, bool IncludePriorThought, int Offset = 0, string OperationId = "", string RootVersion = "", ChatHistoryReadOptions? HistoryOptions = null, LegacyArchiveQuery? Archive = null,
-    LogicalMessageReadOptions? Message = null, ContextDiscoveryOptions? Discovery = null);
+    LogicalMessageReadOptions? Message = null, ContextDiscoveryOptions? Discovery = null,
+    ExperienceTraversalOptions? Traversal = null, string RevisitId = "", string ThoughtVersion = "", string ThoughtDomain = "reflection");
 
 /// <summary>
 /// Per-turn authorization for the request mode. It is armed only by the visible
@@ -81,7 +82,7 @@ internal static class ReviewContext
     private static string[] ReviewModes(string operationId,bool allowNewReads,bool allowReconsider,bool allowArchive,bool completedResultOnly)
     {
         var modes=new List<string>();
-        if(allowNewReads){modes.Add("read");modes.Add("discover");modes.Add("message");modes.Add("history");modes.Add("artifact");if(allowArchive)modes.Add("archive");if(allowReconsider)modes.Add("reconsider");}
+        if(allowNewReads){modes.Add("read");modes.Add("discover");modes.Add("message");modes.Add("history");modes.Add("artifact");modes.Add("revisit");modes.Add("thought");if(allowArchive)modes.Add("archive");if(allowReconsider)modes.Add("reconsider");}
         if(operationId.Length>0){modes.Add("take");modes.Add("status");if(!completedResultOnly)modes.Add("stop");}
         return modes.ToArray();
     }
@@ -96,33 +97,42 @@ internal static class ReviewContext
                     ["question"] = new { type = "string", description = allowArchive ? "read/history/artifact/archive/reconsider 必填的自足问题；take/status/stop 不需要填写。" : "read/history/artifact/reconsider 必填的自足问题；take/status/stop 不需要填写。" },
                     ["mode"] = new { type = "string", @enum = ReviewModes(operationId,allowNewReads,allowReconsider,allowArchive,completedResultOnly), description = "read按完整消息找回本会话记录（精确source_refs保留原始单记录读取）；message按程序给出的message_ref跨会话展开逻辑消息原文；reconsider仅按明确需要另生成临时回顾笔记。" },
                     ["message_ref"] = new { type="string",maxLength=256,description="仅message：程序实际给出的逻辑消息定位符。定位符不是读取许可，也不把该消息作为新的玩家发言。" },
-                    ["message_cursor"] = new { type="string",maxLength=4096,description="仅message：原样使用next_cursor，绑定该消息的成员版本与实际续读位置；来源变化需重新定位，不重试旧游标。" },
-                    ["message_offset"] = new { type="integer",minimum=0,description="仅message：逻辑消息正文的UTF16偏移；非0必须配该消息返回的cursor。与旧raw offset语义分开。" },
-                    ["message_body_chars"] = new { type="integer",minimum=0,description="仅message：0（默认）请求完整可读消息；正数显式请求有界页，受当前实际请求预算约束。分页或已显示前缀不能冒充完整生成。" },
+                    ["message_cursor"] = new { type="string",maxLength=4096,description="仅message且message_scope省略或为message：原样使用next_cursor，绑定该消息的成员版本与实际续读位置；来源变化需重新定位，不重试旧游标。" },
+                    ["message_offset"] = new { type="integer",minimum=0,description="仅message且message_scope省略或为message：首读省略或填0；续读照填同一消息返回的next_offset，并将同页next_cursor填入message_cursor，不自行计算。与read的offset分开。" },
+                    ["message_body_chars"] = new { type="integer",minimum=0,description="仅message且message_scope省略或为message：0（默认）请求完整可读消息；正数显式请求有界页，受当前实际请求预算约束。分页或已显示前缀不能冒充完整生成。" },
                     ["query"] = new { type = "string", description = "可选词面文本线索；时间与轮次只在记录自带信息中辅助，不承诺语义或时间/轮次检索；只用于定位，不扩大来源范围。" },
                     ["source_refs"] = new { type = "array", items = new { type = "string", maxLength=35 }, description = "Supplied u:/a: short references, or exactly one b1:<32-hex-GUID> for mode=read. B1 read returns original opinion and saved finite formation supply with live permissions; follow next_offset for remaining pages. Do not use include_prior_thought or reconsider with a B1 exact reference." },
                     ["root_version"] = new { type = "string", description = "history为关系EventId；artifact为梦/归拢EventId（32位）。artifact省略则发现当前合格原件，不要求已有note；按实际版本与声明链接展开，不保证找到未知事件。" },
-                    ["history_scope"] = new { type="string", @enum=new[]{"focus","versions","sources","record"}, description="history/artifact专用：artifact的focus省略root时取原件发现页，给root则取原件及直接来源；sources/record取该原件来路/片段，不支持versions。history的focus取所选版本、相邻前版及直接来路；versions为版本目录页；sources为声明来源页；record按精确history_ref读取片段，默认700字符，可用history_body_chars按需有界展开。页未给的材料不等于不存在。" },
-                    ["history_body_chars"] = new {type="integer",minimum=1,maximum=12000,description="仅history(record)：本次最多正文字符，默认700；可按需扩大到12000，仍受实际整请求预算裁剪，不保证语义充分。"},
+                    ["history_scope"] = new { type="string", @enum=new[]{"focus","versions","sources","record"}, description="history/artifact/revisit/thought专用：thought的focus查目录，record按返回thought_version读原文，sources查一层声明来路；revisit省略revisit_id读最近记录，续读使用其revisit_id；focus为目标与结果，sources为所选根的一层声明来路，record展开返回定位符。artifact的focus省略root时取原件发现页，给root则取原件及直接来源；sources/record取该原件来路/片段，不支持versions。history的focus取所选版本、相邻前版及直接来路；versions为版本目录页；sources为声明来源页；record按精确history_ref读取片段，默认700字符，可用history_body_chars按需有界展开。页未给的材料不等于不存在。" },
+                    ["history_body_chars"] = new {type="integer",minimum=1,maximum=12000,description="history/revisit/thought(record)：本次最多正文字符，默认700；可按需扩大到12000，仍受实际整请求预算裁剪，不保证语义充分。"},
                     ["history_find"] = new {type="string",maxLength=120,description="仅history(record)：可选已知文内原词，忽略大小写查第一处，返回附近上下文及前后缺口；仅在已合资格的指定记录内定位。不能与offset或history_cursor同用。未命中不表示无记录；可省略改读正文。"},
-                    ["history_ref"] = new {type="string",description="history/artifact专用：目录或链接中的完整kind:EventId，用于sources/record；ID是定位线索，不是读取许可。"},
+                    ["history_ref"] = new {type="string",description="history/artifact/revisit/thought专用：目录或链接中的完整kind:EventId，用于sources/record；ID是定位线索，不是读取许可。"},
                     ["before_revision"] = new {type="integer",description="versions页的next_before_revision；省略从最新已存版本开始。"},
-                    ["history_cursor"] = new {type="string",description="history/artifact返回的next_cursor原样使用，artifact发现页可翻后页；不表示正文已取得。"},
+                    ["history_cursor"] = new {type="string",description="history/artifact/revisit/thought返回的next_cursor原样使用，artifact发现页可翻后页；不表示正文已取得。"},
                     ["include_prior_thought"] = new { type = "boolean", description = "可选，默认 false。需要查看此前自己留下的思考时可设为 true；记录不等于主观体验证明。" },
                     ["offset"] = new { type = "integer", description = "原话read配合单个source_refs；history(record)配合history_ref和next_offset继续读取。字符范围明确，全文hash不表示全文已供给。" }
                 };
-        properties["mode"] = new {type="string",@enum=ReviewModes(operationId,allowNewReads,allowReconsider,allowArchive,completedResultOnly),description="read: current-session search or supplied raw source refs. discover: independently search qualified archive dialogue/generated public answers by your own query, regardless of automatic judge selection; returns excerpt candidates and read-only message locators. message: expand a located original across sessions. history/artifact/archive: existing typed domains. reconsider: optional temporary review note. take/status/stop: existing operation controls."};
-        properties["question"] = new {type="string",description="Required self-contained question for read/discover/message/history/artifact/archive/reconsider. take/status/stop do not require it."};
-        properties["query"] = new {type="string",description="Optional locating/search text. discover uses the installed semantic worker when enabled plus lexical ordering across all qualified available archive candidates. Other modes retain their existing scopes. Model search text never grants permission or changes the actual current player's source access."};
+        properties["mode"] = new {type="string",@enum=ReviewModes(operationId,allowNewReads,allowReconsider,allowArchive,completedResultOnly),description="read: current-session search or supplied raw source refs. discover: independently search qualified archive dialogue/generated public answers by your own query, regardless of automatic judge selection; returns excerpt candidates and read-only message locators. message: expand a located original across sessions. revisit: inspect the latest retained explicit revisit and its readable thought records. thought: choose reflection (default notes/lessons/readings) or retained_b1 (retained opinion versions), browse then follow the returned exact read locator. history/artifact/archive: existing typed domains. reconsider: optional temporary review note. take/status/stop: existing operation controls."};
+        properties["question"] = new {type="string",description="Required self-contained question for read/discover/message/history/artifact/revisit/thought/archive/reconsider. take/status/stop do not require it."};
+        properties["query"] = new {type="string",description="Optional locating/search text. discover uses the installed semantic worker when enabled plus lexical ordering across all qualified available archive candidates. thought uses empty query for time browsing; reflection uses lexical order, retained_b1 uses a literal substring filter in text/scope/conditions and keeps time order. Neither invokes a semantic worker. Other modes retain their existing scopes. Model search text never grants permission or changes the actual current player's source access."};
         properties["discovery_cursor"] = new {type="string",maxLength=96,description="discover only: unchanged next_cursor from the same query's candidate page. Changed permissions/source versions/order expire it; restart discovery rather than guessing."};
+        properties["discovery_contains"] = new {type="string",minLength=1,maxLength=160,description="仅discover，可省略。按一段原词（如名字或对象名称）忽略大小写查找，不作别名推断或同名合并；有时间范围时须同一原记录同时满足。没有原词时只用query；此条件会排除不含原词的材料。"};
+        properties["discovery_recorded_after"] = new {type="string",description="仅discover，可省略。记录时间下界，包含边界；完整ISO8601时间须带Z或时区偏移，例如2026-11-10T00:00:00+08:00。不是正文描述的事件日期，不从query自动推断；时间未知的记录不进入指定时间范围。"};
+        properties["discovery_recorded_before"] = new {type="string",description="仅discover，可省略。记录时间上界，不包含边界；格式同discovery_recorded_after。对话按原成员记录时间、generated按接收原件时间；完整消息与关联原问可含范围外上下文。续页保留相同query和全部定位条件。"};
         properties["discovery_page_bytes"] = new {type="integer",minimum=4096,maximum=65536,description="discover only: complete UTF-8 JSON page capacity, default 24576. A shared ordered union, with no fixed relevance threshold or per-kind quota; more/next_cursor explicitly show remaining candidates."};
+        properties["thought_domain"] = new {type="string",@enum=new[]{"reflection","retained_b1"},description="thought only; default reflection preserves notes/lessons/readings. retained_b1 supports focus directory only: empty query browses all qualified retained versions by save time, including historical/withdrawn versions. Copy history_cursor and query; follow read_with for the exact original and formation. Excerpts add neither write references nor revisit_thought eligibility."};
+        properties["thought_version"] = new {type="string",minLength=64,maxLength=64,description="thought reflection only: record/sources must copy the exact returned version with history_ref. focus (default) is a paged directory: empty query browses by written time; query changes lexical order, not importance. Follow history_cursor. Directory excerpts do not grant revisit_thought; only a complete expanded note body can add that eligibility."};
+        properties["revisit_id"] = new {type="string",maxLength=256,description="revisit only: omit for the latest retained completion; follow-up focus/sources/record uses its returned revisit_id. Not a review operation_id and never starts reflection."};
+        properties["message_scope"] = new {type="string",@enum=new[]{"message","exchange","before","after"},description="message mode only; default message keeps the existing exact original read. exchange reads the located question/reply group; before/after also expand up to four available neighbouring groups within 30 minutes in that stored session, plus exact correction links. These are reading bounds, not a complete episode or causal judgment. Use returned references to continue elsewhere."};
+        properties["traversal_cursor"] = new {type="string",maxLength=160,description="message with exchange/before/after only: unchanged next_cursor with the same message_ref and message_scope. A changed source snapshot expires the cursor. Cannot mix message_cursor/message_offset/message_body_chars."};
+        properties["traversal_page_bytes"] = new {type="integer",minimum=4096,maximum=65536,description="message with exchange/before/after only: UTF-8 result page capacity, default 16384; still subject to the existing complete-request budget. Omitted or unvisited material is not absent."};
         if(allowArchive)
         {
             properties["archive_after"] = new {type="string",description="仅archive：含时区的开始时间，包含边界。"};
             properties["archive_before"] = new {type="string",description="仅archive：含时区的结束时间，不包含边界。"};
             properties["archive_cursor"] = new {type="string",description="仅archive：原样使用上页next_cursor；来源或资格变化会明示过期。"};
             properties["archive_id"] = new {type="string",description="仅archive：已知旧档精确ID，可配archive_offset继续长项；不授予写入权限。"};
-            properties["archive_offset"] = new {type="integer",description="仅archive：该原话UTF16偏移，默认0。"};
+            properties["archive_offset"] = new {type="integer",description="仅archive：首读省略或填0；续读照填该原话返回的next_offset_utf16，沿用其archive_id，不自行计算。"};
             properties["archive_limit"] = new {type="integer",description="仅archive：每页最多1至24条可读记录，默认12；坏项不占可读名额。"};
         }
         return properties;
@@ -133,7 +143,7 @@ internal static class ReviewContext
         function = new
         {
             name = ToolName,
-            description = allowArchive ? "按需要按完整消息查看本会话原话（read）、跨会话读取已定位消息原文（message）、重访关系来路（history）、梦和归拢原件（artifact）、旧档（archive），或明确请求临时笔记（reconsider）。" : "按需要按完整消息查看本会话原话（read）、跨会话读取已定位消息原文（message）、重访关系来路（history）、梦和归拢原件（artifact），或明确请求临时笔记（reconsider）。",
+            description = allowArchive ? "按需要按完整消息查看本会话原话（read）、跨会话读取已定位消息原文（message）、重访关系来路（history）、梦和归拢原件（artifact）、旧档（archive），查看最近明确重访（revisit），或明确请求临时笔记（reconsider）。" : "按需要按完整消息查看本会话原话（read）、跨会话读取已定位消息原文（message）、重访关系来路（history）、梦和归拢原件（artifact），查看最近明确重访（revisit），或明确请求临时笔记（reconsider）。",
             parameters = new
             {
                 type = "object",
@@ -162,17 +172,20 @@ internal static class ReviewContext
         "- history 默认focus只取所选版本及附近声明来路；versions查目录，sources查直接来源，record按history_ref与offset续读片段。scope_complete只指该页，不承诺全族或语义上已经充分。未展开、缺失、撤回及预算不足分别标出，不能把未供材料说成不存在。",
         "- 长正文默认700字符。history(record)可用history_body_chars请求至多12000字符，或用history_find定位文内原词附近的有界上下文；无需为了增加长度逐次请求700字符。实际返回范围与前后缺口为准，全文hash不表示全文已看。文内词只定位，不决定哪些记忆允许想到；没有原词时仍可从头读及按游标扩展。相关窗口不是语义充分或全部来路的保证。",
         "- artifact不要求先有note或用户事实：省略root_version按较新顺序发现合格原件，可用query作可选原文线索；不是语义检索或全部兴趣目录。返回原件带想象/归拢身份和来路，sources读来源、record按history_ref展开。生成发生不使其中场景成为现实；可重读、联想、不采用或不留下新note，不要求主动再提。它不增加原话写引用权限。",
+        "- thought 默认浏览反思的note/lesson/reading：focus目录、record原文、sources声明来路。thought_domain=retained_b1查已保留判断的各精确版本，只用focus目录，沿read_with看原文与形成材料。两者空query按保存时间；retained_b1的query只按原词子串过滤，沿返回游标继续。历史或撤回项不代表当前认同，目录和截断条目不新增重访资格。",
+        "- revisit 按需查看最近一次明确重访的执行记录及目前可读的相关想法；全空只表示当次无新产物。可沿返回定位继续看，不要求采纳、再想或提起。",
         "- 每个材料独立验资格；一条来路缺失不使无关合法材料消失，被拒解释也不借摘要返回。原作、表达、旧理解与现实共同经历保持各自身份。没有强制采用、改口、展示思考或新增引用/修订权限。",
         "- question 写清问题；source_refs 指定已有短标识，query 按词面定位，两者同给不扩大来源范围；被截断的记录可配合单个 source_refs 和 offset 继续读取。",
         "- include_prior_thought 可选，默认 false；仅本会话此前已完成且完整交付的轮次可能有记录。prior_thought 的 t: 标识只引用旧思考，不能用作 source_refs。",
-        "- read/message/history/artifact/reconsider 共享每轮最多两次，其中 reconsider 最多一次；它只看到 question 和本次返回材料，不接收主对话其余上下文或 prior_thought，问题需自足。",
+        "- read/discover/message/history/artifact/revisit/thought/reconsider 共享每轮最多两次，其中 reconsider 最多一次；它只看到 question 和本次返回材料，不接收主对话其余上下文或 prior_thought，问题需自足。",
         "- 原话、旧解释和临时笔记保留各自来源与时间；解释可以修正或不采用，查无记录不等于从未发生。工具失败或达到上限时按已有材料回答，不假装查过。"
     });
         contract += Environment.NewLine + "- discover: Independently search qualified available archive dialogue and received generated public answers with your own question/query, even when the automatic context judge selected nothing or was unavailable. It never calls that judge or an auxiliary completion. query orders candidates, not permissions; the actual current player utterance owns source access. Results are exact compact excerpts with read-only message_ref locators. Use mode=message to inspect the full available original before relying on unseen detail. A generated public answer is not proof it was told or read. No fixed relevance floor or rank cap eliminates candidates; the measured page uses more/next_cursor (discovery_cursor for the next call). Archive coverage remains unknown, and exhaustion only means this qualified available snapshot. discover shares the same two-call review budget with read/message/history/artifact/archive/reconsider. It creates no source_refs, B1 authority or persistent memory. Retained thoughts and imported legacy records are outside this discovery domain; their existing typed read tools remain separate.";
         contract += Environment.NewLine + "- discover also supplies the exact original user question when its direct source ID is currently qualified, with original time/hash/version. It is historical context, not new player input or an independent recall/write seed. The original question shares the final live source gate. If its complete body cannot fit on an otherwise empty inspection page, original_user_question_status explicitly reports body_omitted_page_capacity with an exact locator; do not pretend this supplies complete causal context.";
+        contract += Environment.NewLine + "- After locating a message_ref, mode=message may request message_scope=exchange/before/after to read the recorded question/reply group and nearby available order. Continue a page using traversal_cursor=next_cursor with the same anchor/scope; other returned references can become new anchors. This shares the existing review call budget and adds no model call or persistent memory. Available adjacency is not cause, the same topic is not one event, and only confirmed displayed ranges count as said; a generated answer's other ranges are not established as told. Source locators do not create source_refs or B1 writing authority. Default message reading is unchanged.";
         if(!allowArchive)return contract;
         return contract.Replace("history 重访已存关系版本及声明来路，artifact 按需发现/读取自己曾生成的梦和归拢，reconsider", "history 重访已存关系版本及声明来路，artifact 按需发现/读取自己曾生成的梦和归拢，archive 读取已接入旧档，reconsider", StringComparison.Ordinal)
-            .Replace("read/message/history/artifact/reconsider 共享每轮最多两次", "read/message/history/artifact/archive/reconsider 共享每轮最多两次", StringComparison.Ordinal)
+            .Replace("read/discover/message/history/artifact/revisit/thought/reconsider 共享每轮最多两次", "read/discover/message/history/artifact/revisit/thought/archive/reconsider 共享每轮最多两次", StringComparison.Ordinal)
             + Environment.NewLine + "- archive保留记录原身份、未知交付和提交/接收证据；可参与判断，但不认定已显示、当前事实或初遇，也不取得新引用/修订权限。检索首页可在同次读取的related_context中补充同源邻文及问答接续，仍非新命中或事实，正文与原记录共用预算；缺项不取消独立合法邻项；仅确有需要时用archive_cursor翻页或archive_id与archive_offset续读长项，不反复重试缺失/撤回项。";
     }
 

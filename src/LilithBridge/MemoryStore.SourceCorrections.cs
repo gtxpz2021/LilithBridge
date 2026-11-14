@@ -18,10 +18,14 @@ internal sealed partial class MemoryStore
 
     // Complete old words identify a source; a fragment only discovers candidates.
     // Never drop a logical operator or infer scope to change current eligibility.
-    private static string CanonicalCorrectionUtterance(string s)=>Regex.Replace(s.Trim(),@"\s+"," ").TrimEnd('。','.');
+    // Match the same Clean view used by the command parser, including bare CR.
+    // This comparison never rewrites either original utterance.
+    private static string CanonicalCorrectionUtterance(string s)=>Regex.Replace(Clean(s),@"\s+"," ").TrimEnd('。','.');
     private static bool IsAuthoritativeStoredCorrection(MemoryTurn c)=>c.Kind!="source.correction";
     private static RawCorrection? ParseRawSourceCorrection(string source)
     {
+        // Interpret commands as before; retain the received body on its record.
+        source=Clean(source);
         if(UtteranceAttribution.Reported("user",source)!=null || Regex.IsMatch(source,@"[？?]"))return null;
         var m=Regex.Match(source.Trim(),
             @"^(?:(?:先)?(?:纠正|更正|修正)(?:一下|一个信息|一点|一处|个信息)?[：:，,]\s*)?我(?:前面|之前|刚才|先前|原来)(?:说|提到|描述)(?:的)?(?:“(?<quoted>[^”]{4,512})”|(?<old>[^，,。！？?；;：:]{4,128}?))(?:不准确|说错了|不对|有误)[，,：:]\s*(?<new>.+)$",

@@ -268,7 +268,12 @@ internal static class OpenAIProtocol
         if(response.TryGetProperty("usage",out var usage)&&usage.ValueKind==JsonValueKind.Object)
         {
             d.UsageReceived=true;envelope.PromptTokens=Number(usage,"input_tokens");envelope.CompletionTokens=Number(usage,"output_tokens");
-            if(usage.TryGetProperty("input_tokens_details",out var input)&&input.ValueKind==JsonValueKind.Object)envelope.PromptCacheHitTokens=Number(input,"cached_tokens");
+            if(usage.TryGetProperty("input_tokens_details",out var input)&&input.ValueKind==JsonValueKind.Object)
+            {
+                envelope.PromptCacheHitTokens=Number(input,"cached_tokens");
+                d.CacheHitTokensReported=input.TryGetProperty("cached_tokens",out var cached)
+                    &&cached.ValueKind==JsonValueKind.Number&&cached.TryGetInt32(out _);
+            }
             if(usage.TryGetProperty("output_tokens_details",out var output)&&output.ValueKind==JsonValueKind.Object)envelope.ReasoningTokens=Number(output,"reasoning_tokens");
         }
     }

@@ -55,6 +55,17 @@ internal sealed record NativeMemoWriteOutcome(int Attempted, int Succeeded)
         : (Succeeded > 0 ? "只确认完成了部分笔记或批注。" : "笔记或批注尚未确认完成。")
             + (Unconfirmed > 0 ? "不能排除已有写入。" : "")
             + (Unprocessed > 0 ? "另有有效提案尚未处理。" : "");
+    // Shared read-only projection for same-owner expression and a retained next-turn draft.
+    // It never executes or retries a write; unknown remains unknown.
+    internal object ModelResult() => new { counts_known = Known,
+            valid_proposals = Known ? (int?)Eligible : null,
+            attempted = Known ? (int?)Attempted : null,
+            confirmed_succeeded = Known ? (int?)Succeeded : null,
+            unconfirmed = Known ? (int?)Unconfirmed : null,
+            unprocessed = Known ? (int?)Unprocessed : null,
+            all_confirmed = AllConfirmed, status = Status,
+            items = Known ? Items?.Select(item => new {
+                kind = item.Kind, request_index = item.RequestIndex, body = item.Body, status = item.Status }) : null };
     internal void ApplyToReply(ApiResult reply)
     {
         if (reply.MemoReplySettled) return;

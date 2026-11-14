@@ -34,6 +34,7 @@ internal sealed partial class BridgeController
     private void ValidPlayerSubmission()
     {
         _conversationGeneration++;
+        _reflectionActivityObservation.Submitted(ReflectionClock());
         InvalidateB1ReflectionForInput();
         InterruptSharedActivity();
         _nativeConversation.Submitted();
@@ -43,6 +44,7 @@ internal sealed partial class BridgeController
     internal void BeforeExplicitNativeChoice()
     {
         _conversationGeneration++;
+        _reflectionActivityObservation.ExplicitNativeChoice();
         InvalidateB1ReflectionForInput();
         InterruptSharedActivity();
         CancelNativeLinkage("explicit_native_choice");

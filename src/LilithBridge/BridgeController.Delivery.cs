@@ -367,6 +367,7 @@ internal sealed partial class BridgeController
     {
         _aiSpeechActive = true;
         _nativeConversation.Shown();
+        if (!string.IsNullOrWhiteSpace(text)) _reflectionActivityObservation.Shown(ReflectionClock());
         if (reply?.NativeLinkage is { } native)
         {
             native.Shown = true;
@@ -388,7 +389,8 @@ internal sealed partial class BridgeController
             MemoryTurn? turn = reply.DialogueRequest?.WorkPrototype != null
                 ? TemporaryExpressionMemoryPolicy.ArchiveFinalBubble(_memory, reply, text, chunkIndex)
                 : _memory.AddHistory("assistant", text, reply.RequestId + ":" + chunkIndex,
-                    sourceEventId: reply.SourceUserEventId, isLocalFallback: reply.IsLocalFallback);
+                    sourceEventId: reply.SourceUserEventId, isLocalFallback: reply.IsLocalFallback,
+                    preserveDisplayedText: reply.PreservePublicLineBreaks);
             RecordGeneratedPublicDisplay(reply, turn, chunkIndex, text);
             if (turn != null)
             {
@@ -434,7 +436,7 @@ internal sealed partial class BridgeController
             _memory.EndReflectionDelivery(reply.SourceUserEventId, reply.DialogueRequest?.Id ?? reply.RequestId,
                 delivery.Outcome, delivery.IsFullyDelivered,
                 delivery.ShownChunks.Count == 0 ? "" : reply.RequestId + ":" + delivery.ShownChunks[^1].Index,
-                delivery.ShownChunks.Count);
+                delivery.ShownChunks.Count, delivery.CompletedAtUtc);
         NativeEventLog.Trace("ai.delivery_end", "mod", "lilith", "AI reply delivery ended",
             "request_id=" + reply.RequestId + ";attempt_id=" + reply.Response.AttemptId
             + ";outcome=" + outcome + ";delivered_chars=" + reply.DeliveredText.Length

@@ -128,6 +128,21 @@ internal static class NativeStateInspector
         }
     }
 
+    // A zero can be a real fresh interaction. Missing/failed clock reads must
+    // stay distinguishable when current pacing no longer requires 90 idle seconds.
+    // This is a clock observation, never a native-state safety snapshot.
+    internal static double? TryReflectionInteractionIdleSeconds()
+    {
+        EmotionSystem? emotion = Find<EmotionSystem>();
+        if (emotion == null) return null;
+        try
+        {
+            double seconds = emotion.TimeSinceLastInteraction.TotalSeconds;
+            return double.IsFinite(seconds) && seconds >= 0 ? seconds : null;
+        }
+        catch { return null; }
+    }
+
     public static double TimeSinceLastHardwareInputSeconds
     {
         get

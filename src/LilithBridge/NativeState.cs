@@ -427,10 +427,14 @@ internal sealed partial class MemoryStore
     internal const string LocalFallbackOrigin = "local_fallback";
 
     public MemoryTurn? AddHistory(string role, string text, string eventId = "", string kind = "chat", string sourceEventId = "",
-        bool isLocalFallback = false, DateTimeOffset? observedAtUtc = null)
+        bool isLocalFallback = false, DateTimeOffset? observedAtUtc = null, bool preserveDisplayedText = false)
     {
-        text = Clean(text);
-        if (text.Length == 0 || role is not ("user" or "assistant"))
+        // Received player chat and the opted-in actual ordinary display string
+        // retain their layout. This flag never creates an unshown history event;
+        // native lines and all other callers keep their existing normalization.
+        bool originalChat = kind == "chat" && (role == "user" || role == "assistant" && preserveDisplayedText);
+        text = originalChat ? text ?? "" : Clean(text);
+        if (string.IsNullOrWhiteSpace(text) || role is not ("user" or "assistant"))
             return null;
         if (eventId.Length > 0 && (_seenUtteranceIds.Contains(eventId) || IsExperienceSuppressed(eventId)))
             return null;

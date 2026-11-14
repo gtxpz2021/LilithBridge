@@ -9,7 +9,11 @@ namespace LilithBridge;
 // Per-selection scheduling evidence only; it is never persisted in the receipt.
 internal sealed record ReflectionHistorySelection(IReadOnlyList<MemoryTurn> History,
     bool BudgetLimited, int AvailableDialogueLines, bool Recent = false,
-    ReflectionRecentReceipt[]? RecentGroups = null, string PendingReason = "");
+    ReflectionRecentReceipt[]? RecentGroups = null, string PendingReason = "")
+{
+    // Facts of this selected whole-group window, not a new admission rule.
+    public ReflectionDeliveryTiming? DeliveryTiming { get; init; }
+}
 
 internal sealed partial class MemoryStore
 {
@@ -38,17 +42,26 @@ internal sealed partial class MemoryStore
             {
                 var restored = JsonSerializer.Deserialize<ReflectionWindowSnapshot>(File.ReadAllText(ReflectionWindowPath));
                 if (restored.InputId == null || restored.FactActivity < 0
+                    || restored.LastDialogueService is {} service && !service.IsValid
+                    || restored.LastCurrentDialogueService is {} currentService
+                        && (!currentService.IsValid || !currentService.CurrentSessionCoverage)
+                    || restored.LastRevisitCompletion is {} completion && !ValidRevisitCompletion(completion)
                     || restored.RecentPassesSinceBacklog is < 0 or > 2
                     || restored.RequestOrigin is {} origin && !ValidReflectionRequestOrigin(origin)
                     || restored.PendingIntents?.Any(i => !ValidReflectionPendingIntent(i)) == true
                     || restored.Work is { } work && (work.Request == null || string.IsNullOrEmpty(work.Request.RequestId)
-                        || work.Window == null || work.Window.Length == 0 || work.Window.Any(t => t == null)
+                        || work.Window == null || work.Window.Any(t => t == null)
                         || work.Target.Work != null || work.Target.InputId == null || work.Target.FactActivity < 0
                         || work.Target.RecentPassesSinceBacklog is < 0 or > 2
+                        || work.Target.LastDialogueService is {} targetService && !targetService.IsValid
+                        || work.Target.LastCurrentDialogueService is {} targetCurrentService
+                            && (!targetCurrentService.IsValid || !targetCurrentService.CurrentSessionCoverage)
+                        || work.Target.LastRevisitCompletion is {} targetCompletion && !ValidRevisitCompletion(targetCompletion)
                         || work.Target.RequestOrigin is {} targetOrigin && !ValidReflectionRequestOrigin(targetOrigin)
                         || work.Request.PurposeContexts == null || work.Request.PurposeContexts.Any(c => c == null || !ValidReflectionPendingIntent(c.Intent))
                         || work.Request.Evidence == null || work.Request.Notes == null || work.Request.Lessons == null
-                        || work.Request.Readings == null || work.Request.DayArtifacts == null || work.Request.Settled == null)
+                        || work.Request.Readings == null || work.Request.DayArtifacts == null || work.Request.Settled == null
+                        || !ValidReflectionWorkPurpose(work))
                     || restored.RecentConsumed?.Any(r => r == null || string.IsNullOrEmpty(r.UserId)
                         || string.IsNullOrEmpty(r.RequestId) || string.IsNullOrEmpty(r.SessionId)
                         || string.IsNullOrEmpty(r.LastShownEventId) || r.ShownChunks <= 0
@@ -79,6 +92,8 @@ internal sealed partial class MemoryStore
     internal bool CompleteReflectionWindow(ReflectionWindowCursor cursor, string aggregate,
         ReflectionChainOutcome chains, out string cursorReason)
     {
+        if (cursor.Snapshot.Work is { Purpose: not ReflectionWorkPurpose.Dialogue })
+        { cursorReason = "work_purpose_mismatch"; return true; }
         var previousKeys = (cursor.DurableSnapshot.RecentConsumed ?? Array.Empty<ReflectionRecentReceipt>())
             .Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
         var recent = (cursor.Snapshot.RecentConsumed ?? Array.Empty<ReflectionRecentReceipt>())
@@ -90,8 +105,33 @@ internal sealed partial class MemoryStore
             return cursor.EndPass(null);
         }
         cursorReason = ReflectionWindow.CompletionReason(aggregate, chains);
-        bool retained = cursor.EndPass(cursorReason, s => SaveReflectionWindow(s with { Work = null }));
-        if (!retained) { cursor.SetWork(null); CompleteB1ReflectionNormalTurn(cursor); }
+        ReflectionServiceCompletion? completed = cursor.Snapshot.LastDialogueService;
+        ReflectionServiceCompletion? currentCompleted = cursor.Snapshot.LastCurrentDialogueService;
+        bool retained = cursor.EndPass(cursorReason, s =>
+        {
+            // Same commit as coverage, including legal all-empty results. Failed
+            // saves leave both facts pending; recovery records its actual commit
+            // boundary, not the original send or response time.
+            var observed = s.Work is { Purpose: ReflectionWorkPurpose.Dialogue } work
+                ? new ReflectionServiceCompletion(work.Request.RequestId, _sessionId,
+                    recent.Length > 0 && recent.All(g => g.SessionId == _sessionId), DateTimeOffset.UtcNow)
+                : completed;
+            // Only this actual coverage commit can supply a new current fact.
+            // Never derive it from a legacy last-service field, request/response
+            // time, or a former current window recovered in a different session.
+            var currentObserved = s.Work is { Purpose: ReflectionWorkPurpose.Dialogue }
+                && observed is { CurrentSessionCoverage: true } ? observed : s.LastCurrentDialogueService;
+            if (!SaveReflectionWindow(s with { Work = null, LastDialogueService = observed,
+                LastCurrentDialogueService = currentObserved })) return false;
+            completed = observed;
+            currentCompleted = currentObserved;
+            return true;
+        });
+        if (!retained)
+        {
+            cursor.SetWork(null); cursor.SetDialogueServices(completed, currentCompleted);
+            CompleteB1ReflectionNormalTurn(cursor);
+        }
         return retained;
     }
 
@@ -195,6 +235,8 @@ internal sealed partial class MemoryStore
     internal void StageReflectionWindow(ReflectionWindowCursor cursor, ReflectionHistorySelection selection,
         long coveredFactActivity, long coveredModelRequest)
     {
+        if (cursor.Snapshot.Work is { Purpose: not ReflectionWorkPurpose.Dialogue })
+            throw new InvalidOperationException("Revisit work cannot stage dialogue coverage");
         var before = cursor.Snapshot;
         var consumed = (before.RecentConsumed ?? Array.Empty<ReflectionRecentReceipt>())
             .Concat(selection.RecentGroups ?? Array.Empty<ReflectionRecentReceipt>())
@@ -233,6 +275,22 @@ internal sealed partial class MemoryStore
     internal ReflectionHistorySelection SelectPendingReflectionHistory(ReflectionWindowSnapshot receipt)
         => SelectReflectionDeliveryHistory(receipt, currentSessionOnly: false);
 
+    // Read-only candidates, still using the original archive/permission/whole-
+    // group selector. Recheck the current boundary under the same source lock.
+    internal ReflectionHistorySelection SelectIndependentOlderReflectionHistory(
+        ReflectionWindowSnapshot receipt, ReflectionHistorySelection current)
+    {
+        lock (_experienceLock)
+        {
+            var fresh = SelectReflectionDeliveryHistoryLocked(receipt, currentSessionOnly: true);
+            if (!fresh.History.Select(t => t.EventId).SequenceEqual(current.History.Select(t => t.EventId)))
+                return new(Array.Empty<MemoryTurn>(), false, 0, PendingReason: "current_window_changed");
+            if (current.History.Count == 0)
+                return SelectReflectionDeliveryHistoryLocked(receipt, currentSessionOnly: false);
+            return SelectPendingReflectionHistoryLocked(receipt.InputId, receipt.RecentConsumed, current.History[0].EventId);
+        }
+    }
+
     // "Recent" receipts can survive a restart and belong to yesterday. Preserve
     // their consumption contract, but give today's actually delivered groups a
     // timely selection before continuing the older delivery-service lane.
@@ -241,7 +299,19 @@ internal sealed partial class MemoryStore
 
     private ReflectionHistorySelection SelectReflectionDeliveryHistory(ReflectionWindowSnapshot receipt, bool currentSessionOnly)
     {
-        lock (_experienceLock) return SelectReflectionDeliveryHistoryLocked(receipt, currentSessionOnly);
+        lock (_experienceLock)
+        {
+            var selection = SelectReflectionDeliveryHistoryLocked(receipt, currentSessionOnly);
+            if (selection.RecentGroups is not { Length: > 0 } groups) return selection;
+            // Qualification and selection just happened under this same lock.
+            // Never infer a timestamp for a legacy receipt or a different owner.
+            var facts = groups.Select(g => new ReflectionDeliveryTimeFact(g.Key,
+                ReflectionDeliveries().TryGetValue(g.UserId, out var delivery)
+                    && delivery.RequestId == g.RequestId && delivery.SessionId == g.SessionId
+                    && delivery.LastShownEventId == g.LastShownEventId && delivery.ShownChunks == g.ShownChunks
+                    ? delivery.FullDeliveryCompletedAtUtc : null)).ToArray();
+            return selection with { DeliveryTiming = new ReflectionDeliveryTiming(facts) };
+        }
     }
     private ReflectionHistorySelection SelectReflectionDeliveryHistoryLocked(ReflectionWindowSnapshot receipt, bool currentSessionOnly)
     {
@@ -304,7 +374,9 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         {
             if (!_longTermEnabled || !_experienceArchiveEnabled || _reflectionReceiptUnavailable || File.Exists(ReflectionTransferLockPath)
-                || snapshot.Work is { } work && ReflectionWorkWasDeleted(work)) return false;
+                || snapshot.Work is { } work && ReflectionWorkWasDeleted(work)
+                || (snapshot.LastRevisitCompletion != null || snapshot.Work?.Target.LastRevisitCompletion != null)
+                    && SnapshotRevisitCompletionReferences(snapshot, DeletedReflectionSources())) return false;
             return WriteReflectionWindow(snapshot);
         }
     }
@@ -338,7 +410,8 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock) return SelectPendingReflectionHistoryLocked(afterEventId, recentConsumed);
     }
-    private ReflectionHistorySelection SelectPendingReflectionHistoryLocked(string afterEventId, ReflectionRecentReceipt[]? recentConsumed)
+    private ReflectionHistorySelection SelectPendingReflectionHistoryLocked(string afterEventId, ReflectionRecentReceipt[]? recentConsumed,
+        string beforeEventId = "")
     {
         if (!_longTermEnabled || !_experienceArchiveEnabled)
             return new(Array.Empty<MemoryTurn>(), false, 0);
@@ -351,6 +424,30 @@ internal sealed partial class MemoryStore
         if (afterEventId.Length>0 && anchor<0)
             all=all.Where(t=>t.SessionId==_sessionId).ToList();
         else all=all.Skip(anchor+1).ToList();
+        // The opt-in independent old lane must stop before current material.
+        // Bound before grouping/budgeting so completeness is projected again;
+        // never clip a pre-qualified mixed window or borrow its dialogue count.
+        string boundaryPending = "";
+        if (beforeEventId.Length > 0)
+        {
+            int boundary = all.FindIndex(t => t.EventId == beforeEventId);
+            if (boundary < 0) return new(Array.Empty<MemoryTurn>(), false, 0, PendingReason: "lane_boundary_unavailable");
+            var prefixIds = all.Take(boundary).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+            int wholeBoundary = boundary;
+            foreach (var user in all.Take(boundary).Where(t => t.Role == "user"))
+                if (ReflectionDeliveries().TryGetValue(user.EventId, out var delivery)
+                    && RecentReflectionGroup(delivery, archiveView) is { } group
+                    && !(recentConsumed ?? Array.Empty<ReflectionRecentReceipt>())
+                        .Any(r => r.Key == group.Key && ConsumedRecentGroupMatchesArchive(r, archiveView))
+                    && group.EventIds.Any(id => !prefixIds.Contains(id)))
+                {
+                    // An interleaved complete group must not be manufactured
+                    // into an incomplete opportunity by the new lane boundary.
+                    wholeBoundary = Math.Min(wholeBoundary, all.FindIndex(t => group.EventIds.Contains(t.EventId)));
+                    boundaryPending = "lane_group_crosses_boundary";
+                }
+            all = all.Take(wholeBoundary).ToList();
+        }
         // Skip only the exact complete groups previously consumed in the recent
         // lane. Companion old evidence never creates one of these receipts.
         var recentView = recentConsumed is { Length: > 0 } ? archiveView : null;
@@ -396,7 +493,7 @@ internal sealed partial class MemoryStore
                 "mod", "system", "reflection keeps the unselected whole-group tail pending",
                 "max_chars=24000;selected_chars=" + selectedChars + ";source_fragments=" + selected.Count);
         }
-        return new(selected, budgetLimited, availableDialogueLines);
+        return new(selected, budgetLimited, availableDialogueLines, PendingReason: boundaryPending);
     }
 
     internal bool HasResumedReflectionExchange(IReadOnlyList<MemoryTurn> history) =>

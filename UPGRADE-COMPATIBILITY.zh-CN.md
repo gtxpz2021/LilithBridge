@@ -1,0 +1,4 @@
+# 安装与回退边界
+61122db5是最终精确产物，未重编产品。安装器按337项源清单重新绑定；识别explicit/MAIN重访reader和LastRevisitCompletion，并仅为本hash识别LastDialogueService、LastCurrentDialogueService、OrdinaryDeferral。完成记录为头/形状预检，不等于全部内容或恢复验证。未知根字段仍拒绝，原SupportsWork能力列表未放开。
+ReflectionWork.Purpose、RetryHistory、StartedInSessionId以及Result.DeferOrdinary属于新持久格式；本次日用旧状态Work为空。安装器继续阻断非空未完成Work，不能将产品两进程恢复证据自动等同安装器对任意旧Work的许可。
+已有数据、配置、认证保持原位。失败事务回滚及用户运行新版本后的资料回退是不同情况；后者需相配版本化数据备份或明确选择独立新存储，不能仅退DLL。没有自动删除、降级、导入或合并Steam与桌面资料。

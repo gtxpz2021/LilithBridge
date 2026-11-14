@@ -7,7 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>LilithBridge</AssemblyName>
     <RootNamespace>LilithBridge</RootNamespace>
-    <Version>0.3.150.104-cn-install.candidate.1</Version>
+    <Version>0.3.150.104-cn19-reflection-ordinary-defer.candidate.1</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>Lilith Native Bridge</Product>
   </PropertyGroup>

@@ -2582,6 +2582,15 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (SharedActivityRunning || SharedActivityUiBusy) return;
         if (!_config.ReflectionEnabled || !_systemReady || !_reflectionWindow.InitializationSucceeded)
             return;
+        // This purpose recovers locally, without provider admission or resend.
+        if (_reflectionWindow.Snapshot.Work is { Purpose: ReflectionWorkPurpose.ExplicitRevisit } revisit)
+        {
+            if (_reflectionInProgress || !ReflectionMayPrepare() || ReflectionClock() < _nextReflectionPreparationAt
+                || !ReflectionMayApply(revisit.Result)) return;
+            _memory.ResumeExplicitRevisit(_reflectionWindow, out _);
+            _nextReflectionPreparationAt = ReflectionClock() + ReflectionPreparationRetrySeconds;
+            return;
+        }
         if(!_client.CanStartOpenAIBackground(_config,"reflection"))return;
         // Foreground preparation gets its short critical segment first; drafts,
         // network wait and ordinary display do not invalidate a source window.
@@ -2595,9 +2604,10 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (NativeStateInspector.IsNativeQuietForMod())
             return;
 
-        double idleSeconds = _config.ReflectionOnlyWhenIdle
-            ? NativeStateInspector.TimeSinceLastInteractionSeconds
+        double? nativeIdleObservation = _config.ReflectionOnlyWhenIdle
+            ? NativeStateInspector.TryReflectionInteractionIdleSeconds()
             : double.PositiveInfinity;
+        double idleSeconds = nativeIdleObservation ?? 0; // legacy failure/recovery behavior
         if (_reflectionWindow.Snapshot.Work is { } recovery)
         {
             // Frozen work keeps its original cooldown/retry route. A newly
@@ -2616,6 +2626,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             else if (!string.IsNullOrWhiteSpace(_config.ApiKey) && !string.IsNullOrWhiteSpace(_config.ReflectionModel))
             {
                 if (!testTrigger && !_reflectionCadence.RetryDue(ReflectionClock(), recovery.Request.RequestId)) return;
+                if (_config.ReflectionRetryBudgetEnabled && WaitForReflectionRetryBudget()) return;
                 if (!QueueReflectionPreparation(new(recovery.Window, false, MemoryStore.CountReflectionDialogueLines(recovery.Window)), recovery))
                     _memory.CancelReflectionWork(_reflectionWindow);
             }
@@ -2630,9 +2641,25 @@ internal sealed partial class BridgeController : MonoBehaviour
             QueueReflectionPreparation(new(recoveryWindow, false, MemoryStore.CountReflectionDialogueLines(recoveryWindow)));
             return;
         }
+        if (OrdinaryReflectionDeferred(testTrigger)) return;
         if (_memory.B1ReflectionOpportunityAlreadyUsed(_reflectionWindow)) return;
         if (string.IsNullOrWhiteSpace(_config.ApiKey) || string.IsNullOrWhiteSpace(_config.ReflectionModel)) return;
+        // The configured prototype evaluates disjoint lanes independently.
+        // Explicit requests/tests keep the original branch and its exceptions.
+        if (!testTrigger && !_reflectionWindow.ModelRequested && ReflectionDialogueOpportunity.Enabled(_config))
+        {
+            // Replacing silence pacing must not turn a missing native clock's
+            // old fallback zero into an additional ordinary opportunity.
+            if (!nativeIdleObservation.HasValue) return;
+            TryScheduleIndependentReflectionLanes(idleSeconds);
+            return;
+        }
         if (!testTrigger && !ReflectionProgressiveProbeDue()) return;
+        // Only local positive soft waits are cached. Work/recovery, native and
+        // provider gates above remain authoritative; preparation rechecks sources.
+        if (!testTrigger && !_reflectionDialogueOpportunityWait.ProbeDue(_config,
+            ReflectionDialogueOpportunityScope, _memory.ReflectionMaterialGeneration,
+            _reflectionWindow.ModelRequestVersion, _reflectionWindow.ModelRequested, ReflectionClock())) return;
         var selection = InspectReflectionCadence(testTrigger);
         if (selection == null) return;
         IReadOnlyList<MemoryTurn> pendingWindow = selection.History;
@@ -2663,8 +2690,24 @@ internal sealed partial class BridgeController : MonoBehaviour
         // entire experience archive on every eligible frame for an unused value.
         const bool novelMaterial = false;
         bool requestedByModel = _reflectionWindow.ModelRequested;
-        string trigger = RuntimeDirector.DescribeReflectionTrigger(
-            _config, idleSeconds, significantChange, novelMaterial, requestedByModel);
+        // Only new ordinary old-material opportunities use the real mod
+        // activity fact. Frozen Work and B1 recovery have already returned above.
+        double? dialogueIdleSeconds = _reflectionActivityObservation.DialogueIdleSeconds(ReflectionClock());
+        double ordinaryIdleSeconds = RuntimeDirector.ReflectionSelectionIdleSeconds(
+            _config, false, false, idleSeconds, dialogueIdleSeconds);
+        double selectionIdleSeconds = RuntimeDirector.ReflectionSelectionIdleSeconds(
+            _config, currentDialogue, requestedByModel, idleSeconds, dialogueIdleSeconds);
+        var dialogueOpportunity = ReflectionDialogueOpportunity.Evaluate(_config, selection,
+            _reflectionWindow.Snapshot, _memory.ReviewSessionIdentity, currentDialogue,
+            requestedByModel, DateTimeOffset.UtcNow);
+        if (!testTrigger && dialogueOpportunity.RemainingSeconds > 0)
+        {
+            float until = ReflectionClock() + dialogueOpportunity.RemainingSeconds;
+            _reflectionDialogueOpportunityWait.Wait(_config, ReflectionDialogueOpportunityScope,
+                _memory.ReflectionMaterialGeneration, _reflectionWindow.ModelRequestVersion, until);
+            TraceReflectionScheduleWait(dialogueOpportunity.WaitReason, until, selection);
+            return;
+        }
         if (!testTrigger && !RuntimeDirector.ShouldReflect(
                 _config,
                 _systemReady,
@@ -2674,7 +2717,7 @@ internal sealed partial class BridgeController : MonoBehaviour
                 _annotationInProgress,
                 _noteSupplementInProgress,
                 _reflectionInProgress,
-                idleSeconds,
+                selectionIdleSeconds,
                 schedulingDialogueLines,
                 significantChange,
                 novelMaterial,
@@ -2682,7 +2725,8 @@ internal sealed partial class BridgeController : MonoBehaviour
                 resumedOpportunity,
                 incompleteOpportunity,
                 budgetOpportunityLines,
-                currentDialogue))
+                currentDialogue,
+                dialogueOpportunity.WindowQualified))
             return;
 
         if (!testTrigger && !currentDialogue && !requestedByModel && !_reflectionProgressiveCadence.Due(ReflectionClock()))
@@ -2706,15 +2750,23 @@ internal sealed partial class BridgeController : MonoBehaviour
         // both lanes stuck; skipping the floor before selection would add calls.
         // Preserve bounded old-material service when its lane is due. It must
         // not take away a timely dialogue's opportunity during an old-lane wait.
-        if (testTrigger || _reflectionProgressiveCadence.Due(ReflectionClock()) && ReflectionClock() >= _nextReflectionAt)
+        // Switching an admitted current opportunity to old material also
+        // requires the old lane's real idle fact, without reapplying its floor.
+        if (testTrigger || RuntimeDirector.ReflectionIdleOpportunity(_config, ordinaryIdleSeconds, significantChange)
+            && _reflectionProgressiveCadence.Due(ReflectionClock()) && ReflectionClock() >= _nextReflectionAt)
             selection = _memory.BalancePendingReflectionHistory(_reflectionWindow.Snapshot, selection);
         pendingWindow = selection.History;
         newDialogueLines = MemoryStore.CountReflectionDialogueLines(pendingWindow);
         currentDialogue = CurrentDialogueReflection(selection);
         resumedPending = _memory.HasResumedReflectionExchange(pendingWindow);
+        selectionIdleSeconds = RuntimeDirector.ReflectionSelectionIdleSeconds(
+            _config, currentDialogue, requestedByModel, idleSeconds, dialogueIdleSeconds);
+        string trigger = RuntimeDirector.DescribeReflectionTrigger(
+            _config, selectionIdleSeconds, significantChange, novelMaterial, requestedByModel);
         if (!QueueReflectionPreparation(selection))
             return;
         _lastReflectionTestTrigger = testTrigger || _lastReflectionTestTrigger;
+        _reflectionDialogueOpportunityWait.Clear();
         _lastReflectionScheduleWait = "";
         _reflectionScheduleWaitProgressive = false;
         NativeEventLog.Trace("memory.reflection.start", "mod", "system",
@@ -2727,11 +2779,19 @@ internal sealed partial class BridgeController : MonoBehaviour
             + ";selection_lane=" + (selection.Recent ? "recent" : "backlog")
             + ";scheduling_reason=" + (requestedByModel ? "model_request" : currentDialogue ? "current_dialogue_pause" : "progressive_old_material")
             + ";current_dialogue=" + currentDialogue
+            + ";dialogue_opportunity_prototype=" + dialogueOpportunity.Applies
+            + ";admitted_current_window_reason=" + dialogueOpportunity.WindowReason
+            + ";admitted_current_window_age_known=" + dialogueOpportunity.AgeKnown
             + ";progressive_step=" + _reflectionProgressiveCadence.Step
             + ";progressive_remaining_seconds=" + _reflectionProgressiveCadence.Remaining(ReflectionClock()).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
             + ";resumed_pending=" + resumedPending
             + ";budget_limited=" + selection.BudgetLimited
-            + ";available_new_turns=" + selection.AvailableDialogueLines);
+            + ";available_new_turns=" + selection.AvailableDialogueLines
+            + ";admission_idle_seconds=" + selectionIdleSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+            + ";admission_idle_source=" + (testTrigger ? "test_bypass" : requestedByModel ? "model_request"
+                : !_config.ReflectionOnlyWhenIdle ? "idle_gate_disabled"
+                : !currentDialogue && dialogueIdleSeconds.HasValue ? "native_and_mod_activity" : "native")
+            + ReflectionActivityEvidence());
     }
 
     [HideFromIl2Cpp]
@@ -2750,15 +2810,9 @@ internal sealed partial class BridgeController : MonoBehaviour
                 "reflection returned no usable result", "window_retained=" + retained);
             return;
         }
-        // No artifact may change until this accepted response is recoverable.
-        if (!_memory.SaveReflectionResponse(_reflectionWindow, snapshot, result))
-        {
-            _reflectionWindow.EndPass(null);
-            CompleteReflectionCadenceAttempt(false, true);
-            ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(snapshot, result, null, "response_save_failed", _reflectionWindow.Snapshot.Work != null));
-            NativeEventLog.Trace("memory.reflection.response_save_failed", "mod", "system", "reflection work retained before artifact writes");
-            return;
-        }
+        // The ordinary response owner has already saved this result. Local
+        // save deferral must keep that owner/value, without earning a failure
+        // or opening a new model request. Artifact/coverage recovery is unchanged.
         _memory.ResumeReflectionWork(_reflectionWindow, out string reason, out ReflectionChainOutcome? recoveredChains);
         CompleteResumedReflectionCadence(snapshot.RequestId, reason, recoveredChains, localRecovery: false);
         if (recoveredChains == null) return;

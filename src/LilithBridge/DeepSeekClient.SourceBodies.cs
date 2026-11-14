@@ -37,7 +37,7 @@ internal sealed partial class DeepSeekClient
         foreach (var entry in outgoingHistory)
         {
             bool current = currentUser != null && entry.Record?.EventId == currentUser.EventId
-                && entry.Role == "user" && entry.Text == MemoryStore.Clean(actualCurrentText);
+                && entry.Role == "user" && MemoryStore.Clean(entry.Text) == MemoryStore.Clean(actualCurrentText);
             if (current) continue;
             // Fail closed on a projection that transforms/inserts any text. A
             // reference must resolve to the exact source body, not an approximation.

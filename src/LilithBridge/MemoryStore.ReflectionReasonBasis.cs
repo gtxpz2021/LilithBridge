@@ -63,6 +63,7 @@ internal sealed partial class MemoryStore
             // Preparation can be replaced before any HTTP. Only the dispatch
             // boundary commits this exact latest base as actually supplied.
             request.StagedReflectionReasonBasis = captured;
+            CaptureRevisitBaseTargets(request, actualContext);
         }
     }
 

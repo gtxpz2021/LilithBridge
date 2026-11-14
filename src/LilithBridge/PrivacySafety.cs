@@ -61,8 +61,10 @@ internal static class PrivacySafety
 
     public static bool IsCrisis(string? text)
     {
-        return !string.IsNullOrWhiteSpace(text)
-            && (Crisis.IsMatch(text) || Dangerous.IsMatch(text));
+        // Keep the prior normalized keyword view without changing stored or
+        // outbound player text, including bare CRs previously removed at input.
+        string value = MemoryStore.Clean(text);
+        return value.Length > 0 && (Crisis.IsMatch(value) || Dangerous.IsMatch(value));
     }
 
     public static string LocalSupportReply()

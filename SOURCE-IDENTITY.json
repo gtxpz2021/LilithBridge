@@ -1,23 +1,33 @@
 {
-  "build": "0.1.4.19-cn-integrated.candidate.1",
-  "product_version": "0.3.150.104-cn-install.candidate.1",
-  "product_sha256": "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6",
-  "product_pdb_sha256": "6e347faf8bbe3b4787134f7dcdc1edbdce265773c213d4df665ef56891940900",
-  "product_deps_sha256": "29d438d769aadc35c595659525b93bdf8b1e7935724c97bb0beff2fe3a9d29f2",
-  "installer_sha256": "2f9cab83fab52443dea1f9f3850c1cdabfce3e929c170174d9448163b5415008",
-  "handoff_sha256": "bba525c2a734050240bdc56f06e0ecb6933da8ef5af579b6cc62dd6fc32f496a",
-  "manifest_sha256": "1880ede39122a94b101d40f4711f24fb3ae3525ddf7dd95dea431f5a9f49d34d",
-  "release_profile_sha256": "971458900b07f0d7e450e6712ad737a2444df24516704e93b6ad0fb9dbbf5c74",
+  "product_version": "0.3.150.104-cn19-reflection-ordinary-defer.candidate.1",
+  "product_sha256": "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5",
+  "product_artifacts": {
+    "LilithBridge.deps.json": {
+      "sha256": "ffb0bb94e58caf3276858c5c4ca6ba8e086151adbc4fee77406f0adfc9bb6742",
+      "bytes": 526
+    },
+    "LilithBridge.dll": {
+      "sha256": "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5",
+      "bytes": 4252672
+    },
+    "LilithBridge.pdb": {
+      "sha256": "274a32b970927ad2e0919bfaf1614b6b99f323310ab970f9da11224f0bdde76a",
+      "bytes": 742468
+    }
+  },
+  "product_source_files": 337,
+  "product_source_tree_sha256": "0b19634fa5722f3f48d28230907a484f324cd9ba86272bdf9ce58182ef7c6e77",
+  "installer_build": "0.1.4.20-ordinary-defer.release.1",
+  "installer_sha256": "a747bcd81d3af4c3656c36587805351fb99595cce513df9d96621bf51dcadf04",
+  "handoff_sha256": "6271440ae576b22e1db4a5d7fb7a77b566d477d627029af8aae2a34a878ffff2",
+  "manifest_sha256": "2e13b7e41fbdbba7232f5d16eae62b17514ffc675d148798bc5e63e98afdba51",
+  "profile_sha256": "67df257b51e23c2e26db90b117b2d5f7d186e0f3e4a74da3176c5def8cde8a1b",
   "installer_schema": 14,
   "config_schema": 1,
   "handoff_protocol": 1,
-  "bundled_resource_files": 37,
-  "no_install_runtime_model_network_or_simulated_tests": true,
-  "published": false,
-  "prior_runtime_test_results_not_transferred": true,
-  "performance_improvement_measured": false,
-  "in_game_deepseek_key_source_added": true,
-  "all_china_first_use_routes_verified": false,
-  "corpus_redistribution_evidence": "not_established",
-  "bepinex_transitive_notice_review_complete": false
+  "runtime_integrity_checks_weakened": false,
+  "new_runtime_or_model_tests": false,
+  "old_results_not_transferred_as_new_installer_tests": true,
+  "source_contains_no_daily_backups_or_private_data": true,
+  "original_corpus_license_status": "not_established; non-MIT"
 }

@@ -19,6 +19,9 @@ internal sealed class ReflectionPreparation : IDisposable
     internal string SemanticStatus { get; private set; } = "not_requested";
     internal string WorkerEpoch { get; private set; } = "";
     internal bool Staged { get; set; }
+    internal ReflectionResultSave ResultSave { get; } = new();
+    internal bool RetryBudgetEnabled { get; set; }
+    internal ReflectionRetryReturn? RetryReturn { get; set; }
     internal ReflectionServiceTrace? IntentTrace { get; set; }
     internal ReflectionPreparation(long generation, string root, string session, string query, IReadOnlyList<MemoryTurn> window)
     {
@@ -42,7 +45,7 @@ internal sealed class ReflectionPreparation : IDisposable
     internal bool Owns(SemanticRecallResult? result) => result != null && ReferenceEquals(result, SemanticResult)
         && !Token.IsCancellationRequested && result.QueryId == Id && result.Generation == Generation
         && result.IndexVersion.StartsWith(WorkerEpoch + ":", StringComparison.Ordinal);
-    internal void Cancel() { if (!Token.IsCancellationRequested) _cancellation.Cancel(); }
+    internal void Cancel() { ResultSave.Cancel(); if (!Token.IsCancellationRequested) _cancellation.Cancel(); }
     public void Dispose() { Cancel(); _cancellation.Dispose(); }
 }
 
@@ -78,6 +81,8 @@ internal sealed partial class MemoryStore
 
     private bool ReflectionMaterialsCurrent(ReflectionRequestSnapshot request, bool recovering = false)
     {
+        if (!ReflectionRevisitContextBound(request)) return false;
+        if (!MainRevisitOriginPermitted(request.RevisitContext?.Main, request)) return false;
         if (request.SelectionGeneration != CurrentB1SelectionGeneration()) return false;
         if (!ReflectionRequestOriginCurrent(request) || !ReflectionPurposesCurrent(request)) return false;
         if (!ReflectionGeneratedPublicCurrent(request)) return false;

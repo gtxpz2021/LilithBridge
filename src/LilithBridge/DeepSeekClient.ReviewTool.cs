@@ -15,7 +15,12 @@ internal sealed record ReviewToolOutcome(string Json, int ModelRequests, int Pro
     ReviewSourceSnapshot? SourceSnapshot = null, string ReadDataVersion = "", ChatHistoryPacket? ChatHistory = null, LegacyArchivePacket? LegacyArchive = null, MethodOffer? LegacyOffer = null, DayArtifactReadPacket? DayArtifacts = null,
     LogicalMessageReadPacket? LogicalMessage = null,
     [property: System.Text.Json.Serialization.JsonIgnore] GeneratedReplySnapshot? GeneratedReply = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] ContextDiscoverySnapshot? ContextDiscovery = null);
+    [property: System.Text.Json.Serialization.JsonIgnore] ContextDiscoverySnapshot? ContextDiscovery = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] ExperienceTraversalPage? ExperienceTraversal = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] B1ExactReviewPage? ExactB1Read = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] RevisitReadPacket? RevisitRead = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] ThoughtReadPacket? ThoughtRead = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] B1DirectoryPacket? B1Directory = null);
 
 // The child payload's immutable permission footprint, independent of main-owner
 // cancellation. An authorized read may finish under its own operation lifetime.
@@ -39,18 +44,22 @@ internal sealed class ReviewSourceSnapshot
     private readonly ChatHistoryPacket? _chatHistory;
     private readonly LegacyArchivePacket? _legacyArchive;
     private readonly DayArtifactReadPacket? _dayArtifacts;
+    private readonly RevisitReadPacket? _revisit;
+    private readonly ThoughtReadPacket? _thoughtRead;
+    private readonly B1DirectoryPacket? _b1Directory;
     private readonly B1ExactReviewPage? _exactB1;
     private readonly LogicalMessageReadPacket? _logicalMessage;
     private readonly ContextDiscoverySnapshot? _contextDiscovery;
+    private readonly ExperienceTraversalPage? _experienceTraversal;
     private readonly DialogueRequest? _historyOwner;
     // Archive discovery shares the existing read-only logical-material dispatch
     // footprint without activating a new history budget or writable aliases.
-    internal bool HasLogicalMessage => _logicalMessage != null || _contextDiscovery != null || _nextTransfer?.HasLogicalMessage == true;
+    internal bool HasLogicalMessage => _logicalMessage != null || _contextDiscovery != null || _experienceTraversal != null || _nextTransfer?.HasLogicalMessage == true;
     internal bool HasExactB1=>_exactB1!=null||_nextTransfer?.HasExactB1==true;
     internal bool HasDayArtifacts=>_dayArtifacts!=null||_nextTransfer?.HasDayArtifacts==true;
-    internal bool HasChatHistory => _chatHistory != null || _legacyArchive != null || _dayArtifacts != null || _nextTransfer?.HasChatHistory == true;
+    internal bool HasChatHistory => _chatHistory != null || _legacyArchive != null || _dayArtifacts != null || _revisit != null || _thoughtRead != null || _b1Directory != null || _nextTransfer?.HasChatHistory == true;
     internal ReviewSourceSnapshot(BridgeConfig config,DialogueRequest request,MemoryStore store,
-        string text,IReadOnlyList<MemoryTurn> records,MethodSource[] derived,MethodOffer? offer,ChatHistoryPacket? chatHistory=null,LegacyArchivePacket? legacyArchive=null,DayArtifactReadPacket? dayArtifacts=null,B1ExactReviewPage? exactB1=null,LogicalMessageReadPacket? logicalMessage=null,ContextDiscoverySnapshot? contextDiscovery=null)
+        string text,IReadOnlyList<MemoryTurn> records,MethodSource[] derived,MethodOffer? offer,ChatHistoryPacket? chatHistory=null,LegacyArchivePacket? legacyArchive=null,DayArtifactReadPacket? dayArtifacts=null,B1ExactReviewPage? exactB1=null,LogicalMessageReadPacket? logicalMessage=null,ContextDiscoverySnapshot? contextDiscovery=null,ExperienceTraversalPage? experienceTraversal=null,RevisitReadPacket? revisit=null,ThoughtReadPacket? thoughtRead=null,B1DirectoryPacket? b1Directory=null)
     {
         _store=store;_derived=derived.Distinct().ToArray();_records=records.Select(t=>t.Copy()).ToArray();
         _text=text;_query=request.ReviewCurrentText;_root=DataPaths.Root();
@@ -62,7 +71,7 @@ internal sealed class ReviewSourceSnapshot
         _methodTracked=offer!=null||_derived.Length>0;
         _capability=request.MethodCapability;_generation=offer?.CapabilityGeneration??request.MethodCapabilityGeneration;
         _methods=offer?.Owner??request.MethodOwner;_epoch=request.MethodProtocolEpoch??offer?.Epoch;
-        _workChecks=request.StorySupplyChecks.ToArray();_chatHistory=chatHistory;_legacyArchive=legacyArchive;_dayArtifacts=dayArtifacts;_exactB1=exactB1;_logicalMessage=logicalMessage;_contextDiscovery=contextDiscovery;_historyOwner=chatHistory==null&&legacyArchive==null&&dayArtifacts==null&&logicalMessage==null&&contextDiscovery==null?null:request;
+        _workChecks=request.StorySupplyChecks.ToArray();_chatHistory=chatHistory;_legacyArchive=legacyArchive;_dayArtifacts=dayArtifacts;_revisit=revisit;_thoughtRead=thoughtRead;_b1Directory=b1Directory;_exactB1=exactB1;_logicalMessage=logicalMessage;_contextDiscovery=contextDiscovery;_experienceTraversal=experienceTraversal;_historyOwner=chatHistory==null&&legacyArchive==null&&dayArtifacts==null&&logicalMessage==null&&contextDiscovery==null&&experienceTraversal==null&&revisit==null&&thoughtRead==null&&b1Directory==null?null:request;
     }
     private ReviewSourceSnapshot(ReviewSourceSnapshot origin,DialogueRequest request,string text,ReviewSourceSnapshot? next,
         ReviewProcess? operation,DateTimeOffset? deadline)
@@ -72,7 +81,7 @@ internal sealed class ReviewSourceSnapshot
         _configuration=origin._configuration;_operation=operation;_operationDeadline=deadline;_authorized=request.ReviewAuthorizedTurn;
         _methodTracked=origin._methodTracked;_capability=origin._capability;_generation=origin._generation;
         _methods=origin._methods;_epoch=origin._epoch;_nextTransfer=next;
-        _workChecks=origin._workChecks;_chatHistory=origin._chatHistory;_legacyArchive=origin._legacyArchive;_dayArtifacts=origin._dayArtifacts;_exactB1=origin._exactB1;_logicalMessage=origin._logicalMessage;_contextDiscovery=origin._contextDiscovery;_historyOwner=origin._chatHistory==null&&origin._legacyArchive==null&&origin._dayArtifacts==null&&origin._logicalMessage==null&&origin._contextDiscovery==null?null:request;
+        _workChecks=origin._workChecks;_chatHistory=origin._chatHistory;_legacyArchive=origin._legacyArchive;_dayArtifacts=origin._dayArtifacts;_revisit=origin._revisit;_thoughtRead=origin._thoughtRead;_b1Directory=origin._b1Directory;_exactB1=origin._exactB1;_logicalMessage=origin._logicalMessage;_contextDiscovery=origin._contextDiscovery;_experienceTraversal=origin._experienceTraversal;_historyOwner=origin._chatHistory==null&&origin._legacyArchive==null&&origin._dayArtifacts==null&&origin._logicalMessage==null&&origin._contextDiscovery==null&&origin._experienceTraversal==null&&origin._revisit==null&&origin._thoughtRead==null&&origin._b1Directory==null?null:request;
     }
     private static ReviewSourceSnapshot[] Flatten(IEnumerable<ReviewSourceSnapshot?> snapshots)
     {
@@ -135,7 +144,7 @@ internal sealed class ReviewSourceSnapshot
         // Operation stop/deadline/scope remain local. No parent IsCancelled gate.
         bool ScopePermitted()=>workAllowed&&_root==DataPaths.Root()&&_session==_store.ReviewSessionIdentity
             &&_configRoot==config.DataDirectory
-            &&(_chatHistory==null&&_legacyArchive==null&&_dayArtifacts==null||_capability?.Permits(_generation)==true)
+            &&(_chatHistory==null&&_legacyArchive==null&&_dayArtifacts==null&&_revisit==null&&_thoughtRead==null&&_b1Directory==null||_capability?.Permits(_generation)==true)
             &&(_historyOwner==null || !_historyOwner.IsCancelled
                 &&ReferenceEquals(_historyOwner.ReviewStore,_store)&&_historyOwner.ReviewSessionIdentity==_session
                 &&_historyOwner.ReviewDataRoot==_root&&_historyOwner.ReviewConfigRoot==_configRoot)
@@ -150,10 +159,10 @@ internal sealed class ReviewSourceSnapshot
         {
             // Source lock -> existing short capability boundary; neither waits for
             // the returned HTTP task. Publication cannot cross check/start here.
-            bool QualifiedUse()=>_contextDiscovery!=null?_store.TryUseContextDiscovery(_contextDiscovery,_query,config,use):_exactB1!=null?_store.TryUseExactB1(_exactB1,_query,config,use):_dayArtifacts!=null?_store.TryUseDayArtifacts(_dayArtifacts,_query,config,use):_legacyArchive!=null?_store.TryUseLegacyArchive(_legacyArchive,_query,config,use):_chatHistory==null?use():_store.TryUseChatRelationshipHistory(_chatHistory,_query,config,use);
+            bool QualifiedUse()=>_b1Directory!=null?_store.TryUseB1Directory(_b1Directory,_query,config,use):_thoughtRead!=null?_store.TryUseThoughtRead(_thoughtRead,_query,config,use):_revisit!=null?_store.TryUseRevisitRead(_revisit,_query,config,use):_experienceTraversal!=null?_store.TryUseExperienceTraversal(_experienceTraversal,_query,config,use):_contextDiscovery!=null?_store.TryUseContextDiscovery(_contextDiscovery,_query,config,use):_exactB1!=null?_store.TryUseExactB1(_exactB1,_query,config,use):_dayArtifacts!=null?_store.TryUseDayArtifacts(_dayArtifacts,_query,config,use):_legacyArchive!=null?_store.TryUseLegacyArchive(_legacyArchive,_query,config,use):_chatHistory==null?use():_store.TryUseChatRelationshipHistory(_chatHistory,_query,config,use);
             bool Apply()=>ScopePermitted()&&(_logicalMessage==null?QualifiedUse():
                 _store.TryUseLogicalMessageRead(_logicalMessage,_query,config,QualifiedUse));
-            return (_methodTracked||_chatHistory!=null||_legacyArchive!=null||_dayArtifacts!=null)&&_capability!=null?_capability.WithBoundary(Apply):Apply();
+            return (_methodTracked||_chatHistory!=null||_legacyArchive!=null||_dayArtifacts!=null||_revisit!=null||_thoughtRead!=null||_b1Directory!=null)&&_capability!=null?_capability.WithBoundary(Apply):Apply();
         });
     }
 }
@@ -175,7 +184,7 @@ internal sealed partial class DeepSeekClient
             &&owner.MethodSourcesPermitted(derived,request);
         request.ReviewBudget?.CaptureDerivedSources(derived);
         var outcome=await ExecuteReviewToolCoreAsync(config,request,call,owner,token,historyProjection,derived,offer).ConfigureAwait(false);
-        return outcome with {DerivedMethodSources=derived,MethodSourcesTracked=tracked&&call.Review?.Mode is not ("discover" or "history" or "archive" or "artifact" or "message")
+        return outcome with {DerivedMethodSources=derived,MethodSourcesTracked=tracked&&call.Review?.Mode is not ("discover" or "history" or "archive" or "artifact" or "revisit" or "thought" or "message")
             &&call.Review?.SourceRefs.Any(r=>r.StartsWith("b1:",StringComparison.Ordinal))!=true};
     }
     /// <summary>
@@ -202,8 +211,10 @@ internal sealed partial class DeepSeekClient
             var page=owner.ReadExactB1(args.SourceRefs[0][3..],args.Offset,request.ReviewCurrentText,config);
             var snapshot=new ReviewSourceSnapshot(config,request,owner,args.Question,Array.Empty<MemoryTurn>(),derived,offer,exactB1:page);
             if(!snapshot.IsPermitted())return ReviewProcess.Empty("unavailable","source_changed");
-            return new(page.Json,0,0,0,0,0,0,false,SourceSnapshot:snapshot,ReadDataVersion:page.Fingerprint);
+            return new(page.Json,0,0,0,0,0,0,false,SourceSnapshot:snapshot,ReadDataVersion:page.Fingerprint,ExactB1Read:page);
         }
+        if(args.Mode=="thought")return ExecuteThoughtRead(config,request,args,owner,token,derived,offer);
+        if(args.Mode=="revisit")return ExecuteRevisitRead(config,request,args,owner,token,derived,offer);
         if(args.Mode=="artifact")return ExecuteDayArtifacts(config,request,args,owner,token,derived,offer);
         if(args.Mode=="archive")return ExecuteLegacyArchive(config,request,args,owner,token,derived,offer);
         if(args.Mode=="history")return ExecuteChatRelationshipHistory(config,request,args,owner,token,derived,offer);

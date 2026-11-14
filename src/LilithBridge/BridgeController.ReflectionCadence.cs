@@ -3,6 +3,9 @@ internal sealed partial class BridgeController
 {
     private readonly ReflectionIdleCadence _reflectionCadence = new();
     private readonly ReflectionProgressiveCadence _reflectionProgressiveCadence = new();
+    private readonly ReflectionActivityObservation _reflectionActivityObservation = new();
+    private readonly ReflectionDialogueOpportunityWait _reflectionDialogueOpportunityWait = new();
+    private string ReflectionDialogueOpportunityScope => _memory.SemanticDataRoot + "/" + _memory.ReviewSessionIdentity;
     // Only a durably completed normal pass may yield its ordinary cooldown to
     // a different, current dialogue opportunity. Frozen work and failures may not.
     private bool _reflectionDialogueMayBypassCooldown;
@@ -11,16 +14,35 @@ internal sealed partial class BridgeController
     private bool _reflectionScheduleWaitProgressive;
     private long _reflectionScheduleWaitMaterial = -1;
     private long _reflectionScheduleWaitEpoch = -1;
+    // Diagnostic formatting only. Ordinary old-material admission reads the
+    // typed activity fact separately; this formatter never changes scheduling.
+    private string ReflectionActivityEvidence() => _reflectionActivityObservation.Describe(
+        ReflectionClock(), NativeStateInspector.TimeSinceLastInteractionSeconds, _conversationGeneration);
+
+    private bool OrdinaryReflectionDeferred(bool testTrigger)
+    {
+        double remaining = ReflectionOrdinaryDeferral.RemainingSeconds(_reflectionWindow.Snapshot,
+            _memory.ReviewSessionIdentity, testTrigger || _reflectionWindow.ModelRequested, DateTimeOffset.UtcNow);
+        if (remaining <= 0) return false;
+        string key = "model_defer_ordinary:" + _reflectionWindow.Snapshot.OrdinaryDeferral!.RequestId;
+        if (_lastReflectionScheduleWait != key)
+            NativeEventLog.Trace("memory.reflection.schedule_wait", "mod", "system", "explicit ordinary-opportunity deferral",
+                "reason=" + key + ";remaining_seconds=" + remaining.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
+        _lastReflectionScheduleWait = key;
+        return true;
+    }
+
     private void RefreshReflectionCadence()
     {
         if (_memory == null) return;
         _reflectionCadence.Observe(_memory.SemanticDataRoot + "/" + _memory.ReviewSessionIdentity,
             _conversationGeneration, _memory.ReflectionMaterialGeneration,
             _memory.MeasureMemoryActivity(), _reflectionWindow.ModelRequestVersion);
-        // Own note/lesson writes change facts. They must not reset successful
-        // old-material pacing and turn every pass back into a first interval.
+        // Only actual input or a verified native choice resets successful
+        // old-material pacing. Cancellation still owns the async generation;
+        // own display/writes do not restart this soft wait. Scope/request stay explicit.
         _reflectionProgressiveCadence.Observe(_memory.SemanticDataRoot + "/" + _memory.ReviewSessionIdentity,
-            _conversationGeneration, _reflectionWindow.ModelRequestVersion);
+            _reflectionActivityObservation.ExternalActivityVersion, _reflectionWindow.ModelRequestVersion);
     }
     // Same production selection step, isolated from Unity/provider gates for tests.
     // The caller still owns every original admission and resource check.
@@ -103,6 +125,7 @@ internal sealed partial class BridgeController
         NativeEventLog.Trace("memory.reflection.schedule_wait", "mod", "system", "selected material has a soft scheduling wait; source admission has not run",
             "soft_wait=true;reason=" + reason + ";remaining_seconds=" + Math.Max(0f, until - ReflectionClock()).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
             + ";progressive_step=" + _reflectionProgressiveCadence.Step + ";selection_lane=" + (selection.Recent ? "recent" : "backlog")
-            + ";current_dialogue=" + CurrentDialogueReflection(selection));
+            + ";current_dialogue=" + CurrentDialogueReflection(selection)
+            + ReflectionActivityEvidence());
     }
 }

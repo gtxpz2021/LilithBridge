@@ -236,7 +236,7 @@ internal sealed partial class MemoryStore
  // remain present; the actual receipt never describes a physical purge.
  private UserMemoryOperationResult? TryApplyLegacyArchiveCommand(MemoryTurn input)
  {
-  var m=System.Text.RegularExpressions.Regex.Match(input.Text,@"^(收起旧档|删除旧档)[:：]\s*(legacy:[a-zA-Z0-9_-]+:\d+)@([0-9a-f]{64})\s*$");
+  var m=System.Text.RegularExpressions.Regex.Match(Clean(input.Text),@"^(收起旧档|删除旧档)[:：]\s*(legacy:[a-zA-Z0-9_-]+:\d+)@([0-9a-f]{64})\s*$");
   if(!m.Success)return null;
   lock(_experienceLock)
   {

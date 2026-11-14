@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "assembly_version": "0.1.4.19",
-  "build": "0.1.4.19-cn-integrated.candidate.1",
-  "caption": "LilithBridge · 包内产品 .104/bfb40b65 · 安装器 .19 · cn-integrated.candidate.1",
-  "launcher_caption": "LilithBridge 安装 · .19 整合候选",
-  "manifest_id": "lilithbridge-104-cn19-integrated-candidate1",
+  "assembly_version": "0.1.4.20",
+  "build": "0.1.4.20-ordinary-defer.release.1",
+  "caption": "LilithBridge · 产品 .104/61122db5 · 安装器 .20",
+  "launcher_caption": "LilithBridge 安装 · .104 / 61122db5",
+  "manifest_id": "lilithbridge-104-ordinary-defer-61122db5",
   "installer_schema": 14,
   "config_schema": 1,
   "handoff_protocol": 1,
-  "product_sha256": "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6",
+  "product_sha256": "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5",
   "model_revision": "7999e1d3359715c523056ef9478215996d62a620",
   "model_manifest_sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17",
   "wheel_manifest_sha256": "17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891",
@@ -57,7 +57,7 @@
       "us.aws.cdn.hf.co"
     ]
   },
-  "product_version": "0.3.150.104-cn-install.candidate.1",
+  "product_version": "0.3.150.104-cn19-reflection-ordinary-defer.candidate.1",
   "min_installer_schema": 14,
-  "artifact_suffix": "cn19-c1"
+  "artifact_suffix": "cn20-61122db5"
 }

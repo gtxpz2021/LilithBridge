@@ -57,6 +57,10 @@ internal sealed class ApiResponseDiagnostic
     public bool HeadersReceived { get; set; }
     public bool BodyComplete { get; set; }
     public bool UsageReceived { get; set; }
+    // Per-attempt observations: false also covers absent/null/non-integer fields.
+    // Legacy integer counters remain unchanged for existing aggregate consumers.
+    public bool CacheHitTokensReported { get; set; }
+    public bool CacheMissTokensReported { get; set; }
     public long? HttpSendStartedMs { get; set; }
     public long? HeadersReceivedMs { get; set; }
     public long? BodyCompleteMs { get; set; }
@@ -130,6 +134,7 @@ internal sealed partial class DeepSeekClient
                 if(kind!="review" && !(kind=="reflection" && envelope.ReflectionDispatch!=null)
                     &&envelope.DialogueRequest?.HasChatHistorySupply!=true)TraceCompletion("model.request", model, kind, purpose, envelope);
                 diagnostic.HttpSendStartedMs = stopwatch.ElapsedMilliseconds;
+                envelope.ReflectionSend?.Entered();
                 if(kind=="main"&&envelope.DialogueRequest is { } materialOwner)
                 {
                     materialOwner.CommitReflectionPurposeInput();
@@ -141,6 +146,8 @@ internal sealed partial class DeepSeekClient
                 if(kind=="main")envelope.DialogueRequest?.WaitStatus.WaitingForReply();
                 if(config.IsOpenAI&&kind=="main")envelope.DialogueRequest?.WaitStatus.ReportStream("connecting",0);
                 FinalOutboundObservation.DispatchStarted(outboundObservation,json);
+                if(kind=="main")envelope.DialogueRequest?.ObserveB1ReadIndexDispatch(json,diagnostic.AttemptId);
+                if(kind=="main")envelope.DialogueRequest?.ObserveWorkReferencePositionDispatch(json);
                 return (config.UsesChatGPT?_planHttp:_http).SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budgetToken);
             }
             Task<HttpResponseMessage> Dispatch()
@@ -183,8 +190,13 @@ internal sealed partial class DeepSeekClient
                 // supplied only to its explicit shared/main request consumers.
                 if (envelope.SharedSupply != null || envelope.SharedDispatch != null || envelope.DialogueRequest?.HasChatHistorySupply==true)
                     return RejectCompletion(envelope, "reflection_source_changed", "Mismatched reflection and shared-activity owners");
+                envelope.ReflectionSend?.HandedOff();
                 dispatched = await envelope.ReflectionDispatch(Dispatch, budgetToken).ConfigureAwait(false);
-                if (dispatched == null) return RejectCompletion(envelope, "reflection_source_changed", "Reflection source changed before send");
+                if (dispatched == null)
+                {
+                    envelope.ReflectionSend?.ReturnedWithoutSend();
+                    return RejectCompletion(envelope, "reflection_source_changed", "Reflection source changed before send");
+                }
             }
             else
             {
@@ -465,7 +477,8 @@ internal sealed partial class DeepSeekClient
                     : result.DialogueRequest?.SourceEnvelope == true ? "source_envelope" : "legacy",
                 native_tools_sent = result.NativeToolsSent,
                 model_fingerprint = result.Response.ModelFingerprint, cache_hit = result.PromptCacheHitTokens,
-                cache_miss = result.PromptCacheMissTokens
+                cache_miss = result.PromptCacheMissTokens,
+                cache_hit_reported = d.CacheHitTokensReported, cache_miss_reported = d.CacheMissTokensReported
             }));
         }
         catch { /* Telemetry must not decide whether a response is delivered. */ }

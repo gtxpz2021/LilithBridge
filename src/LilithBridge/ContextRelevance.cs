@@ -65,6 +65,8 @@ internal sealed class ContextRelevanceSnapshot
     internal Dictionary<string,ContextRelevanceViewIdentity> HistoryIdentities=new(StringComparer.Ordinal);
     internal Dictionary<string,ContextRelevanceViewIdentity> GeneratedIdentities=new(StringComparer.Ordinal);
     internal ContextRelevanceItem[] Candidates=Array.Empty<ContextRelevanceItem>();
+    // Request-local identities only. Deliberately absent from Wire() and the snapshot hash.
+    internal ContextRelevanceDisposition[] Dispositions=Array.Empty<ContextRelevanceDisposition>();
     internal int Discovered,CapacityDeferred;
     internal string Status="available";
     internal object Wire()=>new {snapshot_id=Id,current_user_text=Query,owner_view_schema=ContextRelevanceViewIdentity.Schema,

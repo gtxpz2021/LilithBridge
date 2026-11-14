@@ -36,9 +36,9 @@ internal sealed partial class NativeOpenAISettings
         var card = SetupCard("NormalUseChoice", welcome ? "You’re using your ChatGPT plan" : "推荐使用设置 · " + provider,
             "所选对话、历史、记忆、反思及按需检索的作品片段会发给 " + provider + "。\n"
             + "使用所选认证额度，API 按量计费；不会整库上传。\n"
-            + "推荐只补齐未设置项；现有关闭项、模型与预算保留。\n"
+            + "补齐理解保存和按需回看；已有关闭项、模型与预算保留。\n"
             + "后台工作缺省开启；ChatGPT 优先 Terra / low，须账户目录可用。\n"
-            + "不启用图片、自动截图或新实验。\n"
+            + "不改变图片、自动截图或主动性设置。\n"
             + "可在密钥与隐私、后台与费用、作品资料页关闭许可。\n"
             + (NormalUseSetup.BackgroundEnabled(selected) ? "当前普通后台工作：开启。" : "后台有关闭项；下方明确开启按钮包含逐轮提取。"));
         Button("UseRecommended", new Vector2(0, -71), new Vector2(430, 40), () =>

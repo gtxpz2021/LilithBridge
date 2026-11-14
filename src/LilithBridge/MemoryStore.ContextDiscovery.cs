@@ -46,6 +46,7 @@ internal sealed partial class MemoryStore
         CancellationToken token, out string reason)
     {
         reason = "";
+        if (options.Scope is {} invalid && !invalid.Valid) { reason = "invalid_discovery_scope"; return null; }
         lock (_experienceLock)
         lock (_generatedRepliesLock)
         {
@@ -64,6 +65,9 @@ internal sealed partial class MemoryStore
                 && source.Members.Count == 1 && source.AnchorEventId == id ? source : null;
             var candidates = catalog.Units.Select(u => new ContextDiscoveryItem(u.Key, u, null, 0, "", SourceQuestion(u.SourceEventId)))
                 .Concat(generated.Select(g => new ContextDiscoveryItem("generated/" + g.Key, null, g, 0, "", SourceQuestion(g.SourceUserId)))).ToArray();
+            if (options.Scope is {} scope)
+                candidates = candidates.Select(item => item with { ScopeMatch = scope.Match(item, _experienceRecordedTimes) })
+                    .Where(item => item.ScopeMatch != null).ToArray();
             SemanticRecallCandidate? Hit(ContextDiscoveryItem item)
             {
                 string id = item.Unit is { IsMessage: false } u ? u.AnchorEventId : item.Reference;
@@ -84,13 +88,17 @@ internal sealed partial class MemoryStore
                     + (semRanks.TryGetValue(r.Item.Reference, out int rank) ? 1d / (60 + rank) : 0))
                 .ThenBy(r => r.Item.Reference, StringComparer.Ordinal).ToArray();
             var allUnits = LogicalMessagePacket(catalog.Units, crossSession: true, writable: false);
-            string fingerprint = SemanticTextHash(JsonSerializer.Serialize(new {
+            string fingerprintBasis = JsonSerializer.Serialize(new {
                 root = _root, session = _sessionId, permissionQuery, query,
                 owner_view_schema=ContextRelevanceViewIdentity.Schema,
                 ordered = ordered.Select(r => new { r.Item.Reference, r.Item.Version }).ToArray(),
                 versions = allUnits.MemberVersions.OrderBy(p => p.Key, StringComparer.Ordinal).ToArray(),
                 contexts = allUnits.SourceContexts.OrderBy(p => p.Key, StringComparer.Ordinal).ToArray()
-            }, DialogueMaterialEnvelope.DataJson));
+            }, DialogueMaterialEnvelope.DataJson);
+            string fingerprint = SemanticTextHash(options.Scope == null ? fingerprintBasis
+                : JsonSerializer.Serialize(new { original = fingerprintBasis, scope = options.Scope.Wire(),
+                    matched_records = ordered.Select(r => new { r.Item.Reference, r.Item.ScopeMatch }).ToArray()
+                }, DialogueMaterialEnvelope.DataJson));
             int start = 0;
             if (options.Cursor.Length > 0)
             {
@@ -110,7 +118,7 @@ internal sealed partial class MemoryStore
                     .Concat(items.Where(i => i.SourceQuestion != null).Select(i => i.SourceQuestion!))
                     .DistinctBy(u => u.Key).ToArray(), crossSession: true, writable: false),
                 start + items.Count < ordered.Length ? fingerprint + ":" + (start + items.Count) : "", limit,
-                _experienceReadFailures + _experienceMalformedRecords + catalog.Omissions.Count);
+                _experienceReadFailures + _experienceMalformedRecords + catalog.Omissions.Count, options.Scope);
             // Measure the complete prospective bounded page: item metadata can
             // change status/cursor/count widths, so a fixed header reserve is not
             // an exact capacity test. Only this <=64KiB page is serialized here,
@@ -125,7 +133,7 @@ internal sealed partial class MemoryStore
             {
                 token.ThrowIfCancellationRequested();
                 var row = ordered[at];
-                int hit = DiscoveryHitOffset(row.Item.Body, query, row.Hit);
+                int hit = row.Item.ScopeMatch?.Offset ?? DiscoveryHitOffset(row.Item.Body, query, row.Hit);
                 var item = DiscoveryExcerpt(row.Item, hit);
                 int bytes = PageBytesWith(item);
                 if (bytes > limit)
@@ -169,6 +177,7 @@ internal sealed partial class MemoryStore
             using var native = BeginNativeDialogueRequest(permissionQuery, true, config);
             foreach (var item in snapshot.Items)
             {
+                if (snapshot.Scope != null && snapshot.Scope.Match(item, _experienceRecordedTimes) != item.ScopeMatch) return false;
                 if (item.Offset < 0 || item.Offset > item.Body.Length || item.Text.Length > item.Body.Length - item.Offset
                     || item.Body.Substring(item.Offset, item.Text.Length) != item.Text) return false;
                 if (item.Generated is {} generated && (GetExactGeneratedReply(generated.Key, permissionQuery, config) is not {} current

@@ -42,8 +42,7 @@ internal sealed partial class BridgeController
                 if(plan.Status=="accepted"&&!_memory.ContextRelevanceSourcesCurrent(snapshot,config))plan=new(snapshot,"source_changed_before_compose");
                 owner.SemanticMaterial!.Result=(!owner.ReviewToolEnabled||!owner.CanStartReviewRead)?semantic with {RelevanceBypassed=true}
                     :_memory.ApplyContextRelevance(semantic,plan);
-                NativeEventLog.Trace("context.relevance","mod","system","request-local material selection",
-                    "status="+plan.Status+";presented="+snapshot.Candidates.Length+";selected="+plan.Choices.Count+";capacity_deferred="+snapshot.CapacityDeferred);
+                ContextRelevanceDiagnostic.Write(plan,owner.SemanticMaterial.Result.RelevanceBypassed);
                 continuation();
             });
         });

@@ -33,6 +33,8 @@ internal sealed partial class BridgeController
         owner.MethodOwner=_memory.SyncReadMethods(config);
         owner.ReviewStore=_memory;owner.ReviewCurrentText=userText??"";
         owner.ReviewDataRoot=DataPaths.Root();owner.ReviewConfigRoot=config.DataDirectory;owner.ReviewSessionIdentity=_memory.ReviewSessionIdentity;
+        owner.RevisitAction = (choice, callId, basis, permission) => AdmitMainThoughtRevisit(owner, choice, callId, basis, permission);
+        _reviewHandoff.BeginWorkReferenceTurn(owner);
         _activeDialogue = owner;
         BeginTemporaryWork(owner, config);
         _memory.BeginReflectionDelivery(userEventId, owner.Id);

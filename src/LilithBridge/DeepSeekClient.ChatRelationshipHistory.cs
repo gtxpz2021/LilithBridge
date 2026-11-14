@@ -31,7 +31,7 @@ internal sealed partial class DeepSeekClient
 
     // Only the explicit supplied range is serialized. Full records remain
     // private, request-local revalidation evidence and never enter write pools.
-    private static string ChatHistoryJson(ChatHistoryPacket packet,DialogueRequest request)=>ReviewContext.Serialize(new {
+    private static string ChatHistoryJson(ChatHistoryPacket packet,DialogueRequest request)=>ThoughtOperationHistory.Append(ReviewContext.Serialize(new {
         status=packet.Status,reason=packet.Reason,mode="history",history_scope=packet.Options?.Scope??"focus",
         requested_body_chars=packet.Options?.BodyChars??700,
         body_selection=packet.Options?.Find.Length>0?"first_literal_match_with_bounded_context; not semantic completeness":"prefix_or_identity_bound_continuation",
@@ -76,7 +76,7 @@ internal sealed partial class DeepSeekClient
         can_rephrase=packet.Status=="not_found",
         has_more_locators=packet.NotExpanded?.Count>0||packet.NextBeforeRevision!=null||packet.NextCursor.Length>0,
         can_continue=request.CanStartReviewRead&&(packet.NotExpanded?.Count>0||packet.NextBeforeRevision!=null||packet.NextCursor.Length>0)
-    });
+    }),packet.Items);
 
     private static ChatHistoryContinuation ChatHistoryContinuationOf(ChatHistoryPacket packet)
         =>new(ChatHistorySafeRoot(packet)??"",packet.Options??new(),packet.NextBeforeRevision,packet.NextCursor,

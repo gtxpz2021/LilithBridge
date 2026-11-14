@@ -13,7 +13,7 @@ using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 [assembly: AssemblyTitle("LilithBridge Setup")]
-[assembly: AssemblyVersion("0.1.4.19")]
+[assembly: AssemblyVersion("0.1.4.20")]
 [assembly: ComVisible(false)]
 [assembly: TargetFramework(".NETFramework,Version=v4.8")]
 namespace LilithSetupLauncher
@@ -134,7 +134,7 @@ namespace LilithSetupLauncher
         CancellationTokenSource cancel; bool busy, closing;
         public PreparationForm()
         {
-            Text = "LilithBridge 安装 · .19 整合候选"; ClientSize = new Size(540, 190); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen; Font = new Font("Microsoft YaHei UI", 10F);
+            Text = "LilithBridge 安装 · .104 / 61122db5"; ClientSize = new Size(540, 190); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen; Font = new Font("Microsoft YaHei UI", 10F);
             status.SetBounds(20, 20, 500, 62); status.Text = "正在准备安装向导…"; Controls.Add(status);
             progress.SetBounds(20, 90, 500, 24); Controls.Add(progress);
             action.SetBounds(395, 132, 125, 34); action.Text = "取消"; Controls.Add(action);

@@ -128,7 +128,8 @@ internal sealed partial class DialogueRequest : IDisposable
     internal void RetainReflectionProtocolBasis() => ReflectionProtocolReasonBasis = MergeReflectionBases(ReflectionProtocolReasonBasis, ReflectionReasonBasis);
 
     internal List<MethodSource> ReviewDerivedMethodSources {get;} = new();
-    internal bool ReviewDerivationUntracked {get;private set;}
+    private bool _reviewDerivationUntracked;
+    internal bool ReviewDerivationUntracked {get => _reviewDerivationUntracked || PreparingWorkMaterial; private set => _reviewDerivationUntracked=value;}
     internal bool RegisterReviewDerivation(ReviewToolOutcome outcome)
     {
         if(outcome.IsControlReceipt)return true;

@@ -65,16 +65,50 @@ internal sealed partial class DeepSeekClient
         Dictionary<string,object> payload,List<object> messages,PendingNativeCall call,
         DialogueRequest request,ReviewToolOutcome outcome,NativeReadReceipts receipts)
     {
-        if(!request.ChatHistoryBudgetActive||outcome.GeneratedReply==null)return outcome;
+        if(outcome.GeneratedReply==null)return outcome;
         string Preview(ReviewToolOutcome result)=>result.ReadDataVersion.Length==0?result.Json:
             receipts.Project(ReviewContext.ToolName,JsonSerializer.Serialize(call.Review),result.ReadDataVersion,call.Id,result.Json,remember:false);
-        if(ChatHistoryFits(config,payload,messages,call.Id,Preview(outcome),request))return outcome;
+        var readable=ReadableGeneratedReplyOutcome(config,outcome);
+        if(!request.ChatHistoryBudgetActive)return readable;
+        string readablePreview=Preview(readable);
+        // A duplicate receipt points only to an actual still-present result.
+        // It supplies no new page and keeps the existing receipt/fit contract.
+        if(!ReferenceEquals(readable,outcome))
+        {
+            using var preview=JsonDocument.Parse(readablePreview);
+            if(preview.RootElement.GetProperty("status").GetString()=="already_supplied"
+                &&ChatHistoryFits(config,payload,messages,call.Id,readablePreview,request))return readable;
+        }
+        // Preserve the original JSON page's admission/omission decision. A
+        // larger natural presentation falls back to that exact admitted JSON.
+        if(ChatHistoryFits(config,payload,messages,call.Id,Preview(outcome),request))
+            return ReferenceEquals(readable,outcome)||ChatHistoryFits(config,payload,messages,call.Id,readablePreview,request)?readable:outcome;
         var source=outcome.GeneratedReply;int offset=call.Review?.Message?.Offset??0;
         string json=ReviewContext.Serialize(new {status="body_omitted",reason="existing_history_request_budget",
             read_unit="generated_public_answer",body_included=false,
             message_ref="generated/"+source.Key,source.VersionFingerprint,source.BodyHash,
             next_offset=offset,next_cursor=GeneratedReplyCursor(source,offset),
             note="No body was supplied. The existing history budget is active; this is not source absence. A permitted message read can request an explicit page."});
+        return outcome with {Json=json,ReadDataVersion=MemoryStore.SemanticTextHash(json)};
+    }
+
+    private static ReviewToolOutcome ReadableGeneratedReplyOutcome(BridgeConfig config,ReviewToolOutcome outcome)
+    {
+        if(config.B1MaterialPresentation!="natural"||outcome.GeneratedReply is not {} source)return outcome;
+        using var document=JsonDocument.Parse(outcome.Json);
+        var root=document.RootElement;
+        if(!root.TryGetProperty("body_included",out var included)||!included.GetBoolean()
+            ||!root.TryGetProperty("record",out var record)||record.ValueKind!=JsonValueKind.Object)return outcome;
+        int offset=record.GetProperty("offset").GetInt32(),chars=record.GetProperty("supplied_chars").GetInt32();
+        if(!GeneratedReadableView.TryCreatePage(source,offset,chars,out var page,out _))return outcome;
+        var result=root.EnumerateObject().ToDictionary(p=>p.Name,p=>p.Value.Clone(),StringComparer.Ordinal);
+        var projected=record.EnumerateObject().Where(p=>p.Name is not ("body_parts" or "display_evidence"))
+            .ToDictionary(p=>p.Name,p=>p.Value.Clone(),StringComparer.Ordinal);
+        projected.Add("presentation",JsonSerializer.SerializeToElement("generated-readable-page-v1"));
+        projected.Add("readable_page",JsonSerializer.SerializeToElement(page!.Text,DialogueMaterialEnvelope.DataJson));
+        result["record"]=JsonSerializer.SerializeToElement(projected,DialogueMaterialEnvelope.DataJson);
+        result["source_contract"]=JsonSerializer.SerializeToElement(GeneratedReadableView.PageContract);
+        string json=ReviewContext.Serialize(result);
         return outcome with {Json=json,ReadDataVersion=MemoryStore.SemanticTextHash(json)};
     }
 

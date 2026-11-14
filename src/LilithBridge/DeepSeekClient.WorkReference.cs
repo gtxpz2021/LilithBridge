@@ -6,14 +6,15 @@ internal sealed partial class DeepSeekClient
 {
     internal const string WorkReferenceToolName = "recall_work_reference";
 
-    private static object WorkReferenceToolDefinition() => new
+    private static object WorkReferenceToolDefinition(DialogueRequest request) => new
     {
         type = "function",
         function = new
         {
             name = WorkReferenceToolName,
             description = "查询当前选定的第一作本地资料，可根据对话线索改写关键词、继续扩查。"
-                + "返回片段、来源、说话人和分支记录或查询状态；本库记录作品文本，未记录本机玩家的路线选择。",
+                + "返回片段、来源、说话人和分支记录或查询状态；本库记录作品文本，未记录本机玩家的路线选择。"
+                + request.WorkReferencePositionOffer(),
             parameters = new { type = "object", properties = new
                 { query = new { type = "string", description = "作品情节、人物、场景或相关别名，2至500字符。" } },
                 required = new[] { "query" }, additionalProperties = false }
@@ -57,9 +58,10 @@ internal sealed partial class DeepSeekClient
                 ReviewContext.Serialize(new { status = "unavailable", reason = "work_source_or_consent_changed", can_rephrase = false }),
                 "unavailable", "work_source_or_consent_changed", false);
         var recall = PreviousStoryArchive.Recall(call.WorkQuery, config, request.ReviewCurrentText);
+        Func<bool>? permission = null;
         if (recall.Found)
         {
-            var permission = PreviousStoryArchive.CaptureSupplyPermission(config, recall.Content);
+            permission = PreviousStoryArchive.CaptureSupplyPermission(config, recall.Content);
             if (permission?.Invoke() != true)
                 return TraceWorkReference(request, call, elapsed,
                     ReviewContext.Serialize(new { status = "unavailable", reason = "work_source_or_consent_changed", can_rephrase = false }),
@@ -88,6 +90,8 @@ internal sealed partial class DeepSeekClient
         string result = receipts.Project(WorkReferenceToolName, call.WorkQuery,
             recall.ArchiveDigest.Length == 0 ? "" : version, call.Id, json);
         result = receipts.ProjectWorkMaterial(version, call.Id, result);
+        if (permission != null) request.StageWorkReferencePositions(call.Id, result, permission);
+        request.StageB1WorkReadIndex(call.Id, result);
         return TraceWorkReference(request, call, elapsed, result, recall.Found ? "ok" : "not_found",
             recall.ReasonCode, canRephrase, recall.ArchiveDigest, recall.Found ? recall.Content.Length : 0,
             receipts.DuplicateBodies > duplicatesBefore, recall.Found ? recall.Content : "");
