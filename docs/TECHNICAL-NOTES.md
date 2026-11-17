@@ -2,21 +2,21 @@
 
 ## 当前运行范围
 
-Windows x64 下，已在《不/存在的莉莉丝》Steam 1.1.0 测试环境中完成安装、配置、启动、聊天回复交付和本地语义召回接入。其他环境由安装器检查运行条件，游戏更新仍可能影响兼容性；在线下载、更新检查和全新电脑的验证限制见[当前验证范围](../CANDIDATE-VALIDATION.md)。
+Windows x64 下，面向官方 **1.2.1** 的完整对话、流式交付、KV 缓存分层、气泡拼合去重与反思更新链路已在实机桌面测试环境及离线套件中完成验证；可选本地 BGE 语义召回在实机与离线测试夹具上均保持兼容接入。游戏更新后是否兼容，由安装器通过 `HostCapabilities` 静态检查所需游戏类型、成员签名与加载器状态，实际手感与长期表现仍取决于具体游玩环境与所选模型服务；检验边界见[验证范围说明](../CANDIDATE-VALIDATION.md)。
 
 ## 按问题继续阅读
 
-- **想理解整个系统：** [架构说明](../ARCHITECTURE.md)，先快速了解，再按一次聊天逐层展开。
-- **想定位代码：** [源码导航](../ARCHITECTURE.md#源码导航从哪里读最省力)。
-- **准备安装或排查：** [玩家指南](PLAYER-GUIDE.md)。
-- **准备加载器、API 或本地召回：** [依赖说明](DEPENDENCIES.md)。
+- **想从第一性原理了解系统设计：** [架构入门](../ARCHITECTURE.md)
+- **想直接定位源码文件：** [架构入门（文末源码导航）](../ARCHITECTURE.md)
+- **想装包、配模型或排查故障：** [安装与使用指南](../NORMAL-USE.zh-CN.md)
+- **想看加载器、API 或本地 BGE 召回细节：** [依赖说明](DEPENDENCIES.md)
 
-原理与模块职责统一维护在架构说明，不在本页重复。
+架构原理与模块职责统一维护在 `ARCHITECTURE.md`，不在本页重复展开。
 
 ## 安装包与许可
 
-可安装文件以 [Releases](https://github.com/gtxpz2021/LilithBridge/releases) 中实际提供的 Windows 安装 ZIP 附件为准。对应发布说明和包内清单用于核对安装包身份与内容；源码 ZIP 用于阅读和构建，不是安装包。
+可安装的 Windows 发行程序以 [Releases](https://github.com/gtxpz2021/LilithBridge/releases/latest) 中的单文件 `LilithBridge-Setup-*.exe`（及供自动更新用的 `LilithBridge-installer-*.zip`）为准；源码 ZIP 仅用于阅读与自行构建，不可直接安装。
 
-项目自有且有权许可的内容采用 MIT，第三方组件与原作权利分别保留，见[许可说明](../LICENSE-STATUS.md)。
+本项目自有源码与工具采用 MIT，第三方组件与原作权利分别保留，详见 [许可说明](../LICENSE-STATUS.md)。
 
-[回到首页](../README.md) · [架构说明](../ARCHITECTURE.md)
+[回到首页](../README.md) · [架构入门](../ARCHITECTURE.md) · [安装与使用指南](../NORMAL-USE.zh-CN.md)

@@ -1,37 +1,54 @@
 # LilithBridge .105 · 4de072f7
 
-面向官方游戏 **1.2.1 / Windows x64**。本版在 `v0.3.150.104-61122db5` 的单文件安装、国内镜像与游戏内 DeepSeek Key 入口基础上，重点完成反思与人设表达收敛、多轮卡死修复、KV 前缀缓存优化，以及 B1 记忆碎片拼合与跨区去重。
+面向官方游戏 **1.2.1 · Windows x64**。这版的核心工作围绕一件事展开：**让记忆回到“完整的人与经历”，而不是“零碎的气泡和审讯式规则”。**
 
-## 这次改变
+> [!IMPORTANT]
+> **怎么下载、怎么更新（新手与老玩家看这里就够了）**
+> - **下载这个文件**：[`LilithBridge-Setup-0.3.150.105-cn21-4de072f7.exe`](https://github.com/gtxpz2021/LilithBridge/releases/latest)（单文件一键安装／升级，**无需自己解压或合并资源**）。
+> - **绝对保留存档**：直接覆盖更新会**完好保留**原有 `LilithBridgeData`（含旧版 `%APPDATA%\LilithAI`）、`config.json`、回忆/B1 数据库、DeepSeek Key、ChatGPT 登录状态与游戏原生存档，绝不重置已关闭的开关。
+> - **唯一前提**：动手前请先**正常退出游戏**（若旧版正好挂起未结束反思，进游戏正常收尾退出后再升级即可）。
 
-1. **人设姿态与反思解绑（Wave 1）**
-   - 取消反思回写与人格提示中的强行审计腔和过度限制，明确区分第一人称心理回望与外部事实编造。
-   - 支持 `lesson.settles` / `settle_reason` 与反思经验相关性门控；整理 `PersonaDefaults` 与精简系统提示词、会话状态表达及梦境前缀。
-2. **多轮卡死修复与跨帧假超时消除（Wave 2）**
-   - 引入作用域权限缓存（`SourcePermissionScope`）与请求级记忆化，消除 `TemporaryExpressionSession.Capture()` 在连续多轮对话后的指数递归计算，解决单核 CPU 100% 锁死问题。
-   - 修复跨长帧导致的 `Time.unscaledTime` 3 秒假超时（`appearance_unconfirmed` 误判取消气泡）。
-3. **KV 缓存前缀重排、性能与遥测瘦身（P1）**
-   - 重排系统指令、静态工具定义与锚点步进历史窗口（新增可选配置 `dialogue.prompt_cache_history_stride`，默认 `8`），提升 DeepSeek/LLM 上下文前缀缓存命中率。
-   - 新增请求内读取记忆化、异步语义提交与精简遥测开关（`telemetry.verbose_supply_trace`，默认 `false`）。
-4. **同回复气泡拼合与跨区去重（P2）**
-   - 将同一次回复拆成多个气泡展示的片段在 `B1` 材料区自动合并为整段（`[同次已显示回复组 ... 已拼合]`），避免同一句话被切碎后重复占用上下文。
-   - 自动折叠已在 `[近期对话]` / `[关联召回的过往原话]` / `[语义与联想参考]` 出现的同源文本，过滤已 100% 完整播出的假草稿回复，并用自然语言格式整理 `[你的想法记录]`。
+---
 
-## 下载与一键安装 / 保留存档更新
+## 这一版带来了什么实实在在的变化
 
-- **全新安装或手动覆盖更新（推荐）**：下载并双击单个 **`LilithBridge-Setup-0.3.150.105-cn21-4de072f7.exe`**。先正常退出游戏，核对向导自动识别的游戏目录后直接点击安装即可。
-- **保留原有存档与配置**：安装器仅替换程序自身拥有的 `BepInEx\plugins\LilithBridge.dll`（并保留可回退备份与事务日志），**绝不覆盖、重置或删除** `LilithBridgeData`（含 `%APPDATA%\LilithAI` 旧目录）、`config.json`、记忆库、`v4-b1-continuity-v2.sqlite3`、OpenAI/ChatGPT 登录态、DeepSeek Key 及游戏原生存档。已有 `false` / `off` 关闭项保持原样。
-- **旧版安装器在线更新**：若使用旧版 `.104-cn20` 安装器的“检查项目更新”获取在线更新包 **`LilithBridge-installer-0.3.150.105-cn21-4de072f7.zip`**（小于 50 MiB），因本版包含兼容性门更新，旧安装器将通过交接协议（`handoff_protocol: 1`、`min_installer_schema: 15`）自动安全交接至 `.21` 新安装器继续完成更新（未保存的临时 Key 不会自动传递，已有本地 `config.json` 与 Key 保持原位）。
-- 源码快照可使用随附 **`LilithBridge-source-0.3.150.105-cn21-4de072f7.zip`**；全部资产校验见 `SHA256SUMS.txt`。
+1. **记忆不再被切碎，回忆时还原成完整的一段话**
+   - 以往长回复在游戏里分几十个气泡播出后，在回忆材料区往往也被拆成几十条零散片段，还可能和“近期对话”“语义召回”一式两份地重复端给模型。
+   - 现在同一次回复的显示气泡会在供给阶段自动合并回整段，折叠掉已在别处完整出现过的同源内容，并滤掉已经完整说完的重复草稿提示——**给真正相关的新线索和跳跃灵感留出上下文空间**。
+2. **把理解还给自然交流：支持修订、收起旧想法，少点“审计腔”**
+   - 长期笔记和经验规律不再像挂在头顶的死规定：旧理解既能随新对话自然修订，也能在过时后被明确“放下／收起”（`settles`），不让模型一边和你聊天一边像监工一样审视每一句话的格式来源。
+   - 后台反思更聚焦在“换位回顾与心理脉络”的整理，与外部客观事实保持清晰界线，不把未观察过的猜想随便写成过去既成事实。
+3. **响应更稳、前缀命中更高，长对话不易越聊越重**
+   - 依照前缀缓存友好的思路重新分层：把静态规则、固定工具结构（含 `revisit_thought` 按需重访）与平滑推进的近期对话稳定在前部，动态材料和当前输入放到尾部——配合新增的可选步进参数（`prompt_cache_history_stride`，默认 `8`），连续聊天时的缓存利用率更稳，默认事件日志也做了瘦身。
+   - 解决了长会话与连续跨帧下容易拖慢主线程甚至卡死的问题，整体回复交付更跟手。
 
-## 验证与兼容边界
+---
 
-- 产品版本：`0.3.150.105-posture-reflection-cache.1`；安装器构建：`0.1.4.21-posture-reflection-cache.release.1`。
-- `LilithBridge.dll` SHA-256：`4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492`。
-- 兼容性说明：`v4-b1-continuity-v2.sqlite3`（version 2/3/4）与 `config.json` 保持向后兼容（新增的两个配置键缺省时自动按默认值 `8` 与 `false` 生效）。`v4-reflection-window.json` 在 `Work == null` 空闲状态下与 `.104` 完全兼容；若旧版尚有未完成反思 `Work`，请先运行旧版游戏待其自然结束并正常退出游戏后再升级。
-- 已完成验证：针对本版重编 `0.3.150.105` `LilithBridge.dll` 与安装源码，离线通过 `eval`（134 项）、`FreezeCarryTests`（262 项）、`PerfBench` 性能基准、`DedupVerify` 去重校验、`test_optional_recall_fixture`（3 项），并在实机游戏（Windows x64 / 1.2.1）中验证过同源代码产物；此外安装器经过静态 PE/CLR 载荷、SHA-256、ZIP CRC 及宿主接口静态合约核对。未重复独立启动安装向导执行实机 UI 覆盖安装演练。
+## 附件清单与各自用途
 
-## 许可与反馈
+| 文件名 | 普通玩家需要下吗 | 说明 |
+|---|---|---|
+| `LilithBridge-Setup-0.3.150.105-cn21-4de072f7.exe` | **需要（就下它）** | 一体化单文件安装与无损更新程序（支持自动加载器、可选本地 BGE 召回与断点缓存复用） |
+| `LilithBridge-installer-0.3.150.105-cn21-4de072f7.zip` | 无需手下 | 供安装器在线更新与受限通道交接使用的瘦身安装包（`< 50 MiB`） |
+| `LilithBridge-source-0.3.150.105-cn21-4de072f7.zip` | 开发者用 | 本版冻结清洁源码快照（不含游戏本体、私人配置及随包第三方/原作语料） |
+| `SHA256SUMS.txt` | 按需核对 | 上述文件的 SHA-256 校验码文本 |
 
-- 自有源码、工具与文档采用 MIT 许可；随包 `first-game.collection.jsonl` 仅用于安装器分发且与第三方依赖均不属于项目 MIT（见 `LICENSE-STATUS.md`），公开源码仓库与源码包均不含原作语料正文、游戏本体、个人配置或任何凭据。
-- 问题反馈：https://github.com/gtxpz2021/LilithBridge/issues 。请附版本身份、发生时间、最短复现步骤及自选脱敏日志（`BepInEx/LogOutput.log` 等）；切勿上传 API Key、认证文件或完整 `LilithBridgeData` 目录。
+<details>
+<summary>展开查看：兼容性边界、产品身份与离线检验细节（开发者／排障参考）</summary>
+
+- **版本与产物身份**：
+  - 产品版本：`0.3.150.105-posture-reflection-cache.1`
+  - `LilithBridge.dll` SHA-256：`4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492`
+  - 安装器版本：`0.1.4.21-posture-reflection-cache.release.1`（`installer_schema: 15`，内置对 `61122db5...` 等历史版本的受控升级支持与自动交接声明 `supported_config_schema: 1`）
+- **数据兼容**：
+  - `v4-b1-continuity-v2.sqlite3`（version 2/3/4）与既有 `config.json` 保持向后兼容；新增可选配置 `dialogue.prompt_cache_history_stride`（默认 `8`）与 `telemetry.verbose_supply_trace`（默认 `false`）在旧配置文件缺失时自动取默认值。
+  - `v4-reflection-window.json` 在 `Work == null` 空闲状态可无缝衔接 `.104`；涉及未完成反思 `Work` 时仍保持保守阻断边界（需由原版本收尾后再升级，详细规则见 [`UPGRADE-COMPATIBILITY.zh-CN.md`](UPGRADE-COMPATIBILITY.zh-CN.md)）。
+- **本版检验范围**：
+  - 针对重编 `.105` 产物离线通过了 `eval.dll`（134 项）、`FreezeCarryTests`（262 项）、`PerfBench`、`DedupVerify`、`test_optional_recall_fixture`（3 项），以及静态 PE/CLR 载荷、ZIP CRC、宿主静态接口契约（`HostCapabilities.CheckContract`）与兼容门核对；实机 1.2.1 桌面端对话与缓存表现于同逻辑构建上完成 5 轮验证。未对新编译的 `.exe` 安装向导 UI 重复执行实机覆盖安装演练。
+- **许可提示**：自有源码与工具为 MIT 许可；随安装包附带的 `first-game.collection.jsonl` 语料与 BepInEx/Python/BGE 等第三方组件不归入 MIT（见 [`LICENSE-STATUS.md`](LICENSE-STATUS.md)）。
+
+</details>
+
+---
+
+[回到首页](README.md) · [安装与使用指南](NORMAL-USE.zh-CN.md) · [架构入门](ARCHITECTURE.md) · [问题反馈](FEEDBACK.zh-CN.md)

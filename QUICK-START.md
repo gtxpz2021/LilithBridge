@@ -1,11 +1,9 @@
-# 安装与升级
+# 3 步快速开始
 
-当前发行版：**0.3.150.103 / e4c865ca**，安装器 **0.1.4.13**。
+适用于《不/存在的莉莉丝》官方 **1.2.1 · Windows x64**，首次安装与保留存档更新通用：
 
-1. 从[最新版发布页](https://github.com/gtxpz2021/LilithBridge/releases/latest)下载名称含 **installer** 的 ZIP，完整解压。
-2. 正常退出游戏，双击 `setup/LilithBridge-Installer.exe`，选择游戏目录并按向导安装。
-3. 从 Steam 正常启动，在 **⋯ → 模型与资料** 中选择服务并完成推荐设置，按回车聊天。
+1. **下载最新版单文件安装器**：打开[**Releases 最新版**](https://github.com/gtxpz2021/LilithBridge/releases/latest)，下载 **`LilithBridge-Setup-0.3.150.105-cn21-4de072f7.exe`**（无需单独解压或拼合资源包；GitHub 自动生成的 Source code ZIP 不是安装包）。
+2. **正常退出游戏并运行安装**：核对自动发现的 `Lilith.exe` 目录，按需勾选「本地召回」，确认后点安装（已有记忆、配置、Key 与登录态会自动保留；若首次准备游戏加载器，按向导提示亲手开闭一次游戏即可）。
+3. **进入游戏启用**：在右上角 **`⋯ → 模型与资料设置`** 配好 DeepSeek Key / `Continue with ChatGPT` / OpenAI API，点一次 **`推荐使用设置`**，随后回桌面主界面按 **回车键（Enter）** 就能开聊。
 
-旧版升级也走同一向导，不必先清空存档或手动搬运资料。详细的登录、后台设置、升级与反馈步骤见[安装与正常使用](NORMAL-USE.zh-CN.md)。GitHub 的源码 ZIP 不是安装包。
-
-下载遇到问题时，可在解压后的安装目录运行 `setup\LilithBridge-Installer.exe --network-diagnostic`；见[网络自检](NETWORK-DIAGNOSTIC.md)。正常安装直接打开 EXE，不需要启动脚本。
+详细图文步骤、升级注意与故障排查表见[**安装与使用指南**](NORMAL-USE.zh-CN.md)。
