@@ -18,32 +18,44 @@ internal sealed partial class DeepSeekClient
         if(!snapshot.IsPermitted())return ReviewProcess.Empty("unavailable","source_changed");
         return new(DayArtifactJson(packet,request),0,0,0,0,0,0,false,SourceSnapshot:snapshot,ReadDataVersion:packet.DataVersion,DayArtifacts:packet);
     }
-    private static string DayArtifactJson(DayArtifactReadPacket p,DialogueRequest request)=>ReviewContext.Serialize(new{
-        status=p.Status,reason=p.Reason,mode="artifact",history_scope=p.Options.Scope,
-        use="reading_material_only; generated/expressed history is distinct from truth of described events; may reinterpret, ignore, or leave no note",
-        discovery="qualified artifacts only; optional literal query, otherwise newest first; this page is not all history or a statement of current interests",
-        root_version=p.RootVersion.Length>0?p.RootVersion:null,scope_complete=p.ScopeComplete,
-        next_cursor=p.NextCursor.Length>0?p.NextCursor:null,
-        next_locator=p.NextCursor.Length>0?(object)new{mode="artifact",root_version=p.RootVersion.Length>0?p.RootVersion:null,
-            history_scope=p.RootVersion.Length>0?"sources":"focus",history_cursor=p.NextCursor,query=p.Query}:null,
-        records=p.Items.Select(i=>new{
-            history_ref=i.SourceKind+":"+i.Turn.EventId,artifact_owner=i.OwnerId,kind=i.Turn.Kind,
-            material_type=i.SourceKind,role=i.Turn.Role,origin=i.Turn.Origin,time=i.Turn.Timestamp.ToString("O"),
-            delivery=i.Turn.DeliveryState,validity=i.Turn.Validity,lifecycle=i.Turn.LifecycleState,revision=i.Turn.Revision,
-            label=i.Turn.Kind==MemoryStore.DayDreamKind?"她当时生成的梦／想象；描写不证明外部事件发生":
-                i.Turn.Kind==MemoryStore.DayConsolidationKind?"她当时的归拢；是整理而非新事实":
-                i.SourceKind=="utterance"?"当时实际收到/说过的原话；命题不因此属实":"当时留下的解释；不代表当前赞同",
-            text=i.Text,text_sha256=MemoryStore.B1Hash(i.Turn.Text),offset=i.Offset,total_chars=i.Turn.Text.Length,
-            unread_prefix=i.Offset>0,next_offset=i.NextOffset,next_cursor=i.NextCursor.Length>0?i.NextCursor:null,
-            next_locator=i.NextOffset.HasValue?new{mode="artifact",root_version=i.OwnerId,history_scope="record",
-                history_ref=i.SourceKind+":"+i.Turn.EventId,offset=i.NextOffset,history_cursor=i.NextCursor}:null,
-            declared_sources=i.SourceKind=="day"?i.Turn.SourceEventIds.Select(x=>"utterance:"+x)
-                .Concat(i.Turn.SourceNoteIds.Select(x=>"note:"+x)).Concat(i.Turn.SourceDayIds.Select(x=>"day:"+x)).ToArray():null,
-            read_sources_with=i.SourceKind=="day"?new{mode="artifact",root_version=i.Turn.EventId,history_scope="sources"}:null
-        }),omissions=p.Omissions,
-        used_calls=request.ReviewCalls,remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-request.ReviewCalls),
-        write_references_added=false,can_continue=request.CanStartReviewRead
-    });
+    private static string DayArtifactJson(DayArtifactReadPacket p,DialogueRequest request)
+    {
+        string? rootAlias = p.RootVersion.Length > 0
+            ? request.RegisterReviewHandle("artifact", "day:" + p.RootVersion, rootVersion: p.RootVersion)
+            : null;
+        return ReviewContext.Serialize(new{
+            status=p.Status,reason=p.Reason,mode="artifact",history_scope=p.Options.Scope,
+            use="reading_material_only; generated/expressed history is distinct from truth of described events; may reinterpret, ignore, or leave no note",
+            discovery="qualified artifacts only; optional literal query, otherwise newest first; this page is not all history or a statement of current interests",
+            root_version=rootAlias,scope_complete=p.ScopeComplete,
+            next_cursor=p.NextCursor.Length>0?p.NextCursor:null,
+            next_locator=p.NextCursor.Length>0?(object)new{mode="artifact",root_version=rootAlias,
+                history_scope=p.RootVersion.Length>0?"sources":"focus",history_cursor=p.NextCursor,query=p.Query}:null,
+            records=p.Items.Select(i=>{
+                string itemAlias=request.RegisterReviewHandle("artifact",i.SourceKind+":"+i.Turn.EventId,rootVersion:i.OwnerId);
+                string ownerAlias=i.OwnerId.Length>0?request.RegisterReviewHandle("artifact","day:"+i.OwnerId,rootVersion:i.OwnerId):"";
+                string dayRootAlias=i.SourceKind=="day"?request.RegisterReviewHandle("artifact","day:"+i.Turn.EventId,rootVersion:i.Turn.EventId):"";
+                return new{
+                    history_ref=itemAlias,artifact_owner=ownerAlias,kind=i.Turn.Kind,
+                    material_type=i.SourceKind,role=i.Turn.Role,origin=i.Turn.Origin,time=i.Turn.Timestamp.ToString("O"),
+                    delivery=i.Turn.DeliveryState,validity=i.Turn.Validity,lifecycle=i.Turn.LifecycleState,revision=i.Turn.Revision,
+                    label=i.Turn.Kind==MemoryStore.DayDreamKind?"你当时生成的梦／想象；描写不证明外部事件发生":
+                        i.Turn.Kind==MemoryStore.DayConsolidationKind?"你当时的归拢；是整理而非新事实":
+                        i.SourceKind=="utterance"?"当时实际收到/说过的原话；命题不因此属实":"当时留下的解释；不代表当前赞同",
+                    text=i.Text,offset=i.Offset,total_chars=i.Turn.Text.Length,
+                    unread_prefix=i.Offset>0,next_offset=i.NextOffset,next_cursor=i.NextCursor.Length>0?i.NextCursor:null,
+                    next_locator=i.NextOffset.HasValue?new{mode="artifact",root_version=ownerAlias,history_scope="record",
+                        history_ref=itemAlias,offset=i.NextOffset,history_cursor=i.NextCursor}:null,
+                    declared_sources=i.SourceKind=="day"?i.Turn.SourceEventIds.Select(x=>request.RegisterReviewHandle("artifact","utterance:"+x,rootVersion:i.Turn.EventId))
+                        .Concat(i.Turn.SourceNoteIds.Select(x=>request.RegisterReviewHandle("artifact","note:"+x,rootVersion:i.Turn.EventId)))
+                        .Concat(i.Turn.SourceDayIds.Select(x=>request.RegisterReviewHandle("artifact","day:"+x,rootVersion:i.Turn.EventId))).ToArray():null,
+                    read_sources_with=i.SourceKind=="day"?new{mode="artifact",root_version=dayRootAlias,history_scope="sources"}:null
+                };
+            }),omissions=p.Omissions,
+            used_calls=request.ReviewCalls,remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-request.ReviewCalls),
+            write_references_added=false,can_continue=request.CanStartReviewRead
+        });
+    }
     private static ReviewToolOutcome FitDayArtifacts(BridgeConfig config,Dictionary<string,object> payload,
         List<object> messages,PendingNativeCall call,DialogueRequest request,MemoryStore owner,ReviewToolOutcome outcome,NativeReadReceipts receipts)
     {

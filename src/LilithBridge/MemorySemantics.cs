@@ -155,7 +155,8 @@ internal static partial class MemorySemantics
     internal static MatchingResult CompareMatchingTokens(IReadOnlySet<string> a, IReadOnlySet<string> b)
     {
         int overlap = 0;
-        foreach (string token in a) if (b.Contains(token)) overlap++;
+        var (small, large) = a.Count <= b.Count ? (a, b) : (b, a);
+        foreach (string token in small) if (large.Contains(token)) overlap++;
         return new(overlap, a.Count == 0 || b.Count == 0 ? 0d
             : overlap / (double)Math.Max(1, Math.Min(a.Count, b.Count)));
     }
@@ -331,15 +332,16 @@ internal static partial class MemorySemantics
         return builder.ToString();
     }
 
+    private static readonly Regex WordTokenRegex = new(
+        @"[\p{L}\p{N}]+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static HashSet<string> Tokenize(string? value)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(value))
             return result;
-        foreach (Match match in Regex.Matches(
-                     value,
-                     @"[\p{L}\p{N}]+",
-                     System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        foreach (Match match in WordTokenRegex.Matches(value))
         {
             string token = match.Value.ToLowerInvariant();
             if (token.Length <= 1 && !char.IsLetter(token[0]))
@@ -361,20 +363,14 @@ internal static partial class MemorySemantics
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(value))
             return result;
-        foreach (Match match in Regex.Matches(
-                     value,
-                     @"[\p{L}\p{N}]+",
-                     System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        foreach (Match match in WordTokenRegex.Matches(value))
         {
-            string segment = match.Value;
-            result.Add(segment.ToLowerInvariant());
-            char[] chars = segment.ToCharArray();
-            if (chars.Length < 2)
+            string segment = match.Value.ToLowerInvariant();
+            result.Add(segment);
+            if (segment.Length < 2)
                 continue;
-            for (int i = 0; i < chars.Length - 1; i++)
-            {
-                result.Add(new string(chars, i, 2).ToLowerInvariant());
-            }
+            for (int i = 0; i < segment.Length - 1; i++)
+                result.Add(segment.Substring(i, 2));
         }
         return result;
     }
@@ -408,6 +404,104 @@ internal static partial class MemorySemantics
     private static bool HasAny(string value, params string[] terms)
     {
         return terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public static string NormalizeComparableText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+        var sb = new StringBuilder(text.Length);
+        foreach (char ch in text)
+        {
+            if (char.IsLetterOrDigit(ch))
+                sb.Append(char.ToLowerInvariant(ch));
+        }
+        return sb.ToString();
+    }
+
+    public static bool AreNearDuplicateTexts(string? first, string? second, double similarityThreshold = 0.72d)
+    {
+        string a = NormalizeComparableText(first);
+        string b = NormalizeComparableText(second);
+        if (a.Length == 0 || b.Length == 0)
+            return false;
+        if (a == b)
+            return true;
+        int minLen = Math.Min(a.Length, b.Length);
+        int maxLen = Math.Max(a.Length, b.Length);
+        if (minLen >= 10 && maxLen <= minLen * 1.45d && (a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal)))
+            return true;
+        return Similarity(first, second) >= similarityThreshold;
+    }
+
+    internal static bool AreNearDuplicateUnits(LogicalDialogueUnit first, LogicalDialogueUnit second, double similarityThreshold = 0.72d)
+    {
+        string a = first.ComparableText;
+        string b = second.ComparableText;
+        if (a.Length == 0 || b.Length == 0)
+            return false;
+        if (a == b)
+            return true;
+        int minLen = Math.Min(a.Length, b.Length);
+        int maxLen = Math.Max(a.Length, b.Length);
+        if (minLen >= 10 && maxLen <= minLen * 1.45d && (a.Contains(b, StringComparison.Ordinal) || b.Contains(a, StringComparison.Ordinal)))
+            return true;
+        var ta = first.MatchingTokens;
+        var tb = second.MatchingTokens;
+        int minCount = Math.Min(ta.Count, tb.Count);
+        if (minCount == 0)
+            return false;
+        var (small, large) = ta.Count <= tb.Count ? (ta, tb) : (tb, ta);
+        int overlap = 0;
+        int remaining = minCount;
+        foreach (string token in small)
+        {
+            if (large.Contains(token))
+            {
+                overlap++;
+                if (overlap / (double)minCount >= similarityThreshold)
+                    return true;
+            }
+            remaining--;
+            if ((overlap + remaining) / (double)minCount < similarityThreshold)
+                return false;
+        }
+        return overlap / (double)minCount >= similarityThreshold;
+    }
+
+    private static readonly string[] LowInfoFillers =
+    {
+        "早上好", "晚上好", "中午好", "下午好", "好久没见", "你好啊", "你好呀", "在不在", "我回来了",
+        "知道了", "明白了", "没问题", "谢谢你", "我来了", "莉莉丝", "lilith",
+        "你好", "早安", "午安", "晚安", "早呀", "早啊", "哈喽", "hello", "okay",
+        "好吧", "好的", "好呀", "好啊", "嗯嗯", "嗯哼", "哈哈", "行吧", "谢谢", "多谢",
+        "可以", "收到", "拜拜", "再见", "是的", "对对", "对呀", "对啊", "回来了", "在吗", "在么",
+        "hey", "bye", "ok", "hi",
+        "嗯", "哦", "啊", "哈", "嗨", "呐", "呢", "呀", "吧", "嘛", "咯", "啦", "哇"
+    };
+
+    public static bool IsLowInfoGreetingOrFiller(string? text)
+    {
+        string normalized = NormalizeComparableText(text);
+        if (normalized.Length == 0)
+            return true;
+        if (normalized.Length > 24)
+            return false;
+        string remaining = normalized;
+        bool stripped = false;
+        foreach (string token in LowInfoFillers)
+        {
+            if (remaining.Contains(token, StringComparison.Ordinal))
+            {
+                remaining = remaining.Replace(token, "", StringComparison.Ordinal);
+                stripped = true;
+            }
+        }
+        if (stripped && remaining.Length <= 1)
+            return true;
+        if (!stripped && normalized.Length <= 2 && normalized.All(ch => ch is 'k' or 'o' or 'a' or 'e' or 'h'))
+            return true;
+        return false;
     }
 
     private static string truncate(string value, int max)

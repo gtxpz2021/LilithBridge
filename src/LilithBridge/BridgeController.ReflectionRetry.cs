@@ -53,7 +53,7 @@ internal sealed partial class BridgeController
             _reflectionProgressiveCadence.Started(snapshot.RequestId, progressiveService);
             _reflectionDialogueMayBypassCooldown = false;
             _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
-            ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Dispatch(snapshot, owner.IntentTrace));
+            ReflectionIntentTrace.EmitDispatch(snapshot, owner.IntentTrace);
         }, send);
     }
 

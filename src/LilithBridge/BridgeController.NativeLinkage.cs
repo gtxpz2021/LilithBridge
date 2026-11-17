@@ -95,9 +95,8 @@ internal sealed partial class MemoryStore
             var supplied = history.Where(t => _currentNativeSources.Contains(t.EventId)
                 && IsNativeSupplyAllowed(t) && IsMentionAllowed(t) && !IsExperienceSuppressed(t.EventId)).ToList();
             if (supplied.Count == 0) return "";
-            return "\n[当场原生对话来源] 下面保留游戏来源的台词，是本会话中实际发生的最近一段游戏对话。莉莉丝的台词是你在游戏里已经说过的话；玩家选项是对方当时实际选中的话。其他角色仍按原说话人理解。按原顺序与更新的交谈继续，不把未走的分支当共同经历。\n"
-                + string.Join("\n", supplied.Select(t => "source=" + t.EventId + ";speaker=" + t.Role
-                    + ";origin=" + t.Origin + ";at=" + t.Timestamp.ToString("O")));
+            return "\n[当场原生对话背景] 以下是游戏原版刚发生的最近对话，优先回应玩家当前的话，无需刻意顺着原生台词往下接。\n"
+                + string.Join("\n", supplied.Select(t => $"- [{t.Timestamp.ToLocalTime():HH:mm:ss} | {(t.Role == "user" ? "玩家" : "莉莉丝·原生")}] {t.Text}"));
         }
     }
     internal bool IsCurrentNativeSceneSource(string id)
@@ -164,6 +163,7 @@ internal sealed partial class BridgeController
         // A single synchronous gate may enter native matching through several
         // review snapshots. Share pure body tokens until this gate returns;
         // eligibility, cancellation and source permissions are never memoized.
+        using var validationScope = SourcePermissionScope.Enter();
         using var matching = _memory.BeginExperienceMatchingPreparation();
         if(result.Error.Length==0&&(result.SendPermission is {Allowed:false}||!result.RequestSourcesPermitted()))
         {

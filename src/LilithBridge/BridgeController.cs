@@ -1105,13 +1105,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             return;
         }
 
-        if (_nativeLinkage.CanStart(Time.unscaledTime)
-            && _memory.CurrentNativeSourcesAvailable(_nativeLinkage.SourceIds))
-        {
-            _nativeLinkage.Start(Time.unscaledTime);
-            _pendingProactiveReason = _nativeLinkage.Reason;
-            _pendingProactiveRecallQuery = "";
-        }
+        // Do not auto-fire proactive LLM turns solely because a native game idle line played.
         RefreshTimeAndReturnState();
         // Select from current state only after the existing wait gates release.
         if (_pendingProactiveReason == null)
@@ -2130,8 +2124,7 @@ internal sealed partial class BridgeController : MonoBehaviour
                 "touch area repaired",
                 mismatch + " => " + result.Text);
         }
-        ActionDirector.ApplyFallback(result, _currentUserText,
-            ContextBuilder.Build(_memory, _sessionState, _config, playerDirected: !_proactiveRequest), _config, _sessionState);
+        ActionDirector.ApplyFallback(result, _currentUserText, "", _config, _sessionState);
         if (PersonaStateEngine.RepairsAction(result, _sessionState, _config, out string actionReason))
         {
             NativeEventLog.Trace("coherence.action", "mod", "lilith",
@@ -2818,7 +2811,8 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (recoveredChains == null) return;
         ReflectionChainOutcome chains = recoveredChains;
         bool saved = chains.NoteReason == "saved" || chains.NoteReason == "settled"
-            || chains.LessonReason == "lesson_saved" || chains.ReadingReason == "reading_saved";
+            || chains.LessonReason == "lesson_saved" || chains.LessonReason == "settled"
+            || chains.ReadingReason == "reading_saved";
         bool windowRetained = _reflectionWindow.Snapshot.Work != null;
         string cursorReason = ReflectionWindow.CompletionReason(reason, chains);
         NativeEventLog.Trace("memory.reflection.done", "mod", "lilith",

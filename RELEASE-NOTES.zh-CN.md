@@ -1,36 +1,37 @@
-> [本版 Release 与四项下载附件已发布](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.104-61122db5)。
+# LilithBridge .105 · 4de072f7
 
-# LilithBridge .104 · 61122db5
-
-面向官方游戏 **1.2.1 / Windows x64**。本版在 cn19 的单文件安装、国内下载源与游戏内 DeepSeek Key 入口基础上，接续记忆材料供给、旧理解回看、反思恢复与低频节奏。
+面向官方游戏 **1.2.1 / Windows x64**。本版在 `v0.3.150.104-61122db5` 的单文件安装、国内镜像与游戏内 DeepSeek Key 入口基础上，重点完成反思与人设表达收敛、多轮卡死修复、KV 前缀缓存优化，以及 B1 记忆碎片拼合与跨区去重。
 
 ## 这次改变
 
-- 当前交流按已交付材料的年龄及覆盖完成间隔合批；相邻轮材料承接、旧理解按需回看和未知工作的恢复接续继续完善。
-- 模型在一次反思中明确选择暂缓时，**普通自动反思机会暂停五分钟**，新对话不会每句都解除等待。主动 reflect 请求可越过这项软等待；期满后仍需合格材料并遵守原规则，不补发错过的次数。
-- 全空或 settles 不等于暂停，不建立无材料周期，也不增加新的主动循环。五分钟是工程初值；真实频率、自然选择、理解效果、费用/缓存及 Unity 回调尚未验证，不承诺固定每五分钟运行、恰好一次或必然少调用。
-- 安装器 .20 精确绑定本 DLL，识别新增完成事实和 OrdinaryDeferral 字段；构建后直接核对 EXE 内嵌资源、编译哈希及原载荷，保留运行时完整性校验。
+1. **人设姿态与反思解绑（Wave 1）**
+   - 取消反思回写与人格提示中的强行审计腔和过度限制，明确区分第一人称心理回望与外部事实编造。
+   - 支持 `lesson.settles` / `settle_reason` 与反思经验相关性门控；整理 `PersonaDefaults` 与精简系统提示词、会话状态表达及梦境前缀。
+2. **多轮卡死修复与跨帧假超时消除（Wave 2）**
+   - 引入作用域权限缓存（`SourcePermissionScope`）与请求级记忆化，消除 `TemporaryExpressionSession.Capture()` 在连续多轮对话后的指数递归计算，解决单核 CPU 100% 锁死问题。
+   - 修复跨长帧导致的 `Time.unscaledTime` 3 秒假超时（`appearance_unconfirmed` 误判取消气泡）。
+3. **KV 缓存前缀重排、性能与遥测瘦身（P1）**
+   - 重排系统指令、静态工具定义与锚点步进历史窗口（新增可选配置 `dialogue.prompt_cache_history_stride`，默认 `8`），提升 DeepSeek/LLM 上下文前缀缓存命中率。
+   - 新增请求内读取记忆化、异步语义提交与精简遥测开关（`telemetry.verbose_supply_trace`，默认 `false`）。
+4. **同回复气泡拼合与跨区去重（P2）**
+   - 将同一次回复拆成多个气泡展示的片段在 `B1` 材料区自动合并为整段（`[同次已显示回复组 ... 已拼合]`），避免同一句话被切碎后重复占用上下文。
+   - 自动折叠已在 `[近期对话]` / `[关联召回的过往原话]` / `[语义与联想参考]` 出现的同源文本，过滤已 100% 完整播出的假草稿回复，并用自然语言格式整理 `[你的想法记录]`。
 
-## 下载和开始
+## 下载与一键安装 / 保留存档更新
 
-普通用户下载 **LilithBridge-Setup-0.3.150.104-cn20-61122db5.exe**。正常退出游戏，运行后核对游戏目录，再选择模型服务和所需组件。无需手动合并资源包；缺失依赖优先国内来源，保留官方后备及固定大小/SHA校验。**Unity 首启基础库仍可能联网**，系统运行库、账户权限和网络可用性不作保证。
+- **全新安装或手动覆盖更新（推荐）**：下载并双击单个 **`LilithBridge-Setup-0.3.150.105-cn21-4de072f7.exe`**。先正常退出游戏，核对向导自动识别的游戏目录后直接点击安装即可。
+- **保留原有存档与配置**：安装器仅替换程序自身拥有的 `BepInEx\plugins\LilithBridge.dll`（并保留可回退备份与事务日志），**绝不覆盖、重置或删除** `LilithBridgeData`（含 `%APPDATA%\LilithAI` 旧目录）、`config.json`、记忆库、`v4-b1-continuity-v2.sqlite3`、OpenAI/ChatGPT 登录态、DeepSeek Key 及游戏原生存档。已有 `false` / `off` 关闭项保持原样。
+- **旧版安装器在线更新**：若使用旧版 `.104-cn20` 安装器的“检查项目更新”获取在线更新包 **`LilithBridge-installer-0.3.150.105-cn21-4de072f7.zip`**（小于 50 MiB），因本版包含兼容性门更新，旧安装器将通过交接协议（`handoff_protocol: 1`、`min_installer_schema: 15`）自动安全交接至 `.21` 新安装器继续完成更新（未保存的临时 Key 不会自动传递，已有本地 `config.json` 与 Key 保持原位）。
+- 源码快照可使用随附 **`LilithBridge-source-0.3.150.105-cn21-4de072f7.zip`**；全部资产校验见 `SHA256SUMS.txt`。
 
-既有更新流程可用 LilithBridge-installer-0.3.150.104-cn20-61122db5.zip（小于50 MiB）。源码使用专门的 LilithBridge-source-0.3.150.104-cn20-61122db5.zip；三项下载摘要见 SHA256SUMS.txt。
+## 验证与兼容边界
 
-已有配置、资料、认证、模型和预算保留。启动游戏后由本人进入 **模型与资料设置 → 推荐使用设置 → 知情并采用推荐 · 保留已有关闭项**，核对“理解保存可用”“可按需回看历史”。已有 false/off/request 不会被强行覆盖，安装只换程序不代表全部功能已启用；明确开启普通后台的按钮也包括逐轮提取，应本人知情选择。
+- 产品版本：`0.3.150.105-posture-reflection-cache.1`；安装器构建：`0.1.4.21-posture-reflection-cache.release.1`。
+- `LilithBridge.dll` SHA-256：`4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492`。
+- 兼容性说明：`v4-b1-continuity-v2.sqlite3`（version 2/3/4）与 `config.json` 保持向后兼容（新增的两个配置键缺省时自动按默认值 `8` 与 `false` 生效）。`v4-reflection-window.json` 在 `Work == null` 空闲状态下与 `.104` 完全兼容；若旧版尚有未完成反思 `Work`，请先运行旧版游戏待其自然结束并正常退出游戏后再升级。
+- 已完成验证：针对本版重编 `0.3.150.105` `LilithBridge.dll` 与安装源码，离线通过 `eval`（134 项）、`FreezeCarryTests`（262 项）、`PerfBench` 性能基准、`DedupVerify` 去重校验、`test_optional_recall_fixture`（3 项），并在实机游戏（Windows x64 / 1.2.1）中验证过同源代码产物；此外安装器经过静态 PE/CLR 载荷、SHA-256、ZIP CRC 及宿主接口静态合约核对。未重复独立启动安装向导执行实机 UI 覆盖安装演练。
 
-DeepSeek Key 可在“密钥与隐私”保存或清除，沿用本机 config.json 明文格式，请勿公开。OpenAI API 与 Continue with ChatGPT 保留；登录由本人完成，可用模型及额度取决于实际账户权限。
+## 许可与反馈
 
-## 升级和验证边界
-
-产品构建串仍为 0.3.150.104-cn19-reflection-ordinary-defer.candidate.1；安装器为 0.1.4.20-ordinary-defer.release.1。DLL SHA-256：
-61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5。
-
-本版加入新的重访 reader 与可选字段，**程序回退不等于资料回退**。旧 DLL 可能拒读或回写丢字段，应保留相配版本化备份；不删除日志来通过预检，不静默清空资料。未完成 Work、待处理请求和未知格式仍保守阻断，本包不提供通用数据降级迁移。
-
-主线已有49项定向程序检查及独立审阅；本次发行封装只做构建、源文件身份、包清单/CRC及静态载荷核对。**没有代用户执行实机游戏、模型调用或模拟安装验收**，不把程序检查说成自然体验已经验证。
-
-随包 first-game.collection.jsonl 为第一作2076条/18脚本整理语料，保留角色推断等不确定性。**原作语料和第三方材料不属于项目MIT，原作再分发许可未独立确认**，详见包内来源说明。不包含游戏本体、私人对话、真实Key或认证。
-
-反馈：[Issues](https://github.com/gtxpz2021/LilithBridge/issues)。提供版本、发生时间、最短复现步骤，按需附脱敏日志：BepInEx/LogOutput.log、实际资料根 .setup-checks/local-recall-check.log 或产品环境 environment-check.log；不要上传Key、认证文件或整个资料根。
-
+- 自有源码、工具与文档采用 MIT 许可；随包 `first-game.collection.jsonl` 仅用于安装器分发且与第三方依赖均不属于项目 MIT（见 `LICENSE-STATUS.md`），公开源码仓库与源码包均不含原作语料正文、游戏本体、个人配置或任何凭据。
+- 问题反馈：https://github.com/gtxpz2021/LilithBridge/issues 。请附版本身份、发生时间、最短复现步骤及自选脱敏日志（`BepInEx/LogOutput.log` 等）；切勿上传 API Key、认证文件或完整 `LilithBridgeData` 目录。

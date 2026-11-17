@@ -36,7 +36,7 @@ namespace LilithSetup
     public static class WizardCore
     {
         public const bool PreviewChannel = true;
-        public const int InstallerSchema = 14, SupportedConfigSchema = 1;
+        public const int InstallerSchema = 15, SupportedConfigSchema = 1;
         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
         {
             TrustedDownloads.UsePlatformTls();

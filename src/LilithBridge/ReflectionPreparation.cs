@@ -94,7 +94,8 @@ internal sealed partial class MemoryStore
         // their body, basis, permissions and all other versions still match.
         var ownTargets = recovering ? _reflectionNotes.Concat(_reflectionLessons).Concat(_relationshipReadings)
             .Where(t => t.OperationId == request.RequestId && t.SourceEventId.Length > 0).Select(t => t.SourceEventId)
-            .Concat(_reflectionNotes.Where(t => t.ReflectionSettlementOperationId == request.RequestId).Select(t => t.EventId))
+            .Concat(_reflectionNotes.Concat(_reflectionLessons)
+                .Where(t => t.ReflectionSettlementOperationId == request.RequestId).Select(t => t.EventId))
             .ToHashSet(StringComparer.Ordinal) : new HashSet<string>(StringComparer.Ordinal);
         var restoredNotes = new Dictionary<string, MemoryTurn>(StringComparer.Ordinal);
         foreach (var prior in request.Dependencies)

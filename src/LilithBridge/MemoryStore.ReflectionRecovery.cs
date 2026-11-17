@@ -29,6 +29,7 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         {
             if (cursor.Snapshot.Work is not { } work || work.Request.RequestId != request.RequestId) return false;
+            ShortAliasTable.ResolveReflectionResultAliases(result, work.Request.ShortAliases);
             var accepted = work with { Result = result };
             return SaveAcceptedReflectionResponse(cursor, work, accepted);
         }
@@ -119,7 +120,7 @@ internal sealed partial class MemoryStore
         "note" => CompletedChain(work.Progress?.NoteReason) != null || work.Result?.Note == null
             || _reflectionNotes.Any(t => t.OperationId == work.Request.RequestId || t.ReflectionSettlementOperationId == work.Request.RequestId),
         "lesson" => CompletedChain(work.Progress?.LessonReason) != null || work.Result?.Lesson == null
-            || _reflectionLessons.Any(t => t.OperationId == work.Request.RequestId),
+            || _reflectionLessons.Any(t => t.OperationId == work.Request.RequestId || t.ReflectionSettlementOperationId == work.Request.RequestId),
         _ => CompletedChain(work.Progress?.ReadingReason) != null || work.Result?.Relationship == null
             || _relationshipReadings.Any(t => t.OperationId == work.Request.RequestId)
     };

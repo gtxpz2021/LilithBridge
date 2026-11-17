@@ -21,8 +21,13 @@ internal sealed partial class MemoryStore
                 && t.DeliveryState=="delivered" && t.Text==scene.AssistantText && Visible(t));
             if(last==null)return scene.AssistantText;
             // The existing UI joiner checks session, request, parent, origin,
-            // adjacent delivery sequence and recorded time. A gap is a boundary.
-            var entries=DialogueHistoryReplies.Build(all,Visible,
+            // adjacent delivery sequence and recorded time. A gap is a boundary,
+            // and DialogueHistoryReplies.CanJoin never joins across different
+            // or empty SessionId values.
+            var sessionRecords = !string.IsNullOrWhiteSpace(last.SessionId)
+                ? all.Where(t => t.SessionId == last.SessionId).ToArray()
+                : new[] { last };
+            var entries=DialogueHistoryReplies.Build(sessionRecords,Visible,
                 t=>_experienceRecordedTimes.TryGetValue(t.EventId,out var time)?time:null,
                 _experienceMalformedRecords==0 && _experienceReadFailures==0);
             var entry=entries.FirstOrDefault(e=>e.MemberEventIds.Contains(last.EventId)

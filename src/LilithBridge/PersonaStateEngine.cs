@@ -59,20 +59,13 @@ internal static class PersonaStateEngine
         bool sleeping = state.Native.IsSleep;
         bool beingDragged = state.Native.IsDragging || state.Native.IsInteracting;
         bool hasPlayerWords = state.LastUserText.Length > 0;
-        bool aboutToSpeak = state.MomentAboutToSpeak;
-        bool listening = state.MomentListening;
-
         string focus = sleeping
             ? "睡觉"
             : beingDragged
                 ? "被玩家带离桌面"
                 : nativeStory
                     ? "原生剧情"
-                    : listening
-                        ? "听玩家说话"
-                        : aboutToSpeak
-                            ? "准备开口"
-                            : state.Attention.ToString();
+                    : state.Attention.ToString();
         string safety = sleeping
             ? "native_sleep"
             : nativeStory
@@ -83,7 +76,7 @@ internal static class PersonaStateEngine
         bool shouldWait = nativeStory || sleeping || beingDragged;
         bool shouldDeferProactive = shouldWait
             || (config != null && config.ReflectionOnlyWhenIdle && !state.MomentListening && !hasPlayerWords);
-        bool shouldSpeak = !shouldWait && (hasPlayerWords || aboutToSpeak || state.Attention == AttentionTarget.Player);
+        bool shouldSpeak = !shouldWait && (hasPlayerWords || state.MomentAboutToSpeak || state.Attention == AttentionTarget.Player);
         return new PersonaDecisionHint(
             shouldSpeak,
             shouldWait,
@@ -115,7 +108,6 @@ internal static class PersonaStateEngine
             return;
         state.MomentFocus = hint.MomentFocus;
         state.MomentWaitingForPlayer = hint.ShouldWait;
-        state.MomentListening = state.MomentListening || hint.MomentFocus == "听玩家说话";
         state.MomentAboutToSpeak = hint.ShouldSpeak && !hint.ShouldWait;
         state.MomentUncertain = hint.SafetyReason is "native_story" or "native_sleep";
         state.MomentReason = hint.SafetyReason;

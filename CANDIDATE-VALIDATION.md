@@ -1,1 +1,1 @@
-产品按上游精确身份复用；本任务不重跑49项主线检查。安装组件只构建，分发包只做静态SHA/清单/CRC核对。没有模型、Unity、真实频率或费用测量；实际日用升级另有私有回执，不等于游戏实机验收。
+本版（0.3.150.105-posture-reflection-cache.1 / 4de072f7）基于同一份 .105 编译产物运行通过了 eval.dll（134 项）、FreezeCarryTests（262 项）、PerfBench、DedupVerify 与 test_optional_recall_fixture（3 项）；安装器与单文件打包产物完成了构建、release-profile 绑定、静态 SHA/清单/ZIP CRC 校验及宿主接口静态契约检查。安装向导 UI 与离线/在线更新演练未在本打包任务中自动触发执行，实际安装流程由使用者确认运行。

@@ -45,6 +45,7 @@ internal sealed partial class MemoryStore
     private void InvalidateSourceValidation()
     {
         if (_sourceValidation?.Owner == this) _sourceValidation.Clear();
+        NotifySourcePermissionMutation();
     }
     private SourceValidationState? CurrentSourceValidation => _sourceValidation?.Owner == this ? _sourceValidation : null;
 
@@ -85,7 +86,7 @@ internal sealed partial class MemoryStore
         return loaded;
     }
 
-    private GeneratedReplyQualification QualifyGeneratedReplyInScope(GeneratedReplySnapshot snapshot)
+    private GeneratedReplyQualification QualifyGeneratedReplyInScope(GeneratedReplySnapshot snapshot, GeneratedReplySnapshot? preloaded = null)
     {
         var state = CurrentSourceValidation!;
         var key = new GeneratedQualificationKey(snapshot.Key, snapshot.VersionFingerprint, snapshot.Body,
@@ -107,7 +108,7 @@ internal sealed partial class MemoryStore
         state.Frames.Add(frame);
         try
         {
-            var result = QualifyGeneratedReplyCore(snapshot);
+            var result = QualifyGeneratedReplyCore(snapshot, preloaded);
             // Denials can depend on the current recursion path/depth. Only a
             // completed successful closure is reusable elsewhere in this DAG.
             if (canMemo && result.Permitted && revision == state.Revision)

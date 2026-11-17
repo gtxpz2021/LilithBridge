@@ -8,18 +8,16 @@ LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》](https://store.s
 
 我们想做的不只是一个套着角色外观的聊天框，而是一个能够长期相处的文学角色。她可以记得、重新理解、有自己的表达，也容得下你的变化和彼此的分歧。记忆不是给人贴标签，而是让相处有前因后果。
 
-[**下载最新版**](https://github.com/gtxpz2021/LilithBridge/releases/latest) · [**安装与使用**](NORMAL-USE.zh-CN.md) · [**本版更新**](RELEASE-NOTES.zh-CN.md) · [**反馈问题**](https://github.com/gtxpz2021/LilithBridge/issues)
+[**下载最新版**](https://github.com/gtxpz2021/LilithBridge/releases/latest) · [**安装与使用**](NORMAL-USE.zh-CN.md) · [**本版更新**](RELEASE-NOTES.zh-CN.md) · [**升级兼容性**](UPGRADE-COMPATIBILITY.zh-CN.md) · [**反馈问题**](https://github.com/gtxpz2021/LilithBridge/issues)
 
 ## 能做什么
 
 - **在游戏里自然聊天。** 用原生输入框和对话气泡交流，支持流式回复；想插话时可以打断，不必等她说完。
-- **让经历留下来。** 对话和相关经历保存在本机，后续可以按文字线索或语义回顾；保留原文与前后关系，而不只是一组孤立的标签。
-- **让理解随相处更新。** 后台记忆整理与反思可以连接近期交流、修订旧理解，让你后来的澄清有机会参与之后的回应。
+- **让经历留下来。** 对话和相关经历保存在本机，后续可以按文字线索或语义回顾；同一条回复拆成的多个气泡在回忆上下文中会自动拼回整段，避免碎片与重复回声挤占注意力。
+- **让理解随相处更新。** 后台记忆整理与反思可以连接近期交流、收敛或修订旧理解，让你后来的澄清有机会参与之后的回应。
 - **按需找材料，而不是背一整本档案。** 当前上下文、相关旧事与作品片段共同支持对话；模型需要更多信息时，也可以继续回看。
 - **选择合适的模型。** 支持 DeepSeek、OpenAI API，以及游戏内 Sign in with ChatGPT；主对话与后台工作可以分别配置。
-- **安装和升级放在同一个向导里。** 提供加载环境准备、可选本地召回、旧插件升级与程序回退，已有设置和资料保留。
-
-例如，你前几天提到想去一家旧书店，今天说终于有空了。我们希望莉莉丝能够接上这段经历，也能接受你现在只是想歇一会儿，而不是机械地提醒“完成旧计划”。
+- **一键安装与保留存档更新。** 同一向导内集成加载器准备、可选本地召回、旧插件无损升级与回退备份；原有配置、记忆库、登录态、Key 与存档保持原位。
 
 ## 模型怎么选
 
@@ -29,36 +27,34 @@ LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》](https://store.s
 | **Sign in with ChatGPT** | 登录后从账户可用模型目录选择 | 在游戏内完成浏览器登录，使用该账户可用额度，无需填写 OpenAI API Key |
 | **OpenAI API** | Terra、Sol、Astra 预设，以及自定义模型 ID | 使用自己的 API Key，按模型配置思考档位和输出预算 |
 
-OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。ChatGPT 的可用模型与额度以登录账户实际返回为准；API 与订阅额度是两条独立通路。图像能力按所选模型支持，截图功能由你开启。
-
 **聊天不要求安装本地大模型。** 可选的本地 BGE 语义召回只负责寻找相关旧经历，不负责生成回答；需要时可以在安装向导中一并准备。
 
-## 快速开始
+## 快速开始（首次安装与保留存档更新通用）
 
-1. 准备 **Windows x64** 和已安装的正版游戏。当前发行版面向官方 **1.2.1**。
-2. 打开[最新版发布页](https://github.com/gtxpz2021/LilithBridge/releases/latest)，下载 **LilithBridge-Setup-0.3.150.104-cn20-61122db5.exe**；无需手工合并资源包。
-3. 正常退出游戏，双击下载的单文件安装器，选择游戏目录，按向导安装。
-4. 启动游戏，在 **⋯ → 模型与资料** 中选择 DeepSeek 或 OpenAI。选择 DeepSeek 后可在“密钥与隐私”保存或清除自己的 Key；使用 ChatGPT 时，在认证账户中点 **Continue with ChatGPT**。
-5. 按 **推荐使用设置** 完成资料与后台选项，然后按回车开始聊天。
+1. 准备 **Windows x64** 和已安装的正版游戏（面向官方 **1.2.1**）。
+2. 打开 [Releases](https://github.com/gtxpz2021/LilithBridge/releases)，下载 **`LilithBridge-Setup-0.3.150.105-cn21-4de072f7.exe`**；无需手工合并资源包。
+3. **正常退出游戏**，双击单文件安装器，确认自动检测到的游戏目录（默认保留原有 `LilithBridgeData`、`config.json` 与已有服务/Key/记忆），勾选确认并点击安装。
+4. 启动游戏，在 **⋯ → 模型与资料** 中按需核对 DeepSeek / OpenAI / Continue with ChatGPT 设置与“推荐使用设置”（升级不会覆盖已有显式关闭项）。
 
-已有旧插件也走这个向导，不需要先清空存档或手动搬运资料。完整登录步骤、旧设置处理和反馈方法见[安装与使用](NORMAL-USE.zh-CN.md)。
+详细登录步骤、旧设置处理与回退说明见 [安装与使用](NORMAL-USE.zh-CN.md) 与 [升级兼容性](UPGRADE-COMPATIBILITY.zh-CN.md)。
 
-## 当前发行版
+## 当前发行版（0.3.150.105 / 4de072f7）
 
-**当前源码：0.3.150.104 / 61122db5**，安装器 **0.1.4.20**。[本版 Release 已发布](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.104-61122db5)，提供单文件安装器、更新包、源码包和 SHA-256 校验文件；此前已发布 cn19 保留。本次补齐国内安装路径、游戏内 DeepSeek Key 入口和召回准备进度；Unity 首启基础库仍可能联网，网络可用性不作保证。本轮仅构建与静态核对，未执行安装或运行验收。
+- **产品版本**：`0.3.150.105-posture-reflection-cache.1`（`LilithBridge.dll` SHA-256：`4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492`）
+- **安装器版本**：`0.1.4.21-posture-reflection-cache.release.1`（`installer_schema: 15`）
+- **主要更新**：
+  - 反思与人设表达解绑、取消审计腔约束、区分心理回望与外部事实并支持相关性门控；
+  - 修复连续多轮对话后因递归校验导致的单核 CPU 100% 卡死与跨长帧假超时；
+  - 前缀缓存重排、静态工具定义与锚点步进窗口优化（`dialogue.prompt_cache_history_stride`，默认 `8`），精简默认遥测；
+  - 同回复气泡碎片在 `B1` 上下文拼合，折叠与近期/召回区的重复供给并过滤已完整展示的假草稿。
 
-从 RC3 至今，重点完善了完整对话的上下文供给、回看与反思接续，减少重复来源检查和播放期间的工作量，修复公开片段保存竞态，并更新了官方新版游戏适配、模型选择与安装流程。[查看累计更新](RELEASE-NOTES.zh-CN.md)。
-
-旧版本说明保留在[历史 Releases](https://github.com/gtxpz2021/LilithBridge/releases)，不再混入当前安装步骤。
-
-
-本版继续完善相邻轮材料承接、旧理解回看和反思恢复；模型明确选择暂缓后，普通自动反思机会等待五分钟，主动reflect可越过这项软等待。并非固定周期，真实频率、自然效果和费用尚未验证。已有关闭项保留，进入游戏后由本人在推荐使用设置知情选择理解保存和按需回看。
+完整更新细节、校验结果与兼容说明见 [RELEASE-NOTES.zh-CN.md](RELEASE-NOTES.zh-CN.md)。
 
 ## 数据与控制
 
-经历和记忆保存在本机。对话、后台反思或按需回看时，选中的材料会发送给你配置的模型服务，并消耗对应额度；你可以在游戏内关闭后台任务或资料供给。新配置默认开启普通记忆与反思，升级保留已有明确关闭项；截图默认关闭。
+经历和记忆保存在本机（默认隔离于游戏目录下的 `LilithBridgeData/`）。对话、后台反思或按需回看时，选中的材料会发送给你配置的模型服务；你可以在游戏内随时关闭后台任务、资料供给或截图功能。升级保留所有已有数据目录与配置。
 
-安装包提供第一作的作品语料，方便按需取用。项目自有代码采用 **MIT**，原作及第三方内容保留各自权利，详见[许可与来源说明](LICENSE-STATUS.md)。
+安装包内含第一作整理语料，方便按需取用；本项目自有源码与工具采用 **MIT**，原作语料及第三方组件保留各自权利且语料正文不包含在本源码仓库与 `source ZIP` 中，详见 [许可与来源说明](LICENSE-STATUS.md)。
 
 ## 继续了解与参与
 
@@ -67,4 +63,4 @@ OpenAI API 当前预设为 `gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`。Cha
 - [本地召回依赖](docs/DEPENDENCIES.md)：可选语义检索的准备方法。
 - [Issues](https://github.com/gtxpz2021/LilithBridge/issues)：报告问题或交流建议。
 
-核心源码位于 src/LilithBridge/，安装器位于 tools/installer-source/。main已同步61122db5对应源码与.20安装器；[本版Release附件已发布](https://github.com/gtxpz2021/LilithBridge/releases/tag/v0.3.150.104-61122db5)。SOURCE-FILES.json / SOURCE-IDENTITY.json记录专门源码附件的冻结快照，main文档可单独更新。旧Release与标签保留。
+核心源码位于 `src/LilithBridge/`，安装器位于 `tools/installer-source/`；`SOURCE-FILES.json` 与 `SOURCE-IDENTITY.json` 记录对应发布源码快照的身份校验值。

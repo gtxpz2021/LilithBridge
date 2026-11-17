@@ -425,6 +425,8 @@ internal sealed partial class BridgeController
             _aiSpeechActive = false;
             _lastAiSpeechEndAt = Time.unscaledTime;
         }
+        if (outcome == "completed" && reply.DialogueRequest != null)
+            reply.DialogueRequest.DeliveryCompleted = true;
         FinishNativeLinkage(reply, reply.DeliveredText.Length > 0 ? "shown_" + outcome : "unshown_" + outcome);
         SettleAiDelivery(reply);
         // Only a fully delivered completed turn may become a past-thought source.
@@ -469,6 +471,13 @@ internal sealed partial class BridgeController
             + ";abandoned_chunks=" + (delivery?.AbandonedChunks ?? 0));
         if (!reply.IsMemoryOperation)
             TryScheduleAutonomousMemoryExtraction(reply);
+        if (!reply.IsMemoryOperation && !reply.IsLocalFallback && reply.Error.Length == 0
+            && reply.DialogueRequest is { } deliveredRequest)
+        {
+            var suppliedReflections = deliveredRequest.SnapshotSuppliedReflections();
+            if (suppliedReflections.Length > 0)
+                _memory.RecordReflectionDeliveryUsage(suppliedReflections, reply.DeliveredText, reply.RequestId);
+        }
         if (_config.PersonaRuntimeEnabled)
         {
             // The model's unseen tail cannot create an emotional text signal.

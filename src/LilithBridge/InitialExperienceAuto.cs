@@ -31,26 +31,21 @@ internal sealed partial class DialogueRequest
         {
             foreach(var view in _contextBodyViews.Where(v=>actualContext.Contains(v.Block,StringComparison.Ordinal)))
             {
-                try
+                string id = view.ProgramBlockId;
+                if (id.Length == 0 || view.Units.Count == 0
+                    || actualContext.IndexOf(view.Block, StringComparison.Ordinal) != actualContext.LastIndexOf(view.Block, StringComparison.Ordinal)
+                    || _contextBodyViews.Any(other => !ReferenceEquals(other, view) && other.Block != view.Block
+                        && actualContext.Contains(other.Block, StringComparison.Ordinal) && other.ProgramBlockId == id))
+                    continue;
+                for (int index = 0; index < view.Units.Count; index++)
                 {
-                    using var doc=JsonDocument.Parse(view.DataJson);
-                    var root=doc.RootElement;string id=root.GetProperty("program_block_id").GetString()!;
-                    // The same canonical location must identify exactly one block.
-                    if(actualContext.IndexOf(view.Block,StringComparison.Ordinal)!=actualContext.LastIndexOf(view.Block,StringComparison.Ordinal)
-                        ||_contextBodyViews.Any(other=>other.Block!=view.Block&&actualContext.Contains(other.Block,StringComparison.Ordinal)
-                            &&ContextBlockIdentity(other.DataJson)==id))continue;
-                    int index=0;
-                    foreach(var message in root.GetProperty("messages").EnumerateArray())
-                    {
-                        if(message.GetProperty("body_included").GetBoolean())
-                            result.Add(new(message.GetProperty("message_ref").GetString()!,message.GetProperty("version_fingerprint").GetString()!,
-                                message.GetProperty("text").GetString()!,"runtime_context.experience_blocks["+id+"].messages["+index+"].text",view.Block,null,id,
-                                    message.GetProperty("member_index").EnumerateArray().Any(m=>view.AnchorEventIds.Contains(m.GetProperty("event_id").GetString()!,StringComparer.Ordinal))?"anchor":
-                                    message.GetProperty("member_index").EnumerateArray().Any(m=>view.DirectEventIds.Contains(m.GetProperty("event_id").GetString()!,StringComparer.Ordinal))?"direct":"auxiliary"));
-                        index++;
-                    }
+                    var unit = view.Units[index];
+                    string role = unit.Members.Any(m => view.AnchorEventIds.Contains(m.EventId, StringComparer.Ordinal)) ? "anchor"
+                        : unit.Members.Any(m => view.DirectEventIds.Contains(m.EventId, StringComparer.Ordinal)) ? "direct" : "auxiliary";
+                    result.Add(new(unit.Key, unit.VersionFingerprint, unit.Text,
+                        "runtime_context.experience_blocks[" + id + "].messages[" + index + "].text",
+                        view.Block, null, id, role));
                 }
-                catch(Exception e) when(e is JsonException or InvalidOperationException or KeyNotFoundException) { }
             }
         }
         lock(_generatedSupplyLock)

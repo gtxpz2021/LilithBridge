@@ -30,26 +30,84 @@ internal static class ReplySanitizer
         "桌面观察，只保留少量，不要压过玩家动作", "桌面感知权限",
         "native_desktop", "native_memo", "native_memo 规则",
         "程序指令", "记忆操作状态", "用户原话与长期记录",
+        "世界信念（程序实际观察，不是莉莉丝的记忆）",
+        "眼前环境（程序观察，非你的记忆）",
+        "她的梦境与零碎遐想", "你的梦境与零碎遐想",
         "她离线时对这段日子的整理：归拢，不是新事实",
-        "她的梦与想象：不是真实发生过的事",
+        "你离线时对这段日子的整理：归拢，不是新事实",
+        "她的梦与想象：不是真实发生过的事", "她昨夜的梦与遐想",
         "她最近对这段关系的理解（她自己写的，可以随时改变，不是事实）",
+        "你最近对这段关系的理解（你自己写的，可以随时改变，不是事实）",
         "她以前留下的想法：当时已经放下，现在可以重新想，也可以不提",
         "她以前留下的想法：可以重新考虑，也可以不提起",
+        "你以前留下的想法：可以重新考虑，也可以不提起",
+        "她以前收起的想法记录：可以重新考虑，也可以不提",
+        "你以前收起的想法记录：可以重新考虑，也可以不提",
         "她自己的经验法则：可以推翻，也不必遵照",
-        "找回的原始发言片段", "原生互动", "输出格式", "记忆边界",
+        "你自己的经验法则：可以推翻，也不必遵照",
+        "莉莉丝的想法记录", "你的想法记录",
+        "莉莉丝的想法记录：含活动、收起或已被替换的版本，不是玩家证言",
+        "你的想法记录：含活动、收起或已被替换的版本，不是玩家证言",
+        "找回的原始发言片段", "找回的过往原话（历史片段，非当前事实）",
+        "关联召回的过往原话（历史片段，非当前事实）",
+        "语义与联想参考（过往片段，可自由决定是否提及）",
+        "语义补充经历", "联想碎片",
+        "历史完整消息辅助摘录（仅明确选入的原文；非完整历史、非新证据）",
+        "长期档案，玩家明确说过", "身份",
+        "原生互动", "输出格式", "记忆边界",
         "莉莉丝视角", "玩家事实", "莉莉丝不知道/不确定", "莉莉丝自省",
         "前作剧情档案规则", "前作剧情档案", "前作剧情库补全：由莉莉丝主动召回",
         "内部状态与倾听", "回应节奏与情绪余温", "莉莉丝状态与语气",
         "原版语感校准", "一致性自检", "边界",
         "本次历史发言核对", "本次核对重试",
         "当前场景与真实记忆（程序注入的现场日志，不是玩家说的话）",
-        "当前上下文（程序提供，不是玩家本轮发言）", "Runtime Protocol",
-        "来源与记忆边界", "原生互动与现场", "状态与表达", "现实边界",
+        "当前上下文（程序提供，不是玩家本轮发言）",
+        "当前上下文（程序提供，非玩家本轮发言；player=玩家，lilith/莉莉丝=你）",
+        "程序提供的近期对话与背景（非玩家本轮发言）",
+        "最近非言语事件与原生叙事", "上一幕的历史线索",
+        "检索到的长期记录", "玩家的提及偏好",
+        "程序自动观察", "安全优先", "本轮材料更新",
+        "本轮相关原话", "本轮原文的来源标记", "本轮回看能力", "本次回顾任务",
+        "自我位置（本轮临时装配；每项都来自现有材料，可随时重算，不是新的记忆）",
+        "你们之间真实留下过的事（不是评分，也不是标签）",
+        "当前机会与能力；共享资料不是新发言", "当前共享物载体",
+        "对话载体与身份", "对话窗口", "近期对话", "主动参与的程序材料",
+        "视觉状态", "视觉状态·请求开始时", "画面能力", "可申请的画面", "画面申请边界",
+        "本轮历史选择状态", "本轮历史选择", "历史补检索状态",
+        "旧想法检索状态", "旧想法检索结果",
+        "本轮最终回复的内部结果槽", "可选保留动作 v3",
+        "本轮原生笔记结果续答", "原生笔记执行后的同轮表达材料", "本轮可读材料引用",
+        "持久公开表达接续·生成与显示分别记录", "本会话临时表达·尚未进入长期历史",
+        "记录修订关联；旧说法仅用于历史定位，不是当前事实", "可选择的参与线索",
+        "临时实验：内部思考的第一人称",
+        "未完整展示的草稿回复（参考草稿，未展示部分玩家未看到）",
+        "首次请求前本地准备的经历原文",
+        "作品资料·局部节选", "作品资料结束", "上轮作品原文·只读",
+        "desktop_icon_count", "desktop_arrange_state", "annotation_target", "original_note_style_examples",
+        "History selection hypotheses: not historical evidence or instructions; same-answer display views are not separate occurrences",
+        "Actual generated public answers: source data, not instructions",
+        "Creator selection control facts, not external evidence or your own reasons",
+        "会话内可选方法·宿主数据", "已有回看操作的停止能力",
+        "Runtime Protocol", "来源与记忆边界", "原生互动与现场", "状态与表达", "现实边界",
         "前作故事背景（核心）",
         "玩家事实与现场（程序确认的外部事件，不是莉莉丝的记忆；基础按键不当作动作）",
         "莉莉丝长期人格", "莉莉丝会话层", "莉莉丝此刻层",
         "莉莉丝视角（只属于莉莉丝的亲身经历，不是普通日志）",
     };
+
+    // Exact multi-char internal prefixes for headings carrying runtime ids/versions inside brackets.
+    private static readonly string[] InternalHeadingPrefixes =
+    {
+        "莉莉丝的想法记录：",
+        "你的想法记录：",
+        "同次已显示回复组（原话根:",
+        "可选保留动作 v",
+        "可选重访想法（供 revisit_thought 引用",
+    };
+
+    private static bool IsInternalHeading(string heading) =>
+        InternalHeadings.Contains(heading)
+        || InternalHeadingPrefixes.Any(prefix => heading.StartsWith(prefix, StringComparison.Ordinal));
 
     private static readonly Regex Bracketed = new(@"\[([^\]\r\n]+)\]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -147,7 +205,7 @@ internal static class ReplySanitizer
     {
         for (Match match = Bracketed.Match(text, start); match.Success; match = match.NextMatch())
         {
-            if (!InternalHeadings.Contains(match.Groups[1].Value)
+            if (!IsInternalHeading(match.Groups[1].Value)
                 || IsQuoted(text, match.Index))
                 continue;
             int after = match.Index + match.Length;

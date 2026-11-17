@@ -96,6 +96,7 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
 internal sealed partial class DialogueRequest : IDisposable
 {
     private readonly object _b1Ownership = new();
+    internal bool DeliveryCompleted { get; set; }
     internal NativeMemoTarget? MemoAnnotationTarget { get; set; }
     internal B1Packet? B1Packet { get; set; }
     internal PreparationTiming? PreparationTrace {get;set;}
@@ -126,6 +127,22 @@ internal sealed partial class DialogueRequest : IDisposable
         ReflectionReasonBasis = MergeReflectionBases(StagedReflectionReasonBasis, ReflectionToolReasonBasis, ReflectionProtocolReasonBasis);
     }
     internal void RetainReflectionProtocolBasis() => ReflectionProtocolReasonBasis = MergeReflectionBases(ReflectionProtocolReasonBasis, ReflectionReasonBasis);
+
+    private readonly object _suppliedReflectionsLock = new();
+    private MemoryTurn[] _suppliedReflections = Array.Empty<MemoryTurn>();
+    internal void ReplaceSuppliedReflections(IEnumerable<MemoryTurn>? turns)
+    {
+        var filtered = (turns ?? Array.Empty<MemoryTurn>())
+            .Where(t => t != null && t.EventId.Length > 0 && t.Kind is "reflection.note" or "reflection.lesson")
+            .GroupBy(t => t.EventId, StringComparer.Ordinal)
+            .Select(g => g.First().Copy())
+            .ToArray();
+        lock (_suppliedReflectionsLock) _suppliedReflections = filtered;
+    }
+    internal MemoryTurn[] SnapshotSuppliedReflections()
+    {
+        lock (_suppliedReflectionsLock) return _suppliedReflections;
+    }
 
     internal List<MethodSource> ReviewDerivedMethodSources {get;} = new();
     private bool _reviewDerivationUntracked;
@@ -389,6 +406,7 @@ internal sealed partial class DialogueRequest : IDisposable
     // Null unless the native trial or isolated harness explicitly attaches it.
     internal DialogueWorkSession? WorkPrototype { get; set; }
     internal Func<bool>? WorkCarryPermission { get; set; }
+    internal CarryPermissionChain? WorkCarryChain { get; set; }
     // Includes screenshot continuation and existing boundary/recall retries.
     public const int MaxHttpAttempts = 6;
     private readonly CancellationTokenSource _cancellation = new();

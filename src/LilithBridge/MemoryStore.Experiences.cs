@@ -95,7 +95,7 @@ internal sealed partial class MemoryStore
                 file.Write(bytes, 0, bytes.Length);
                 file.Flush(true);
                 _experienceCache?.Add(turn.Copy());
-                InvalidateExperienceValidationView();
+                InvalidateExperienceValidationView(preserveFingerprints: true);
                 _experienceRecordedTimes[turn.EventId] = turn.Timestamp;
                 _experienceExplicitDialogueMetadata.Add(turn.EventId);
                 return true;
@@ -239,6 +239,7 @@ internal sealed partial class MemoryStore
     {
         if (max <= 0 || MemorySemantics.DeclinesArchiveRecall(_nativeDialoguePolicy.Value?.Query ?? query))
             return Array.Empty<MemoryTurn>();
+        using var _matchPrep = BeginExperienceMatchingPreparation();
         var excluded = new HashSet<string>(excludedIds ?? Array.Empty<string>(), StringComparer.Ordinal);
         var relativeRecall = scoringQueryOverride == null ? MemorySemantics.ParseSpeechRelativeRecall(query) : null;
         string requestedSpeaker = requestedRole.Length > 0 ? requestedRole : relativeRecall?.Speaker ?? MemorySemantics.RequestedHistorySpeaker(query);
@@ -253,10 +254,20 @@ internal sealed partial class MemoryStore
         // it after every eligibility filter cannot grant a withdrawn source.
         string[] identifiers = MemorySemantics.RecallIdentifiers(query);
         string[] literalQuotes = UtteranceAttribution.LiteralQuotes(query);
-        var available = catalog.Units.Where(u => !u.SourceSpans.All(t => excluded.Contains(t.EventId))
-            && (!previousSession || u.SessionId != _sessionId)
-            && (relativeRecall != null || requestedSpeaker.Length == 0 || u.Role == requestedSpeaker)
-            && LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: false)).ToList();
+        var available = new List<LogicalDialogueUnit>(catalog.Units.Count);
+        var availableMask = new bool[catalog.Units.Count];
+        for (int i = 0; i < catalog.Units.Count; i++)
+        {
+            var u = catalog.Units[i];
+            if (!u.SourceSpans.All(t => excluded.Contains(t.EventId))
+                && (!previousSession || u.SessionId != _sessionId)
+                && (relativeRecall != null || requestedSpeaker.Length == 0 || u.Role == requestedSpeaker)
+                && LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: false))
+            {
+                available.Add(u);
+                availableMask[i] = true;
+            }
+        }
         var discoverable = available.Where(u => (requestedSpeaker.Length == 0 || u.Role == requestedSpeaker) && LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: true)
             && identifiers.All(id => u.Runs.Any(run => MemorySemantics.ContainsRecallIdentifier(run.Text, id)))
             && literalQuotes.All(u.ContainsExact)).ToList();
@@ -264,36 +275,100 @@ internal sealed partial class MemoryStore
         // relevance floor use the same overlap; no source permission is cached.
         var scoringTokens = MemorySemantics.MatchingTokens(scoringQuery);
         bool emptyScoringQuery = string.IsNullOrWhiteSpace(scoringQuery);
-        // Corpus rarity distinguishes a described utterance from many broad
-        // topic echoes. This affects only speech-reference ranking; the ordinary
-        // eligibility/recall floor remains unchanged and is not a truth test.
-        var documentFrequency = relativeRecall == null ? new Dictionary<string,int>() : available
-            .SelectMany(u=>u.MatchingTokens.Distinct()).GroupBy(x=>x,StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g=>g.Key,g=>g.Count(),StringComparer.OrdinalIgnoreCase);
-        double RelativeWeight(string word) => Math.Pow(Math.Log((available.Count+1d)/(documentFrequency.GetValueOrDefault(word)+1d)),2);
-        var candidates = discoverable.Select(unit =>
+        bool isExactLookup = relativeRecall != null || literalQuotes.Length > 0 || identifiers.Length > 0
+            || recallQuery != null || contentView || acceptedBridgeAnchorId != null;
+        // Always build corpus DF across available units so rare content words
+        // outrank high-frequency fillers and associative 1-hop bridges have real weights.
+        // Only measure tokens actually inspected by the query (and later ~20-30 bridge tokens).
+        var documentFrequency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var tokenIndex = catalog.TokenIndex;
+        void EnsureDocumentFrequencies(IEnumerable<string> tokensToMeasure)
+        {
+            foreach (string token in tokensToMeasure)
             {
-                int overlap = 0;
-                double score = 0d, relativeScore=0d;
-                // Empty tokens still follow the blank/punctuation, quote and
-                // scope rules below; only unnecessary body tokenization stops.
-                if (scoringTokens.Count > 0)
+                if (!documentFrequency.TryAdd(token, 0)) continue;
+                if (!tokenIndex.TryGetValue(token, out int[]? indices)) continue;
+                int count = 0;
+                foreach (int idx in indices)
+                    if (availableMask[idx])
+                        count++;
+                documentFrequency[token] = count;
+            }
+        }
+        double TokenIdf(string word) => Math.Log((available.Count + 1d) / (documentFrequency.GetValueOrDefault(word) + 1d));
+        bool pureFillerQuery = !isExactLookup && !emptyScoringQuery && MemorySemantics.IsLowInfoGreetingOrFiller(scoringQuery);
+        bool mentionRecallPolicyActive = _mentionReadPolicy.Value?.Rules.Any(r => r.RecallAllowed) == true;
+        if (!emptyScoringQuery && scoringTokens.Count > 0 && (!pureFillerQuery || mentionRecallPolicyActive))
+            EnsureDocumentFrequencies(scoringTokens);
+        double queryIdfSum = scoringTokens.Count == 0 ? 0d : Math.Max(1e-6, scoringTokens.Sum(TokenIdf));
+        var scored = new List<(LogicalDialogueUnit Unit, double Score, double WeightedScore, double RelativeScore, int QuoteMatch, bool ExplicitMention, bool IsFiller)>();
+        foreach (var unit in discoverable)
+        {
+            bool explicitMention = mentionRecallPolicyActive && unit.Members.Any(IsExplicitMentionRecall);
+            if (pureFillerQuery && !explicitMention)
+            {
+                bool fillerMatched = recallQuery != null ? recallQuery.MatchesContent(unit.Text)
+                    : contentView && MemorySemantics.IsContentRecallMatch(scoringQuery, unit.Text);
+                if (fillerMatched)
+                    scored.Add((unit, 0d, 0d, 0d, 0, false, true));
+                continue;
+            }
+            int overlap = 0;
+            double score = 0d, relativeScore = 0d, weightedScore = 0d;
+            // Empty tokens still follow the blank/punctuation, quote and
+            // scope rules below; only unnecessary body tokenization stops.
+            if (scoringTokens.Count > 0)
+            {
+                var tokens = unit.MatchingTokens;
+                if (tokens.Count > 0)
                 {
-                    var tokens = unit.MatchingTokens;
-                    overlap = tokens.Count(scoringTokens.Contains);
-                    if(relativeRecall!=null)relativeScore=tokens.Where(scoringTokens.Contains).Sum(RelativeWeight);
-                    if (tokens.Count > 0)
+                    double idfSum = 0d;
+                    if (tokens.Count <= scoringTokens.Count)
+                    {
+                        foreach (string token in tokens)
+                        {
+                            if (!scoringTokens.Contains(token)) continue;
+                            overlap++;
+                            double idf = TokenIdf(token);
+                            idfSum += idf;
+                            if (relativeRecall != null) relativeScore += idf * idf;
+                        }
+                    }
+                    else
+                    {
+                        foreach (string token in scoringTokens)
+                        {
+                            if (!tokens.Contains(token)) continue;
+                            overlap++;
+                            double idf = TokenIdf(token);
+                            idfSum += idf;
+                            if (relativeRecall != null) relativeScore += idf * idf;
+                        }
+                    }
+                    if (overlap > 0)
+                    {
                         score = overlap / (double)Math.Max(1, Math.Min(tokens.Count, scoringTokens.Count));
+                        weightedScore = (idfSum / queryIdfSum) * 0.70d + (overlap / (double)Math.Max(1, scoringTokens.Count)) * 0.30d;
+                    }
                 }
-                bool relevant = emptyScoringQuery || score >= MemorySemantics.MinRecallSimilarity
-                    && (overlap >= MemorySemantics.MinRecallOverlap || score >= 0.5);
-                return new { Unit = unit, Score = score, RelativeScore=relativeScore, Relevant = relevant,
-                    QuoteMatch = literalQuotes.Where(unit.ContainsExact).Select(q => q.Length).DefaultIfEmpty(0).Max() };
-            })
-            .Where(item => (recallQuery != null ? recallQuery.MatchesContent(item.Unit.Text) || item.Relevant
-                : contentView ? MemorySemantics.IsContentRecallMatch(scoringQuery, item.Unit.Text)
-                : item.Relevant) || _mentionReadPolicy.Value?.Rules.Any(r => r.RecallAllowed) == true
-                    && item.Unit.Members.Any(IsExplicitMentionRecall) || item.QuoteMatch > 0)
+            }
+            int quoteMatch = 0;
+            if (literalQuotes.Length > 0)
+                foreach (string q in literalQuotes)
+                    if (unit.ContainsExact(q) && q.Length > quoteMatch)
+                        quoteMatch = q.Length;
+            bool relevant = emptyScoringQuery || (score >= MemorySemantics.MinRecallSimilarity
+                && (overlap >= MemorySemantics.MinRecallOverlap || score >= 0.5));
+            bool accepted = (recallQuery != null ? recallQuery.MatchesContent(unit.Text) || relevant
+                : contentView ? MemorySemantics.IsContentRecallMatch(scoringQuery, unit.Text)
+                : relevant) || explicitMention || quoteMatch > 0;
+            if (!accepted) continue;
+            scored.Add((unit, score, weightedScore, relativeScore, quoteMatch, explicitMention, unit.IsLowInfoFiller));
+        }
+        bool hasNonFiller = scored.Any(item => !item.IsFiller || item.ExplicitMention || item.QuoteMatch > 0);
+        if (!isExactLookup && hasNonFiller)
+            scored = scored.Where(item => !item.IsFiller || item.ExplicitMention || item.QuoteMatch > 0).ToList();
+        var rawCandidates = scored
             // A broad question about a correction can have several verbatim
             // copies in the archive. Their lexical score must not consume all
             // anchors ahead of an eligible original correction declaration.
@@ -301,11 +376,51 @@ internal sealed partial class MemoryStore
             // questions and assistant history remain available and expandable.
             .OrderByDescending(item => item.QuoteMatch)
             .ThenByDescending(item => relativeRecall != null ? (MemorySemantics.ParseSpeechRelativeRecall(item.Unit.Text)==null ? 1 : 0) : recallQuery != null ? recallQuery.SourcePreference(item.Unit.Text) : contentView && MemorySemantics.IsCorrectionDeclaration(item.Unit.Text) ? 2 : 0)
-            .ThenByDescending(item => relativeRecall!=null?item.RelativeScore:0d)
-            .ThenByDescending(item => item.Score).ThenByDescending(item => item.Unit.Timestamp)
+            .ThenBy(item => !isExactLookup && item.IsFiller ? 1 : 0)
+            .ThenByDescending(item => relativeRecall != null ? item.RelativeScore : 0d)
+            .ThenByDescending(item => isExactLookup ? item.Score : item.WeightedScore)
+            .ThenByDescending(item => item.Score)
+            .ThenByDescending(item => item.Unit.Timestamp)
             // Independent user submissions retain independent identities even
             // when their wording is identical (including clarifications/retries).
             .Select(item => item.Unit).DistinctBy(unit => unit.Key).ToList();
+        bool needDedup = !isExactLookup && rawCandidates.Count > 1;
+        var deduped = needDedup ? new List<LogicalDialogueUnit>(Math.Min(rawCandidates.Count, 32)) : rawCandidates;
+        var dedupedKeys = new HashSet<string>(StringComparer.Ordinal);
+        var dedupedComparable = new HashSet<string>(StringComparer.Ordinal);
+        int dedupCursor = 0;
+        bool IsNearDupInList(List<LogicalDialogueUnit> list, LogicalDialogueUnit candidate)
+        {
+            foreach (var existing in list)
+                if (MemorySemantics.AreNearDuplicateUnits(existing, candidate))
+                    return true;
+            return false;
+        }
+        bool PullNextDeduped()
+        {
+            if (!needDedup) return false;
+            while (dedupCursor < rawCandidates.Count)
+            {
+                var unit = rawCandidates[dedupCursor++];
+                bool keepExplicit = mentionRecallPolicyActive && unit.Members.Any(IsExplicitMentionRecall);
+                if (!keepExplicit)
+                {
+                    string cmp = unit.ComparableText;
+                    if (cmp.Length > 0 && (dedupedComparable.Contains(cmp) || IsNearDupInList(deduped, unit)))
+                        continue;
+                }
+                deduped.Add(unit);
+                dedupedKeys.Add(unit.Key);
+                if (unit.ComparableText.Length > 0) dedupedComparable.Add(unit.ComparableText);
+                return true;
+            }
+            return false;
+        }
+        LogicalDialogueUnit? GetDedupedAt(int index)
+        {
+            while (deduped.Count <= index && PullNextDeduped()) { }
+            return index < deduped.Count ? deduped[index] : null;
+        }
         // A speech-relative lookup reserves its capacity for one located
         // occurrence and its surrounding exchanges. Alternatives remain readable;
         // this lexical choice is never a proof of uniqueness or factual support.
@@ -315,12 +430,67 @@ internal sealed partial class MemoryStore
         {
             // Reserve one source of each explicit version form before echoes
             // compete for slots. These are wording cues, not certified versions.
-            LogicalDialogueUnit? earlier = candidates.FirstOrDefault(t => System.Text.RegularExpressions.Regex.IsMatch(t.Text, "原始|最初|更正前|改正前|原来"));
-            LogicalDialogueUnit? changed = candidates.FirstOrDefault(t => MemorySemantics.IsCorrectionDeclaration(t.Text));
+            LogicalDialogueUnit? earlier = null;
+            if (rawCandidates.Any(t => System.Text.RegularExpressions.Regex.IsMatch(t.Text, "原始|最初|更正前|改正前|原来")))
+                for (int i = 0; GetDedupedAt(i) is { } unit; i++)
+                    if (System.Text.RegularExpressions.Regex.IsMatch(unit.Text, "原始|最初|更正前|改正前|原来"))
+                    { earlier = unit; break; }
+            LogicalDialogueUnit? changed = null;
+            if (rawCandidates.Any(t => MemorySemantics.IsCorrectionDeclaration(t.Text)))
+                for (int i = 0; GetDedupedAt(i) is { } unit; i++)
+                    if (MemorySemantics.IsCorrectionDeclaration(unit.Text))
+                    { changed = unit; break; }
             if (earlier != null) ranked.Add(earlier);
             if (changed != null && ranked.All(t => t.Key != changed.Key)) ranked.Add(changed);
         }
-        ranked = ranked.Concat(candidates).DistinctBy(t => t.Key).Take(anchorBudget).ToList();
+        bool multipleSessions = false;
+        if (!isExactLookup && rawCandidates.Count > 1)
+        {
+            string firstRawSession = rawCandidates[0].SessionId;
+            bool rawHasMultiple = false;
+            for (int k = 1; k < rawCandidates.Count; k++)
+                if (!string.Equals(rawCandidates[k].SessionId, firstRawSession, StringComparison.Ordinal))
+                { rawHasMultiple = true; break; }
+            if (rawHasMultiple && GetDedupedAt(0) is { } firstDeduped)
+                for (int i = 1; GetDedupedAt(i) is { } unit; i++)
+                    if (!string.Equals(unit.SessionId, firstDeduped.SessionId, StringComparison.Ordinal))
+                    { multipleSessions = true; break; }
+        }
+        if (isExactLookup || !multipleSessions)
+        {
+            var seenRanked = ranked.Select(t => t.Key).ToHashSet(StringComparer.Ordinal);
+            for (int i = 0; ranked.Count < anchorBudget && GetDedupedAt(i) is { } c; i++)
+                if (seenRanked.Add(c.Key))
+                    ranked.Add(c);
+            if (ranked.Count > anchorBudget) ranked = ranked.Take(anchorBudget).ToList();
+        }
+        else
+        {
+            var seenRanked = ranked.Select(t => t.Key).ToHashSet(StringComparer.Ordinal);
+            var perSessionAnchors = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; ranked.Count < anchorBudget && GetDedupedAt(i) is { } c; i++)
+            {
+                if (seenRanked.Contains(c.Key)) continue;
+                int count = perSessionAnchors.GetValueOrDefault(c.SessionId);
+                if (count >= 2)
+                {
+                    bool otherUnderCap = false;
+                    for (int j = i + 1; GetDedupedAt(j) is { } other; j++)
+                    {
+                        if (!seenRanked.Contains(other.Key)
+                            && perSessionAnchors.GetValueOrDefault(other.SessionId) < 2)
+                        {
+                            otherUnderCap = true;
+                            break;
+                        }
+                    }
+                    if (otherUnderCap) continue;
+                }
+                seenRanked.Add(c.Key);
+                ranked.Add(c);
+                perSessionAnchors[c.SessionId] = count + 1;
+            }
+        }
         // Isolated RFC experiment only: the driver owns the decision. MemoryStore
         // validates eligibility and retains ownership of expansion/cap semantics.
         if (acceptedBridgeAnchorId != null)
@@ -333,6 +503,8 @@ internal sealed partial class MemoryStore
         onAnchorSelection?.Invoke(ranked.SelectMany(t => t.Members).ToList());
         // A source-free question does not authorize unrelated recent records.
         // Reserve every ranked anchor before allocating adjacency/link budget.
+        bool reserveSparkSlot = !isExactLookup && max >= 6 && !pureFillerQuery && !emptyScoringQuery && ranked.Count > 0;
+        int directFillCap = reserveSparkSlot ? Math.Max(1, max - 1) : max;
         var ordered = ranked.ToList();
         var selected = new HashSet<string>(ranked.Select(t => t.Key), StringComparer.Ordinal);
         foreach (LogicalDialogueUnit anchor in ranked)
@@ -340,22 +512,108 @@ internal sealed partial class MemoryStore
             var sameSession = available.Where(t => t.SessionId == anchor.SessionId).OrderBy(t => t.FirstSequence).ToList();
             int at = sameSession.FindIndex(t => t.Key == anchor.Key);
             foreach (int index in new[] { at - 1, at + 1 })
-                if (index >= 0 && index < sameSession.Count && ordered.Count < max && selected.Add(sameSession[index].Key))
+                if (index >= 0 && index < sameSession.Count && ordered.Count < directFillCap && selected.Add(sameSession[index].Key))
                     ordered.Add(sameSession[index]);
             var anchorIds = anchor.Members.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
             foreach (MemoryTurn current in _autonomous.Where(t => IsActiveLifecycle(t) && t.SourceEventIds.Any(anchorIds.Contains)))
                 foreach (string id in current.SourceEventIds)
-                    if (ordered.Count < max && available.FirstOrDefault(t => t.Members.Any(m => m.EventId == id)) is { } linked && selected.Add(linked.Key)) ordered.Add(linked);
+                    if (ordered.Count < directFillCap && available.FirstOrDefault(t => t.Members.Any(m => m.EventId == id)) is { } linked && selected.Add(linked.Key)) ordered.Add(linked);
+        }
+        var sparkEventIds = new List<string>();
+        if (reserveSparkSlot && ordered.Count < max)
+        {
+            int maxBridgeDf = Math.Max(4, available.Count / 14);
+            var directKeys = rawCandidates.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
+            var anchorSessions = ranked.Select(a => a.SessionId).ToHashSet(StringComparer.Ordinal);
+            var bridgeCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var anchor in ranked)
+                foreach (var token in anchor.MatchingTokens)
+                    if (!scoringTokens.Contains(token))
+                        bridgeCandidates.Add(token);
+            EnsureDocumentFrequencies(bridgeCandidates);
+            var bridgeTokens = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var token in bridgeCandidates)
+            {
+                int df = documentFrequency.GetValueOrDefault(token);
+                if (df >= 2 && df <= maxBridgeDf)
+                    bridgeTokens[token] = TokenIdf(token);
+            }
+            if (bridgeTokens.Count > 0)
+            {
+                var bridgeScores = new Dictionary<int, double>();
+                foreach (var kv in bridgeTokens)
+                {
+                    if (!tokenIndex.TryGetValue(kv.Key, out int[]? indices)) continue;
+                    foreach (int idx in indices)
+                    {
+                        if (!availableMask[idx]) continue;
+                        bridgeScores[idx] = bridgeScores.GetValueOrDefault(idx) + kv.Value;
+                    }
+                }
+                var bridgeOrdered = bridgeScores.ToList();
+                bridgeOrdered.Sort((a, b) => a.Key.CompareTo(b.Key));
+                var bridgeMatches = new List<(LogicalDialogueUnit Unit, double BridgeScore, int CrossSession, int Novel)>(bridgeOrdered.Count);
+                foreach (var kv in bridgeOrdered)
+                {
+                    var u = catalog.Units[kv.Key];
+                    if (selected.Contains(u.Key)
+                        || u.Text.Trim().Length < 8
+                        || (requestedSpeaker.Length > 0 && u.Role != requestedSpeaker)
+                        || !LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: true)
+                        || u.IsLowInfoFiller)
+                        continue;
+                    bridgeMatches.Add((
+                        u,
+                        kv.Value,
+                        !anchorSessions.Contains(u.SessionId) ? 1 : 0,
+                        !directKeys.Contains(u.Key) ? 1 : 0));
+                }
+                var sparkUnit = bridgeMatches
+                    .OrderByDescending(x => x.CrossSession)
+                    .ThenByDescending(x => x.Novel)
+                    .ThenByDescending(x => x.BridgeScore)
+                    .ThenByDescending(x => x.Unit.Timestamp)
+                    .Select(x => x.Unit)
+                    .FirstOrDefault(u => !IsNearDupInList(ordered, u));
+                if (sparkUnit != null && selected.Add(sparkUnit.Key))
+                {
+                    ordered.Add(sparkUnit);
+                    sparkEventIds.AddRange(sparkUnit.Members.Select(m => m.EventId));
+                }
+            }
         }
         // Existing anchors and their expansion keep priority; unused slots take
         // the remaining eligible lexical candidates in their original order.
-        foreach (LogicalDialogueUnit candidate in candidates)
-            if (ordered.Count < max && selected.Add(candidate.Key)) ordered.Add(candidate);
-        var direct = candidates.Where(t => selected.Contains(t.Key)).SelectMany(t => t.Members).ToArray();
+        for (int i = 0; ordered.Count < max && GetDedupedAt(i) is { } candidate; i++)
+            if (selected.Add(candidate.Key)
+                && (isExactLookup || !IsNearDupInList(ordered, candidate)))
+                ordered.Add(candidate);
+        var rawCandidateIndex = new Dictionary<string, int>(rawCandidates.Count, StringComparer.Ordinal);
+        for (int i = 0; i < rawCandidates.Count; i++) rawCandidateIndex[rawCandidates[i].Key] = i;
+        var direct = ordered
+            .Where(t => t.Members.All(m => !sparkEventIds.Contains(m.EventId))
+                && rawCandidateIndex.ContainsKey(t.Key)
+                && (!needDedup || dedupedKeys.Contains(t.Key) || IsRemainingDeduped(t)))
+            .OrderBy(t => rawCandidateIndex[t.Key])
+            .SelectMany(t => t.Members)
+            .ToArray();
+        bool IsRemainingDeduped(LogicalDialogueUnit unit)
+        {
+            int rawIdx = rawCandidateIndex[unit.Key];
+            if (rawIdx < 64)
+            {
+                while (dedupCursor <= rawIdx && PullNextDeduped()) { }
+                return dedupedKeys.Contains(unit.Key);
+            }
+            bool keepExplicit = mentionRecallPolicyActive && unit.Members.Any(IsExplicitMentionRecall);
+            if (keepExplicit) return true;
+            string cmp = unit.ComparableText;
+            return cmp.Length == 0 || (!dedupedComparable.Contains(cmp) && !IsNearDupInList(deduped, unit));
+        }
         onDirectSelection?.Invoke(direct);
         return new LogicalDialogueSelection(ordered.OrderBy(t => t.Timestamp)
             .ThenBy(t => t.SessionId,StringComparer.Ordinal).ThenBy(t => t.FirstSequence),
-            direct.Select(t => t.EventId), WithNaturalMemoryContext);
+            direct.Select(t => t.EventId), WithNaturalMemoryContext, sparkEventIds);
     }
 
     // Matching words choose a message; they never trim the other clauses of

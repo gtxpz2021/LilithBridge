@@ -244,7 +244,21 @@ internal sealed partial class MemoryStore
         try { return WithB1SelectionBoundary(() => CurrentB1SelectionGeneration() == expectedGeneration && use()); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) { return false; }
     }
-    internal bool B1SelectionSnapshotCurrent(B1SelectionSnapshot snapshot) => TryUseB1SelectionSnapshot(snapshot, () => true);
+    internal bool B1SelectionSnapshotCurrent(B1SelectionSnapshot snapshot)
+    {
+        if (!ReferenceEquals(snapshot.Store, this)) return false;
+        var scope = SourcePermissionScope.Current;
+        SelectionSnapshotKey key = default;
+        if (scope != null)
+        {
+            key = new SelectionSnapshotKey(this, snapshot.Generation, snapshot.PermissionStamp, snapshot.Config);
+            if (scope.SelectionCurrent.TryGetValue(key, out bool cached))
+                return cached;
+        }
+        bool current = TryUseB1SelectionSnapshot(snapshot, () => true);
+        if (scope != null) scope.SelectionCurrent[key] = current;
+        return current;
+    }
     internal bool ObserveB1SelectionRequest(B1SelectionSnapshot snapshot, string requestId, string phase)
     {
         if (!ReferenceEquals(snapshot.Store, this) || string.IsNullOrWhiteSpace(requestId)

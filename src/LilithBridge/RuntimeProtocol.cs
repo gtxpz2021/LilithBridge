@@ -87,7 +87,7 @@ internal static class RuntimeProtocol
 
         if (allowMemoryCommands && config.ReflectionEnabled)
         {
-            builder.AppendLine("Reflect：想安静回看时可输出 <reflect>简短原因</reflect>。若明确指本轮已给原话，可用 <reflect>{\"reason\":\"原因\",\"target_event_ids\":[\"原话event_id\"]}</reflect>，可用本轮已供原话的event_id或source_ref，最多4项；不知道对象就不填，不用出处冒充对象。不必每轮请求，不显示给玩家，可能稍后安排。");
+            builder.AppendLine("Reflect：想安静回看时可输出 <reflect>简短原因</reflect>；若针对特定原话可用 {\"reason\":\"原因\",\"target_event_ids\":[...]}，不显示给玩家，也不必每轮使用。");
         }
 
         builder.AppendLine("Voice：只有程序提供语音 ID 时才输出 <voice:数字ID>。");

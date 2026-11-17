@@ -31,6 +31,7 @@ internal sealed record ReflectionRequestSnapshot(string RequestId,
     public IReadOnlyList<DaySourceDependency> NoteHistoryPermissions { get; init; } = Array.Empty<DaySourceDependency>();
     public IReadOnlyList<MemoryTurn> RelationshipHistoryRecords { get; init; } = Array.Empty<MemoryTurn>();
     public IReadOnlyList<DaySourceDependency> RelationshipHistoryVersions { get; init; } = Array.Empty<DaySourceDependency>();
+    public Dictionary<string, string>? ShortAliases { get; init; }
 }
 
 // Immutable request metadata, never a persistent belief or model-provided tag.
@@ -64,6 +65,8 @@ internal sealed class ReflectionLessonProposal
     public string Text { get; set; } = "";
     public string[] SourceNoteIds { get; set; } = Array.Empty<string>();
     public string Revises { get; set; } = "";
+    public string Settles { get; set; } = "";
+    public string SettleReason { get; set; } = "";
 }
 
 /// <summary>
@@ -124,11 +127,11 @@ internal sealed partial class MemoryStore
     /// supply trace can answer "did the reflection section reach the payload" by
     /// header, instead of searching the context for note text.
     /// </summary>
-    internal const string ThoughtBlockHeader = "[莉莉丝的想法记录";
-    internal const string ChatNoteHeader = "[她以前留下的想法：可以重新考虑，也可以不提起]";
-    internal const string SettledNoteHeader = "[她以前收起的想法记录：可以重新考虑，也可以不提]";
-    internal const string LessonHeader = "[她自己的经验法则：可以推翻，也不必遵照]";
-    internal const string ThoughtLifecycleContract = "state=active 表示记录尚未被收起或后继版本取代；state=settled 表示记录曾被收起，时间和理由保留在 settled_at / settle_reason；state=superseded 表示该版本已被后继版本取代，关联见 revises / revised_by。这些是记录生命周期，仅凭状态不能判断她此刻是否赞同、正在想或已经不再在意。可以采纳、提出异议、重新考虑，也可以不提起。";
+    internal const string ThoughtBlockHeader = "[你的想法记录";
+    internal const string ChatNoteHeader = "[你以前留下的想法：可以重新考虑，也可以不提起]";
+    internal const string SettledNoteHeader = "[你以前收起的想法记录：可以重新考虑，也可以不提]";
+    internal const string LessonHeader = "[你自己的经验法则：可以推翻，也不必遵照]";
+    internal const string ThoughtLifecycleContract = "state=active 表示记录尚未被收起或后继版本取代；state=settled 表示记录曾被收起，时间和理由保留在 settled_at / settle_reason；state=superseded 表示该版本已被后继版本取代，关联见 revises / revised_by。这些是记录生命周期，仅凭状态不能判断此刻是否赞同、正在想或已经不再在意。可以采纳、提出异议、重新考虑，也可以不提起。";
 
     /// <summary>
     /// Handing an observation to a sink is pure telemetry: a sink that throws
@@ -166,8 +169,14 @@ internal sealed partial class MemoryStore
     /// lessons and readings that were re-read through a day resolve this same set,
     /// so "this day is current" cannot mean two different things in two read paths.
     /// </summary>
-    private HashSet<string> AvailableDayArtifactIds(IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null) =>
-        SelectAvailableDayArtifacts(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+    private HashSet<string> AvailableDayArtifactIds(IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
+    {
+        if (restoredNotes == null && TryGetRequestReadMemo<HashSet<string>>("day_artifact_ids", out var cached))
+            return cached;
+        var ids = SelectAvailableDayArtifacts(int.MaxValue, restoredNotes).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        if (restoredNotes == null) SetRequestReadMemo("day_artifact_ids", ids);
+        return ids;
+    }
 
     /// <summary>
     /// A thought stays available while everything it rests on is: the raw
@@ -192,13 +201,16 @@ internal sealed partial class MemoryStore
         Action<ReflectionProjectionObservation>? onObservation,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
+        if (onObservation == null && restoredNotes == null && TryGetRequestReadMemo<List<MemoryTurn>>("reflection_notes", out var cached))
+            return cached.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
         HashSet<string> available = GetExperienceValidationTurns().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         HashSet<string> availableDays = AvailableDayArtifactIds(restoredNotes);
         var isCurrent = CreateCurrentBasisEvaluator(available, restoredNotes);
         var kept = new List<MemoryTurn>();
         foreach (MemoryTurn candidate in ReflectionNoteView(restoredNotes))
         {
-            string[] surviving = candidate.SourceEventIds.Where(available.Contains).ToArray();
+            string[] surviving = onObservation != null
+                ? candidate.SourceEventIds.Where(available.Contains).ToArray() : Array.Empty<string>();
             Observe(onObservation, Fact(candidate, ReflectionProjectionStage.CandidateSeen,
                 false, surviving, Array.Empty<string>(), false, false));
             bool usable = IsAvailableNote(candidate, available, availableDays, isCurrent) && IsMentionAllowed(candidate);
@@ -210,6 +222,8 @@ internal sealed partial class MemoryStore
                 true, surviving, Array.Empty<string>(), false, false));
             kept.Add(candidate);
         }
+        if (onObservation == null && restoredNotes == null)
+            SetRequestReadMemo("reflection_notes", kept);
         return kept.TakeLast(Math.Max(0,max)).Select(t => t.Copy()).ToList();
     }
 
@@ -224,16 +238,21 @@ internal sealed partial class MemoryStore
     private IReadOnlyList<MemoryTurn> SelectAvailableSettledNotes(int max,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
+        if (restoredNotes == null && TryGetRequestReadMemo<List<MemoryTurn>>("settled_notes", out var cached))
+            return cached.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
         HashSet<string> available = GetExperienceValidationTurns().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         var materialPermitted = CreateMaterialPermissionEvaluator();
+        var isDayCurrent = CreateDayArtifactCurrentEvaluator(materialPermitted, restoredNotes);
         HashSet<string> availableDays = _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind
-                ? IsMentionAllowed(t) && IsDayArtifactCurrent(t, materialPermitted, restoredNotes) : IsDerivedMemoryVisible(t))
+                ? IsMentionAllowed(t) && isDayCurrent(t) : IsDerivedMemoryVisible(t))
             .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        return _reflectionNotes
+        var settled = _reflectionNotes
             .Where(t => IsMentionAllowed(t) && IsSettledLifecycle(t) && t.Origin == "reflection"
                 && t.SourceEventIds.Length > 0 && t.SourceEventIds.All(available.Contains)
                 && t.SourceDayIds.All(availableDays.Contains))
-            .TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
+            .ToList();
+        if (restoredNotes == null) SetRequestReadMemo("settled_notes", settled);
+        return settled.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
     }
 
     /// <summary>
@@ -243,13 +262,17 @@ internal sealed partial class MemoryStore
     /// </summary>
     public IReadOnlyList<MemoryTurn> GetSupersededNotes(int max)
     {
+        if (TryGetRequestReadMemo<List<MemoryTurn>>("superseded_notes", out var cached))
+            return cached.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
         HashSet<string> available = GetExperienceValidationTurns().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         HashSet<string> availableDays = _dreams.Where(IsDerivedMemoryVisible).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        return _reflectionNotes
+        var superseded = _reflectionNotes
             .Where(t => IsMentionAllowed(t) && IsSupersededLifecycle(t) && t.Origin == "reflection"
                 && t.SourceEventIds.Length > 0 && t.SourceEventIds.All(available.Contains)
                 && t.SourceDayIds.All(availableDays.Contains))
-            .TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
+            .ToList();
+        SetRequestReadMemo("superseded_notes", superseded);
+        return superseded.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
     }
 
     public IReadOnlyList<MemoryTurn> GetReflectionLessons(int max)
@@ -258,16 +281,21 @@ internal sealed partial class MemoryStore
     private IReadOnlyList<MemoryTurn> SelectAvailableReflectionLessons(int max,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
+        if (restoredNotes == null && TryGetRequestReadMemo<List<MemoryTurn>>("reflection_lessons", out var cached))
+            return cached.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
         HashSet<string> available = GetExperienceValidationTurns().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         HashSet<string> availableDays = AvailableDayArtifactIds(restoredNotes);
         HashSet<string> availableNotes = CurrentBasisNoteIds(available, availableDays, restoredNotes);
-        return _reflectionLessons
+        var activeCorrections = ActiveCorrectionList();
+        var lessons = _reflectionLessons
             .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && t.Kind == "reflection.lesson"
                 && t.SourceNoteIds.Length > 0
                 && t.SourceNoteIds.All(id => ResolveNoteCitation(id, availableNotes).Length > 0)
                 && t.SourceEventIds.Length > 0 && t.SourceEventIds.All(available.Contains)
-                && !HasUnincorporatedCorrection(t))
-            .TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
+                && !HasUnincorporatedCorrectionFast(t, activeCorrections))
+            .ToList();
+        if (restoredNotes == null) SetRequestReadMemo("reflection_lessons", lessons);
+        return lessons.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
     }
 
     /// <summary>
@@ -297,16 +325,21 @@ internal sealed partial class MemoryStore
     private IReadOnlyList<MemoryTurn> SelectAvailableRelationshipReadings(int max,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
+        if (restoredNotes == null && TryGetRequestReadMemo<List<MemoryTurn>>("relationship_readings", out var cached))
+            return cached.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
         HashSet<string> available = GetExperienceValidationTurns().Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         HashSet<string> availableDays = AvailableDayArtifactIds(restoredNotes);
         HashSet<string> availableNotes = CurrentBasisNoteIds(available, availableDays, restoredNotes);
-        return _relationshipReadings
+        var activeCorrections = ActiveCorrectionList();
+        var readings = _relationshipReadings
             .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && t.Kind == RelationshipReadingKind
                 && t.SourceNoteIds.Length > 0
                 && t.SourceNoteIds.All(id => ResolveNoteCitation(id, availableNotes).Length > 0)
                 && t.SourceEventIds.Length > 0 && t.SourceEventIds.All(available.Contains)
-                && !HasUnincorporatedCorrection(t))
-            .TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
+                && !HasUnincorporatedCorrectionFast(t, activeCorrections))
+            .ToList();
+        if (restoredNotes == null) SetRequestReadMemo("relationship_readings", readings);
+        return readings.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
     }
 
     /// <summary>
@@ -355,17 +388,18 @@ internal sealed partial class MemoryStore
         if (derived.SourceEventIds.Length == 0) return "";
         var ids = derived.SourceEventIds.ToHashSet(StringComparer.Ordinal);
         var raw = GetExperienceValidationTurns().Where(t => ids.Contains(t.EventId)).ToArray();
-        string[] local = raw.Where(t => t.Origin == LocalFallbackOrigin)
-            .Select(t => t.EventId).Distinct(StringComparer.Ordinal).ToArray();
-        string label = local.Length == 0 ? "" : "local_fallback_sources=" + string.Join(",", local)
-            + "；这些程序台词只证明实际显示，不证明模型当时的心理、意图或自主选择。";
-        var reports = raw.Select(t => new { event_id=t.EventId, reported_speech=UtteranceAttribution.Reported(t.Role,t.Text) })
-            .Where(t=>t.reported_speech != null).ToArray();
-        if (reports.Length > 0) label += " reported_sources=" + JsonSerializer.Serialize(reports, DialogueMaterialEnvelope.DataJson)
-            + "；这些原文含发言标记或前缀标签，不能仅因提交者为 user 就当作玩家本人的自述；标签身份未验证，旧理解也不是独立证言。";
-        if (raw.Length != ids.Count) label += " source_resolution=incomplete；部分原始来源不可用，不能把缺失来源当作已经核实的证言。";
-        if (raw.Length == ids.Count && raw.Length > 0 && raw.All(t=>t.Role == "assistant")) label += " assistant_only_sources=true；来源只有莉莉丝发言，不能作为玩家自述的证据。";
-        return label;
+        var notes = new List<string>();
+        if (raw.Any(t => t.Origin == LocalFallbackOrigin))
+            notes.Add("含程序本地台词，不代表自主选择");
+        var reportLabels = raw.Select(t => UtteranceAttribution.Reported(t.Role, t.Text)?.source_label)
+            .Where(l => !string.IsNullOrEmpty(l)).Distinct(StringComparer.Ordinal).Take(3).ToArray();
+        if (reportLabels.Length > 0)
+            notes.Add("含转述前缀“" + string.Join("”“", reportLabels) + "”，身份未核实");
+        if (raw.Length != ids.Count)
+            notes.Add("部分原始来源未核实");
+        if (raw.Length == ids.Count && raw.Length > 0 && raw.All(t => t.Role == "assistant"))
+            notes.Add("仅来自莉莉丝自己的回复，不作玩家自述证据");
+        return notes.Count == 0 ? "" : "（来源注记：" + string.Join("；", notes) + "）";
     }
 
     public ReflectionRequestSnapshot? CaptureReflectionRequest(IReadOnlyList<MemoryTurn>? requestedWindow = null)
@@ -396,7 +430,6 @@ internal sealed partial class MemoryStore
         if (preparation != null && !preparation.Matches(_root, _sessionId, recent)) return null;
         if (preparation?.Owns(semantic) != true) semantic = null;
         IReadOnlyList<MemoryTurn> notes = SelectNotesForReflection(recent, semantic);
-        var history = CaptureNoteHistory(notes);
         IReadOnlyList<MemoryTurn> lessons = GetReflectionLessons(4);
         IReadOnlyList<MemoryTurn> readings = GetRelationshipReadings(2);
         IReadOnlyList<MemoryTurn> revisionTargets = CaptureRevisionTargets(recent.Concat(notes));
@@ -414,8 +447,17 @@ internal sealed partial class MemoryStore
             .Concat(CorrectionInputIds(revisionTargets)).ToHashSet(StringComparer.Ordinal);
         var evidence = GetExperienceValidationTurns().Where(t => ids.Contains(t.EventId)).Select(t=>t.Copy()).ToList();
         if (evidence.Count == 0) return null;
-        var relationshipHistory = CaptureRelationshipHistory(readings, evidence, notes, history.Notes, settled);
-        var generated = CaptureReflectionGeneratedPublic(recent, evidence);
+        var aliases = new ShortAliasTable();
+        aliases.RegisterAll("e", evidence);
+        aliases.RegisterAll("n", notes);
+        aliases.RegisterAll("s", settled);
+        aliases.RegisterAll("l", lessons);
+        aliases.RegisterAll("r", readings);
+        aliases.RegisterAll("d", dayArtifacts);
+        aliases.RegisterAll("t", revisionTargets);
+        var history = CaptureNoteHistory(notes, aliases);
+        var relationshipHistory = CaptureRelationshipHistory(readings, evidence, notes, history.Notes, settled, aliases);
+        var generated = CaptureReflectionGeneratedPublic(recent, evidence, aliases);
         string source = JsonSerializer.Serialize(new
         {
             now = DateTimeOffset.UtcNow,
@@ -424,11 +466,11 @@ internal sealed partial class MemoryStore
             // Old note sources may precede the pending window by months.
             window_start = recent.FirstOrDefault()?.Timestamp,
             window_end = recent.LastOrDefault()?.Timestamp,
-            window_event_ids = recent.Select(t => t.EventId),
+            window_event_ids = aliases.AliasOrIds(recent.Select(t => t.EventId)),
             turn_count = evidence.Count,
             utterances = evidence.Select(t => new
             {
-                event_id=t.EventId, speaker=t.Role, origin=t.Origin, text=t.Text, at=t.Timestamp,
+                event_id=aliases.AliasOrId(t.EventId), speaker=t.Role, origin=t.Origin, text=t.Text, at=t.Timestamp,
                 source_revision_context = NaturalMemoryContext(t),
                 reported_speech=UtteranceAttribution.Reported(t.Role,t.Text),
                 exchange_delivery = t.Role == "user" ? ReflectionDeliveryDescription(t) : "",
@@ -441,29 +483,33 @@ internal sealed partial class MemoryStore
             relationship_history = relationshipHistory.Projection,
             previous_notes = notes.Select(t => new
             {
-                note_id=t.EventId,
+                note_id=aliases.AliasOrId(t.EventId),
                 state=t.LifecycleState,
                 revision=t.Revision,
-                revises=t.SourceEventId,
+                revises=aliases.AliasOrRegister("h", t.SourceEventId),
                 text=t.Text,
-                source_event_ids=t.SourceEventIds,
+                source_event_ids=aliases.AliasOrIds(t.SourceEventIds),
                 source_context=DescribeSourceAttribution(t),
                 at=t.Timestamp,
+                surfaced_usage=DescribeReflectionUsageLocked(t.EventId),
                 // Textual similarity is a selection hint, not a present belief.
                 label = MemorySemantics.Similarity(ReflectionTopic(recent), t.Text) >= 0.75
                     ? "这条记录与本次交流的文本主题较接近；如有新的理解，可以修订，也可以不修改。"
                     : ""
             }),
-            previous_lessons = lessons.Select(t => new { lesson_id=t.EventId, text=t.Text, source_note_ids=t.SourceNoteIds, at=t.Timestamp,
-                source_context=DescribeSourceAttribution(t) })
-            ,previous_readings = readings.Select(t => new { reading_id=t.EventId, text=t.Text, source_note_ids=t.SourceNoteIds, at=t.Timestamp,
+            previous_lessons = lessons.Select(t => new { lesson_id=aliases.AliasOrId(t.EventId), text=t.Text,
+                source_note_ids=aliases.AliasOrRegisterAll("h", t.SourceNoteIds), at=t.Timestamp,
+                source_context=DescribeSourceAttribution(t),
+                surfaced_usage=DescribeReflectionUsageLocked(t.EventId) })
+            ,previous_readings = readings.Select(t => new { reading_id=aliases.AliasOrId(t.EventId), text=t.Text,
+                source_note_ids=aliases.AliasOrRegisterAll("h", t.SourceNoteIds), at=t.Timestamp,
                 source_context=DescribeSourceAttribution(t) })
             ,settled_notes = settled.Select(t => new
             {
-                note_id = t.EventId,
+                note_id = aliases.AliasOrId(t.EventId),
                 state = t.LifecycleState,
                 revision = t.Revision,
-                revises = t.SourceEventId,
+                revises = aliases.AliasOrRegister("h", t.SourceEventId),
                 text = t.Text,
                 at = t.Timestamp,
                 settled_at = t.SettledAt,
@@ -473,18 +519,19 @@ internal sealed partial class MemoryStore
             })
             ,day_artifacts = dayArtifacts.Select(t => new
             {
-                day_id = t.EventId,
+                day_id = aliases.AliasOrId(t.EventId),
                 kind = t.Kind,
                 at = t.Timestamp,
                 label = t.Kind == DayDreamKind
-                    ? "她当时的梦／想象，不是真实发生过的事"
-                    : "她当时对那一天的归拢，是整理不是新事实",
-                text = t.Text, source_context = DescribeSourceAttribution(t)
+                    ? "你当时的梦／想象，不是真实发生过的事"
+                    : "你当时对那一天的归拢，是整理不是新事实",
+                text = t.Kind == DayDreamKind ? CleanDreamDisplayText(t.Text) : t.Text, source_context = DescribeSourceAttribution(t)
             })
             ,revision_targets = revisionTargets.Select(t => new
             {
-                target_id=t.EventId, kind=t.Kind, revision=t.Revision, text=t.Text,
-                source_event_ids=t.SourceEventIds, source_note_ids=t.SourceNoteIds,
+                target_id=aliases.AliasOrId(t.EventId), kind=t.Kind, revision=t.Revision, text=t.Text,
+                source_event_ids=aliases.AliasOrRegisterAll("h", t.SourceEventIds),
+                source_note_ids=aliases.AliasOrRegisterAll("h", t.SourceNoteIds),
                 status=AssessMaterialSupply(t).Reason,
                 use="仅供 revises 定位旧解释；原依据已变化，不能据此判断当前立场，也不可作为新来源或证据。修订须引用本次当前来源。"
             })
@@ -501,7 +548,8 @@ internal sealed partial class MemoryStore
             NoteHistory = history.Notes,
             NoteHistoryPermissions = history.Permissions,
             RelationshipHistoryRecords = relationshipHistory.Records,
-            RelationshipHistoryVersions = relationshipHistory.Versions
+            RelationshipHistoryVersions = relationshipHistory.Versions,
+            ShortAliases = aliases.AliasToId
         };
     }
 
@@ -511,7 +559,7 @@ internal sealed partial class MemoryStore
 
     // Only explicit parent links form a family. Ancestors are resolved from the
     // full archive; neither root discovery nor ancestor resolution has a recency pre-cut.
-    private NoteHistoryCapture CaptureNoteHistory(IReadOnlyList<MemoryTurn> roots)
+    private NoteHistoryCapture CaptureNoteHistory(IReadOnlyList<MemoryTurn> roots, ShortAliasTable? aliases = null)
     {
         lock (_experienceLock)
         {
@@ -555,22 +603,24 @@ internal sealed partial class MemoryStore
         }
         var selected = new List<(MemoryTurn Root, MemoryTurn Note)>();
         var stopped = new HashSet<string>(StringComparer.Ordinal);
+        string Alias(string? id) => aliases?.AliasOrRegister("h", id) ?? id ?? "";
+        string[] AliasList(IEnumerable<string>? ids) => ids == null ? Array.Empty<string>() : ids.Select(Alias).Where(s => s.Length > 0).ToArray();
         JsonElement Project() => JsonSerializer.SerializeToElement(new
         {
             entries = selected.OrderBy(p => families.FindIndex(f => f.Root.EventId == p.Root.EventId))
                 .ThenBy(p => p.Note.Timestamp).ThenBy(p => p.Note.Revision).ThenBy(p => p.Note.EventId, StringComparer.Ordinal)
                 .Select(p => new
                 {
-                    current_note_id = p.Root.EventId, note_id = p.Note.EventId, recall_id = p.Note.RecallId,
-                    revision = p.Note.Revision, revises = p.Note.SourceEventId, at = p.Note.Timestamp,
+                    current_note_id = Alias(p.Root.EventId), note_id = Alias(p.Note.EventId),
+                    revision = p.Note.Revision, revises = Alias(p.Note.SourceEventId), at = p.Note.Timestamp,
                     lifecycle = p.Note.LifecycleState, text = p.Note.Text,
-                    source_event_ids = p.Note.SourceEventIds, source_day_ids = p.Note.SourceDayIds,
+                    source_event_ids = AliasList(p.Note.SourceEventIds), source_day_ids = AliasList(p.Note.SourceDayIds),
                     source_context = DescribeSourceAttribution(p.Note),
                     qualification = HasUnincorporatedCorrection(p.Note)
                         ? "这是当时的理解；原依据已有后续更正，不可作为当前事实。仅作历史背景，不增加引用或修改权限。"
                         : "这是当时的理解，仅凭该旧版本不能判断当前立场或事实。仅作历史背景，不增加引用或修改权限。"
                 }),
-            omissions = omissions.Select(p => new { current_note_id = p.Key, reason = p.Value,
+            omissions = omissions.Select(p => new { current_note_id = Alias(p.Key), reason = p.Value,
                 use = "更旧部分未展开；未提供的经过不要补写。" })
         });
         int Bytes() => JsonSerializer.SerializeToUtf8Bytes(new { note_history = Project() }).Length;
@@ -607,6 +657,138 @@ internal sealed partial class MemoryStore
     /// </summary>
     private const int ReflectionRelatedNotes = 2;
     private const int ReflectionRecentNotes = 2;
+    private readonly Queue<string> _recentChatLessons = new();
+    private readonly Queue<string> _recentChatDreams = new();
+    private readonly Queue<string> _recentChatSparkNotes = new();
+    private int _chatSparkTurnCounter;
+    private int _lastChatSparkTurn = -1;
+
+    internal void RecordReflectionDeliveryUsage(IReadOnlyList<MemoryTurn> suppliedReflections, string? deliveredText, string? requestId = null)
+    {
+        if (suppliedReflections == null || suppliedReflections.Count == 0 || string.IsNullOrWhiteSpace(deliveredText))
+            return;
+        var replyTokens = MemorySemantics.MatchingTokens(deliveredText);
+        if (replyTokens.Count == 0)
+            return;
+        lock (_experienceLock)
+        {
+            var suppressed = SuppressedExperienceIds();
+            var availableIds = _reflectionNotes.Concat(_reflectionLessons)
+                .Where(t => IsNativeSupplyAllowed(t) && !suppressed.Contains(t.EventId))
+                .Select(t => t.EventId)
+                .ToHashSet(StringComparer.Ordinal);
+            var records = new List<MemoryTurn>();
+            foreach (MemoryTurn thought in suppliedReflections)
+            {
+                if (thought == null || thought.EventId.Length == 0 || thought.Kind is not ("reflection.note" or "reflection.lesson"))
+                    continue;
+                if (!availableIds.Contains(thought.EventId) || SuppressedTextMatches(thought.Text))
+                    continue;
+                var thoughtTokens = MemorySemantics.MatchingTokens(thought.Text);
+                var match = MemorySemantics.CompareMatchingTokens(thoughtTokens, replyTokens);
+                bool usedInDelivered = thoughtTokens.Count > 0 && (match.Relevant || match.Overlap >= 3);
+                var sourceIds = thought.SourceEventIds
+                    .Concat(thought.SourceNoteIds)
+                    .Append(thought.EventId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                records.Add(new MemoryTurn
+                {
+                    EventId = Guid.NewGuid().ToString("N"),
+                    SourceEventId = thought.EventId,
+                    SourceEventIds = sourceIds,
+                    Role = "assistant",
+                    Kind = ReflectionDeliveryUsageKind,
+                    Tier = "recall",
+                    Source = "program_delivery_usage",
+                    RequestKind = "main_chat",
+                    DeliveryState = "bound",
+                    Evidence = usedInDelivered ? "used_in_delivered" : "supplied_only",
+                    Text = "",
+                    OperationId = requestId ?? "",
+                    Timestamp = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                });
+            }
+            if (records.Count == 0)
+                return;
+            var backup = _recallLog.ToList();
+            _recallLog.AddRange(records);
+            TrimRecallLedgerLocked();
+            if (!SaveList("v4-native-recall-ledger.json", _recallLog))
+            {
+                _recallLog.Clear();
+                _recallLog.AddRange(backup);
+                return;
+            }
+            NativeEventLog.Trace("reflection.delivery_usage", "mod", "system", "",
+                "count=" + records.Count + ";used=" + records.Count(r => r.Evidence == "used_in_delivered"));
+        }
+    }
+
+    private object DescribeReflectionUsageLocked(string eventId)
+    {
+        int supplied = 0;
+        int used = 0;
+        DateTimeOffset? lastSuppliedAt = null;
+        foreach (MemoryTurn r in _recallLog)
+        {
+            if (r.Kind != ReflectionDeliveryUsageKind || !string.Equals(r.SourceEventId, eventId, StringComparison.Ordinal))
+                continue;
+            supplied++;
+            if (string.Equals(r.Evidence, "used_in_delivered", StringComparison.Ordinal))
+                used++;
+            if (lastSuppliedAt == null || r.Timestamp > lastSuppliedAt.Value)
+                lastSuppliedAt = r.Timestamp;
+        }
+        return new
+        {
+            supplied_count = supplied,
+            used_in_delivered_count = used,
+            last_supplied_at = lastSuppliedAt
+        };
+    }
+
+    private static void RememberSurfaced(Queue<string> ring, string eventId, int capacity = 4)
+    {
+        if (string.IsNullOrEmpty(eventId) || ring.Contains(eventId, StringComparer.Ordinal)) return;
+        while (ring.Count >= capacity) ring.Dequeue();
+        ring.Enqueue(eventId);
+    }
+
+    internal (MemoryTurn? Consolidation, MemoryTurn? Dream) SelectDayArtifactsForChat(
+        IReadOnlyList<MemoryTurn> allowedArtifacts, string? query)
+    {
+        if (allowedArtifacts == null || allowedArtifacts.Count == 0)
+            return (null, null);
+        MemoryTurn? consolidation = allowedArtifacts
+            .Where(t => t.Kind == DayConsolidationKind)
+            .OrderByDescending(t => string.IsNullOrWhiteSpace(query) ? 0d : MemorySemantics.Similarity(query, t.Text))
+            .ThenByDescending(t => t.Timestamp)
+            .FirstOrDefault();
+        var dreams = allowedArtifacts.Where(t => t.Kind == DayDreamKind).ToList();
+        if (dreams.Count == 0)
+            return (consolidation, null);
+        MemoryTurn? dream;
+        lock (_experienceLock)
+        {
+            int seed = Math.Abs(StringComparer.Ordinal.GetHashCode((query ?? "") + "|" + _recentChatDreams.Count));
+            dream = dreams
+                .OrderByDescending(t =>
+                {
+                    double sim = string.IsNullOrWhiteSpace(query) ? 0d : MemorySemantics.Similarity(query, t.Text);
+                    double recentBonus = dreams.IndexOf(t) >= Math.Max(0, dreams.Count - 3) ? 0.08 : 0d;
+                    double repeatPenalty = dreams.Count > 1 && _recentChatDreams.Contains(t.EventId, StringComparer.Ordinal) ? -0.35 : 0d;
+                    double jitter = ((seed + Math.Abs(StringComparer.Ordinal.GetHashCode(t.EventId))) % 7) * 0.005;
+                    return sim * 1.4 + recentBonus + repeatPenalty + jitter;
+                })
+                .FirstOrDefault();
+            if (dream != null)
+                RememberSurfaced(_recentChatDreams, dream.EventId);
+        }
+        return (consolidation, dream);
+    }
 
     private IReadOnlyList<MemoryTurn> SelectNotesForReflection(IReadOnlyList<MemoryTurn> recent, SemanticRecallResult? semantic = null)
     {
@@ -622,11 +804,29 @@ internal sealed partial class MemoryStore
             .Take(ReflectionRecentNotes).ToList();
         var newestIds = newest.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         string topic = ReflectionTopic(recent);
-        // "Related" is drawn from what recency is NOT already showing: otherwise
-        // both halves pick the same two notes and the window collapses to 2.
-        var related = SelectReflectionRelated(available.Where(t => !newestIds.Contains(t.EventId)).ToArray(), topic,
-            semantic, ReflectionRelatedNotes);
+        // Reserve 1 slot for top topic-related and 1 slot for a distant
+        // cross-time spark note from remaining active notes so reflection can
+        // connect current life with older enduring motifs instead of only today's window.
+        var remaining = available.Where(t => !newestIds.Contains(t.EventId)).ToArray();
+        var related = SelectReflectionRelated(remaining, topic, semantic, 1);
+        var relatedIds = related.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var now = DateTimeOffset.UtcNow;
+        var topicTokens = MemorySemantics.MatchingTokens(topic);
+        MemoryTurn? spark = remaining
+            .Where(t => !relatedIds.Contains(t.EventId))
+            .OrderByDescending(t =>
+            {
+                double ageDays = Math.Min(60d, Math.Max(0d, (now - t.Timestamp).TotalDays));
+                double maxSimNewest = newest.Select(n => MemorySemantics.Similarity(t.Text, n.Text)).DefaultIfEmpty().Max();
+                double novelty = maxSimNewest <= 0.45 ? 0.35 : 0d;
+                double cueOverlap = topicTokens.Count > 0 && MemorySemantics.MatchingTokens(t.Text).Any(topicTokens.Contains) ? 0.25 : 0d;
+                return novelty + cueOverlap + (ageDays / 60d) * 0.40;
+            })
+            .ThenBy(t => t.Timestamp)
+            .ThenBy(t => t.EventId, StringComparer.Ordinal)
+            .FirstOrDefault();
         var chosen = new List<MemoryTurn>(related);
+        if (spark != null) chosen.Add(spark);
         chosen.AddRange(newest);
         var result = chosen.OrderBy(t => t.Timestamp).ThenBy(t => t.EventId, StringComparer.Ordinal).ToList();
         TraceReflectionSelection("active", available.Count, result.Count, scanMs, timing.Elapsed.TotalMilliseconds - scanMs);
@@ -793,6 +993,7 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock)
         {
+            ShortAliasTable.ResolveReflectionResultAliases(result, request.ShortAliases);
             bool noteAttempted = progress?.NoteProposed ?? result?.Note != null;
             bool settleAttempted = progress?.SettleProposed ?? Clean(result?.Note?.Settles ?? "").Length > 0;
             bool lessonAttempted = progress?.LessonProposed ?? result?.Lesson != null;
@@ -801,7 +1002,8 @@ internal sealed partial class MemoryStore
                 (_reflectionNotes.Any(t => t.OperationId == request.RequestId
                     || t.ReflectionSettlementOperationId == request.RequestId) ? "already_applied" : null);
             string? lessonDone = CompletedChain(progress?.LessonReason) ??
-                (_reflectionLessons.Any(t => t.OperationId == request.RequestId) ? "already_applied" : null);
+                (_reflectionLessons.Any(t => t.OperationId == request.RequestId
+                    || t.ReflectionSettlementOperationId == request.RequestId) ? "already_applied" : null);
             string? readingDone = CompletedChain(progress?.ReadingReason) ??
                 (_relationshipReadings.Any(t => t.OperationId == request.RequestId) ? "already_applied" : null);
             // Completed chains (including an accepted all-null result) have no
@@ -874,6 +1076,16 @@ internal sealed partial class MemoryStore
 
     private static string? CompletedChain(string? reason) =>
         reason != null && !ReflectionWindow.RetainsForRetry(reason) ? reason : null;
+
+    internal static string CleanDreamDisplayText(string? raw)
+    {
+        string text = Clean(raw);
+        if (text.StartsWith("梦/想象，不是事实或新事件：", StringComparison.Ordinal))
+            text = text["梦/想象，不是事实或新事件：".Length..].TrimStart();
+        if (text.StartsWith("（梦/想象，不是真实发生的事）", StringComparison.Ordinal))
+            text = text["（梦/想象，不是真实发生的事）".Length..].TrimStart();
+        return text;
+    }
 
     private bool ApplyNoteCore(ReflectionNoteProposal? proposal, ReflectionRequestSnapshot request, out string reason)
     {
@@ -949,7 +1161,10 @@ internal sealed partial class MemoryStore
                 // The replacement declares its own day context. The historical
                 // version parent is a revision link, not inherited current support.
             }
-            if (parent == null && text.Length > 0 && _reflectionNotes.Any(t => IsActiveLifecycle(t) && t.Text == text))
+            if (parent == null && text.Length > 0 && _reflectionNotes.Any(t => IsActiveLifecycle(t) && (t.Text == text
+                || MemorySemantics.NormalizeComparableText(t.Text) == MemorySemantics.NormalizeComparableText(text)
+                || (MemorySemantics.Similarity(t.Text, text) >= 0.75
+                    && MemorySemantics.MatchingTokens(t.Text).Count(MemorySemantics.MatchingTokens(text).Contains) >= 3))))
             { reason="duplicate_note"; return false; }
             if (!ReflectionVersionsMatch(request, sources, dayIds, new[] { proposal.Revises, proposal.Settles }))
             { reason="source_version_changed"; return false; }
@@ -1004,6 +1219,62 @@ internal sealed partial class MemoryStore
         }
     }
 
+    private bool ResolveReflectionNoteCitations(string[]? rawCited, ReflectionRequestSnapshot request,
+        string emptyReason, string missingSourceReason, bool allowSamePassFallback,
+        out string[] resolvedCited, out string[] sources, out string[] preExistingCited, out string reason)
+    {
+        resolvedCited = Array.Empty<string>();
+        sources = Array.Empty<string>();
+        preExistingCited = Array.Empty<string>();
+        reason = "";
+        string[] cited = (rawCited ?? Array.Empty<string>())
+            .Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
+        var available = GetReflectionNotes(int.MaxValue).Where(IsNativeSupplyAllowed)
+            .ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        MemoryTurn? samePassNote = _reflectionNotes.FirstOrDefault(t => t.OperationId == request.RequestId && IsActiveLifecycle(t));
+        MemoryTurn? samePassSettled = _reflectionNotes.FirstOrDefault(t =>
+            t.ReflectionSettlementOperationId == request.RequestId && IsSettledLifecycle(t)
+            && IsNativeSupplyAllowed(t) && RecordPermitted(t));
+        if (cited.Length == 0 && allowSamePassFallback && samePassNote != null && available.ContainsKey(samePassNote.EventId))
+            cited = new[] { samePassNote.EventId };
+        if (cited.Length == 0)
+        { reason = emptyReason; return false; }
+        var shown = request.Notes.ToDictionary(t => t.EventId, StringComparer.Ordinal);
+        var resolved = new List<string>(cited.Length);
+        var citedTurns = new List<MemoryTurn>(cited.Length);
+        var samePassResolved = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string id in cited)
+        {
+            if (samePassNote != null && available.TryGetValue(samePassNote.EventId, out var currentNewNote)
+                && (id == currentNewNote.EventId || (!available.ContainsKey(id) && currentNewNote.SourceEventId == id && shown.ContainsKey(id))))
+            {
+                resolved.Add(currentNewNote.EventId);
+                samePassResolved.Add(currentNewNote.EventId);
+                citedTurns.Add(currentNewNote);
+                continue;
+            }
+            if (samePassSettled != null && id == samePassSettled.EventId && shown.ContainsKey(id))
+            {
+                resolved.Add(id);
+                samePassResolved.Add(id);
+                citedTurns.Add(samePassSettled);
+                continue;
+            }
+            if (!shown.ContainsKey(id))
+            { reason = "note_not_in_request"; return false; }
+            if (!available.TryGetValue(id, out var existingNote))
+            { reason = "unavailable_note"; return false; }
+            resolved.Add(id);
+            citedTurns.Add(existingNote);
+        }
+        resolvedCited = resolved.Distinct(StringComparer.Ordinal).ToArray();
+        sources = citedTurns.SelectMany(t => t.SourceEventIds).Distinct(StringComparer.Ordinal).ToArray();
+        if (sources.Length == 0)
+        { reason = missingSourceReason; return false; }
+        preExistingCited = resolvedCited.Where(id => !samePassResolved.Contains(id)).ToArray();
+        return true;
+    }
+
     /// <summary>
     /// Applies an optional lesson. It must cite thoughts the model was actually
     /// shown, it must keep their raw sources, and a revision may correct an interpretation of the same sources.
@@ -1014,27 +1285,42 @@ internal sealed partial class MemoryStore
         if (proposal == null)
             return false;
         string text = Clean(proposal.Text);
-        if (!_longTermEnabled || text.Length == 0 || text.Length > 240)
+        bool settling = Clean(proposal.Settles).Length > 0;
+        string settleReason = Clean(proposal.SettleReason);
+        if (!_longTermEnabled || text.Length > 240)
         { reason="invalid_lesson"; return false; }
-        if (_reflectionLessons.Any(t => t.OperationId == request.RequestId && t.Kind == "reflection.lesson"))
+        if (text.Length == 0 && !settling)
+        { reason="invalid_lesson"; return false; }
+        if (text.Length == 0 && proposal.Revises.Length > 0)
+        { reason="invalid_lesson"; return false; }
+        if (_reflectionLessons.Any(t => (t.OperationId == request.RequestId || t.ReflectionSettlementOperationId == request.RequestId) && t.Kind == "reflection.lesson"))
         { reason="already_applied"; return false; }
-        string[] cited = (proposal.SourceNoteIds ?? Array.Empty<string>())
-            .Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
-        if (cited.Length == 0)
-        { reason="lesson_without_note"; return false; }
-        var shown = request.Notes.ToDictionary(t => t.EventId, StringComparer.Ordinal);
-        if (cited.Any(id => !shown.ContainsKey(id)))
-        { reason="note_not_in_request"; return false; }
-        // New support must name the exact still-current notes that were supplied.
-        var available = GetReflectionNotes(int.MaxValue).Where(IsNativeSupplyAllowed)
-            .ToDictionary(t => t.EventId, StringComparer.Ordinal);
-        if (cited.Any(id => !available.ContainsKey(id)))
-        { reason="unavailable_note"; return false; }
+        MemoryTurn? settleTarget = null;
+        if (settling)
+        {
+            if (settleReason.Length == 0 || settleReason.Length > 160)
+            { reason="settle_without_reason"; return false; }
+            if (_reflectionLessons.Any(t => t.EventId == proposal.Settles
+                && IsSettledLifecycle(t) && t.SettleReason == settleReason))
+            { reason="already_settled"; return false; }
+            settleTarget = _reflectionLessons.SingleOrDefault(
+                t => t.EventId == proposal.Settles && IsActiveLifecycle(t));
+            if (settleTarget == null || !(request.Lessons.Concat(request.RevisionTargets.Where(t => t.Kind == "reflection.lesson"))
+                .Any(t => t.EventId == settleTarget.EventId)))
+            { reason="stale_lesson"; return false; }
+        }
+        string[] cited = Array.Empty<string>();
+        string[] sources = Array.Empty<string>();
+        string[] preExistingCited = Array.Empty<string>();
+        if (text.Length > 0 && !ResolveReflectionNoteCitations(proposal.SourceNoteIds, request,
+                "lesson_without_note", "lesson_without_source", allowSamePassFallback: true,
+                out cited, out sources, out preExistingCited, out reason))
+            return false;
         MemoryTurn? parent = null;
         if (proposal.Revises.Length > 0)
         {
             parent = _reflectionLessons.FirstOrDefault(
-                t => t.EventId == proposal.Revises && IsActiveLifecycle(t));
+                t => t.EventId == proposal.Revises && (IsActiveLifecycle(t) || IsSettledLifecycle(t)));
             if (parent == null || !(request.Lessons.Concat(request.RevisionTargets.Where(t => t.Kind == "reflection.lesson"))
                 .Any(t => t.EventId == parent.EventId)))
             { reason="stale_lesson"; return false; }
@@ -1042,34 +1328,56 @@ internal sealed partial class MemoryStore
 
             // SourceEventId keeps the historical parent; only current explicit citations support this revision.
         }
-        if (parent == null && _reflectionLessons.Any(t => IsActiveLifecycle(t)
+        if (parent == null && text.Length > 0 && _reflectionLessons.Any(t => IsActiveLifecycle(t)
                 && MemorySemantics.Similarity(t.Text, text) >= 0.75))
         { reason="duplicate_lesson"; return false; }
-        string[] sources = cited.SelectMany(id => available[id].SourceEventIds)
-            .Distinct(StringComparer.Ordinal).ToArray();
-        if (sources.Length == 0)
-        { reason="lesson_without_source"; return false; }
-        if (!ReflectionVersionsMatch(request, sources, Array.Empty<string>(), cited, proposal.Revises))
+        if (!ReflectionVersionsMatch(request, sources, Array.Empty<string>(), preExistingCited, proposal.Revises))
         { reason="source_version_changed"; return false; }
-        if (parent != null && text == parent.Text && SameSupport(cited, parent.SourceNoteIds))
+        if (settling && proposal.Settles != proposal.Revises
+            && !ReflectionVersionsMatch(request, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), proposal.Settles))
+        { reason="source_version_changed"; return false; }
+        if (parent != null && IsActiveLifecycle(parent) && !settling && text == parent.Text && SameSupport(cited, parent.SourceNoteIds))
         { reason="no_change"; return false; }
-        var lesson = new MemoryTurn
+        MemoryTurn? lesson = null;
+        string parentState = parent?.LifecycleState ?? "";
+        string settleState = settleTarget?.LifecycleState ?? "";
+        string priorSettleReason = settleTarget?.SettleReason ?? "";
+        DateTimeOffset? priorSettledAt = settleTarget?.SettledAt;
+        string priorSettlementOperation = settleTarget?.ReflectionSettlementOperationId ?? "";
+        if (text.Length > 0)
         {
-            EventId=Guid.NewGuid().ToString("N"), RecallId=parent?.RecallId ?? Guid.NewGuid().ToString("N"),
-            Revision=(parent?.Revision ?? 0)+1, OperationId=request.RequestId,
-            SourceEventId=proposal.Revises, SourceNoteIds=cited, SourceEventIds=sources,
-            Role="assistant", Kind="reflection.lesson", Origin="reflection", Source="model_reflection",
-            Text=text, Validity="inferred", LifecycleState="active", SessionId=_sessionId
-        };
+            lesson = new MemoryTurn
+            {
+                EventId=Guid.NewGuid().ToString("N"), RecallId=parent?.RecallId ?? Guid.NewGuid().ToString("N"),
+                Revision=(parent?.Revision ?? 0)+1, OperationId=request.RequestId,
+                SourceEventId=proposal.Revises, SourceNoteIds=cited, SourceEventIds=sources,
+                Role="assistant", Kind="reflection.lesson", Origin="reflection", Source="model_reflection",
+                Text=text, Validity="inferred", LifecycleState="active", SessionId=_sessionId
+            };
+            _reflectionLessons.Add(lesson);
+        }
         if (parent != null) parent.LifecycleState="superseded";
-        _reflectionLessons.Add(lesson);
+        if (settleTarget != null)
+        {
+            settleTarget.LifecycleState = ReferenceEquals(settleTarget, parent) ? "superseded" : "settled";
+            settleTarget.SettleReason = settleReason;
+            settleTarget.SettledAt = DateTimeOffset.UtcNow;
+            settleTarget.ReflectionSettlementOperationId = request.RequestId;
+        }
         if (!SaveList("v4-reflection-lessons.json",_reflectionLessons))
         {
-            _reflectionLessons.Remove(lesson);
-            if (parent != null) parent.LifecycleState="active";
+            if (lesson != null) _reflectionLessons.Remove(lesson);
+            if (parent != null) parent.LifecycleState = parentState;
+            if (settleTarget != null)
+            {
+                settleTarget.LifecycleState = settleState;
+                settleTarget.SettleReason = priorSettleReason;
+                settleTarget.SettledAt = priorSettledAt;
+                settleTarget.ReflectionSettlementOperationId = priorSettlementOperation;
+            }
             reason="persistence_failed"; return false;
         }
-        reason="lesson_saved";
+        reason = text.Length > 0 ? "lesson_saved" : "settled";
         return true;
     }
 
@@ -1090,17 +1398,10 @@ internal sealed partial class MemoryStore
         if (_relationshipReadings.Any(t => t.OperationId == request.RequestId
                 && t.Kind == RelationshipReadingKind))
         { reason = "already_applied"; return false; }
-        string[] cited = (proposal.SourceNoteIds ?? Array.Empty<string>())
-            .Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
-        if (cited.Length == 0)
-        { reason = "reading_without_note"; return false; }
-        var shown = request.Notes.ToDictionary(t => t.EventId, StringComparer.Ordinal);
-        if (cited.Any(id => !shown.ContainsKey(id)))
-        { reason = "note_not_in_request"; return false; }
-        var available = GetReflectionNotes(int.MaxValue).Where(IsNativeSupplyAllowed)
-            .ToDictionary(t => t.EventId, StringComparer.Ordinal);
-        if (cited.Any(id => !available.ContainsKey(id)))
-        { reason = "unavailable_note"; return false; }
+        if (!ResolveReflectionNoteCitations(proposal.SourceNoteIds, request,
+                "reading_without_note", "reading_without_source", allowSamePassFallback: false,
+                out string[] cited, out string[] sources, out string[] preExistingCited, out reason))
+            return false;
         MemoryTurn? parent = null;
         if (proposal.Revises.Length > 0)
         {
@@ -1116,11 +1417,7 @@ internal sealed partial class MemoryStore
         if (parent == null && _relationshipReadings.Any(t => IsActiveLifecycle(t)
                 && MemorySemantics.Similarity(t.Text, text) >= 0.75))
         { reason = "duplicate_reading"; return false; }
-        string[] sources = cited.SelectMany(id => available[id].SourceEventIds)
-            .Distinct(StringComparer.Ordinal).ToArray();
-        if (sources.Length == 0)
-        { reason = "reading_without_source"; return false; }
-        if (!ReflectionVersionsMatch(request, sources, Array.Empty<string>(), cited, proposal.Revises))
+        if (!ReflectionVersionsMatch(request, sources, Array.Empty<string>(), preExistingCited, proposal.Revises))
         { reason="source_version_changed"; return false; }
         if (parent != null && text == parent.Text && SameSupport(cited, parent.SourceNoteIds))
         { reason="no_change"; return false; }
@@ -1255,30 +1552,26 @@ internal sealed partial class MemoryStore
             .FirstOrDefault();
 
     /// <summary>
-    /// One version line. state 说明记录的生命周期；revised_by /
-    /// revises 让新旧两版互为参照，settled_at / settle_reason 保留记录收尾的
-    /// 时间与理由。这些字段都来自已有记录，没有新增持久状态。
+    /// One natural-language version line for main chat recall. Retains time,
+    /// lifecycle status and source attribution without dumping machine field names
+    /// or raw 32-char UUIDs, while matching CaptureRevisitBaseTargets verbatim.
     /// </summary>
     private string DescribeThoughtVersion(MemoryTurn note, IReadOnlyList<MemoryTurn> pool)
     {
-        MemoryTurn? parent = ResolveVersionParent(note, pool);
-        MemoryTurn? child = ResolveVersionChild(note, pool);
-        string state = string.IsNullOrWhiteSpace(note.LifecycleState) ? "active" : note.LifecycleState;
-        var line = new StringBuilder();
-        line.Append(note.Kind=="reflection.lesson"?"lesson=":"note=").Append(note.EventId)
-            .Append("; state=").Append(state)
-            .Append("; revision=").Append(note.Revision)
-            .Append("; at=").Append(note.Timestamp.ToString("O"))
-            .Append("; revises=").Append(parent?.EventId ?? note.SourceEventId);
-        if (child != null)
-            line.Append("; revised_by=").Append(child.EventId).Append('@').Append(child.Revision);
-        if (IsSettledLifecycle(note) || note.SettledAt != null || note.SettleReason.Length > 0)
-            line.Append("; settled_at=").Append(note.SettledAt?.ToString("O") ?? "")
-                .Append("; settle_reason=").Append(note.SettleReason);
-        line.Append("; thought=").Append(note.Text);
+        string time = note.Timestamp == default ? "" : note.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+        var tags = new List<string>();
+        if (note.Kind == "reflection.lesson") tags.Add("互动手艺");
+        if (string.Equals(note.LifecycleState, "superseded", StringComparison.Ordinal))
+            tags.Add("已被后续想法更替");
+        else if (IsSettledLifecycle(note))
+            tags.Add("曾收起" + (note.SettleReason.Length > 0 ? "：" + note.SettleReason : ""));
+        if (note.Revision > 1) tags.Add("由早先想法修订");
+        string meta = string.Join("；", tags);
+        string head = meta.Length > 0
+            ? (time.Length > 0 ? $"[{time} | {meta}] " : $"[{meta}] ")
+            : (time.Length > 0 ? $"[{time}] " : "");
         string sourceContext = DescribeSourceAttribution(note);
-        if (sourceContext.Length > 0) line.Append("; ").Append(sourceContext);
-        return line.ToString();
+        return head + note.Text + (sourceContext.Length > 0 ? " " + sourceContext : "");
     }
 
     public string BuildReflectionRecallContext(string query, IEnumerable<string>? suppliedEventIds = null,
@@ -1301,11 +1594,9 @@ internal sealed partial class MemoryStore
         if (relevant.Count == 0 && semantic!=null && (semantic.Unavailable.Length>0||!semantic.IndexComplete))
             return "[旧想法检索状态] 语义补充检索未完成；当前可用材料不足以断言过去没有相关想法记录。";
         if (relevant.Count == 0)
-            return "[旧想法检索结果] 没有找回莉莉丝当时留下的想法记录。原始对话只能证明当时说了什么。可以从现在的视角重新理解，但不能把现在的推想说成当时确实想过的内容。";
-        var builder = new StringBuilder(ThoughtBlockHeader + "：含活动、收起或已被替换的版本，不是玩家证言]\n");
-        builder.AppendLine(ThoughtLifecycleContract);
-        builder.AppendLine("下面的想法是当时的理解，可能有误；只有随后列出的原始发言能支持谁说过什么。可以不采纳旧想法，不补写当时没有记录的心理史。");
-        builder.AppendLine("at 是这段想法实际写下的时间；它对更早经历的解释属于后来回看，不证明早先那一刻确实如此想过。以玩家原话为准，不放大原话里的拒绝、承诺或动机。");
+            return "[旧想法检索结果] 没有找回你当时留下的想法记录。原始对话只能证明当时说了什么。可以从现在的视角重新理解，但不能把现在的推想说成当时确实想过的内容。";
+        var builder = new StringBuilder(ThoughtBlockHeader + "：含现行、曾收起或已被更替的版本，是当时记下的理解，不是玩家证言]\n");
+        builder.AppendLine("这些是当时回看时写下的理解（若有「曾收起」或「已被更替」仅表示当时的记录状态，你仍可坚持、延伸、重拾或推翻改口；未展开的对应原话附在后面）。");
         foreach (MemoryTurn note in relevant)
             builder.AppendLine(DescribeThoughtVersion(note, relevant));
         var ids = relevant.SelectMany(t => t.SourceEventIds).ToHashSet(StringComparer.Ordinal);
@@ -1331,15 +1622,19 @@ internal sealed partial class MemoryStore
         if (string.IsNullOrWhiteSpace(query))
             return "";
         var supplied = (suppliedEventIds ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
-        if (supplied.Count == 0 && semantic?.RelevancePlan?.Selected.Any(i=>i.Thought!=null)!=true)
+        var scope = MemorySemantics.ParseExperienceRecallQuery(query);
+        string[] identifiers = MemorySemantics.RecallIdentifiers(query);
+        string[] quotes = UtteranceAttribution.LiteralQuotes(query);
+        bool strictLookupQuery = scope != null || identifiers.Length > 0 || quotes.Length > 0
+            || MemorySemantics.IsLowInfoGreetingOrFiller(query);
+        if (semantic?.RelevancePlan != null && semantic.RelevancePlan.Selected.Any(i => i.Thought != null) != true)
+            return "";
+        if (semantic?.RelevancePlan == null && supplied.Count == 0 && strictLookupQuery)
             return "";
         var visible = (suppliedHistoryEventIds ?? Array.Empty<string>()).Where(supplied.Contains)
             .ToHashSet(StringComparer.Ordinal);
         var raw = ReadExperiences().Where(t => supplied.Contains(t.EventId))
             .ToDictionary(t => t.EventId, StringComparer.Ordinal);
-        var scope = MemorySemantics.ParseExperienceRecallQuery(query);
-        string[] identifiers = MemorySemantics.RecallIdentifiers(query);
-        string[] quotes = UtteranceAttribution.LiteralQuotes(query);
         bool InScope(string id) => raw.TryGetValue(id, out var source)
             && (scope == null || scope.AllowsSourceScope(source))
             && identifiers.All(part => MemorySemantics.ContainsRecallIdentifier(source.Text, part))
@@ -1352,7 +1647,7 @@ internal sealed partial class MemoryStore
             && semantic!.DataRoot == _root && semantic.SessionId == _sessionId;
         (string[] Visible, string[] Retrieved, string[] Matched, double Score, double SourceScore, int TypedRank) Basis(MemoryTurn turn)
         {
-            bool textRelevant = MemorySemantics.IsRelevantRecall(query, turn.Text);
+            bool textRelevant = IsRelevantRecallCached(query, turn.Text);
             if(semantic?.RelevancePlan is {} admission)
             {
                 string[] own=admission.Admits(turn.EventId)?turn.SourceEventIds.Where(supplied.Contains).ToArray():Array.Empty<string>();
@@ -1368,8 +1663,8 @@ internal sealed partial class MemoryStore
             string[] retrieved = turn.SourceEventIds.Where(id => supplied.Contains(id)
                 && directRanks?.ContainsKey(id) == true && InScope(id)).ToArray();
             string[] matched = current.Concat(retrieved).Distinct(StringComparer.Ordinal).ToArray();
-            double score = MemorySemantics.Similarity(query, turn.Text);
-            double sourceScore = matched.Select(id => MemorySemantics.Similarity(query, raw[id].Text)).DefaultIfEmpty().Max();
+            double score = SimilarityCached(query, turn.Text);
+            double sourceScore = matched.Select(id => SimilarityCached(query, raw[id].Text)).DefaultIfEmpty().Max();
             return (current, retrieved, matched, score, sourceScore, typedRank);
         }
         var pool = GetReflectionNotes(int.MaxValue, onObservation).Concat(GetSettledNotes(int.MaxValue))
@@ -1422,16 +1717,53 @@ internal sealed partial class MemoryStore
         if (focusNote != null) chosen.Add(focusNote);
         if(semantic?.RelevancePlan is {} relevance)
             chosen=eligible.Where(c=>relevance.Admits(c.Turn.EventId)).Select(c=>c.Turn).ToList();
-        MemoryTurn? lesson = GetReflectionLessons(int.MaxValue)
-            .Where(IsNativeSupplyAllowed)
-            .Select(t => (Turn: t, Basis: Basis(t))).Where(c => c.Basis.Matched.Length > 0 || IndependentlyAdmitted(c.Turn))
-            .OrderByDescending(c => c.Basis.Score).ThenBy(c => c.Basis.TypedRank).ThenByDescending(c => c.Basis.SourceScore)
-            .ThenByDescending(c => c.Turn.Timestamp).Select(c => c.Turn)
-            .FirstOrDefault();
+        MemoryTurn? sparkNote = semantic?.RelevancePlan == null && !strictLookupQuery
+            ? TrySelectChatSparkNote(heads, chosen, Family, query)
+            : null;
+        if (sparkNote != null)
+        {
+            if (chosen.Count < 2) chosen.Add(sparkNote);
+            else chosen[1] = sparkNote;
+        }
+        if (chosen.Count == 0 && supplied.Count == 0) return "";
+        var lessonPool = GetReflectionLessons(int.MaxValue).Where(IsNativeSupplyAllowed).ToArray();
+        MemoryTurn? lesson = null;
+        if (lessonPool.Length > 0)
+        {
+            var queryTokens = ExperienceBodyTokens(query);
+            lock (_experienceLock)
+            {
+                lesson = lessonPool
+                    .Select(t =>
+                    {
+                        var basis = Basis(t);
+                        bool explicitIndep = IndependentlyAdmitted(t);
+                        double textSim = SimilarityCached(query, t.Text);
+                        int tokenHits = queryTokens.Count == 0 ? 0
+                            : ExperienceBodyTokens(t.Text).Count(queryTokens.Contains);
+                        double basisBoost = (basis.Matched.Length > 0 ? 0.30 : 0d)
+                            + (basis.TypedRank < int.MaxValue ? 0.35 : 0d)
+                            + basis.SourceScore * 0.40;
+                        double repeatPenalty = lessonPool.Length > 1
+                            && _recentChatLessons.Contains(t.EventId, StringComparer.Ordinal) ? -0.35 : 0d;
+                        double score = (explicitIndep ? 2.0 : 0d) + textSim * 1.2 + tokenHits * 0.12 + basisBoost + repeatPenalty;
+                        return (Turn: t, Score: score);
+                    })
+                    .OrderByDescending(x => x.Score)
+                    .ThenBy(x => Rank(x.Turn).Priority)
+                    .ThenBy(x => Rank(x.Turn).Rank)
+                    .ThenByDescending(x => x.Turn.Timestamp)
+                    .Select(x => x.Turn)
+                    .FirstOrDefault();
+                if (lesson != null && semantic?.RelevancePlan == null)
+                    RememberSurfaced(_recentChatLessons, lesson.EventId);
+            }
+        }
         if (chosen.Count == 0 && lesson == null) return "";
         var builder = new StringBuilder();
-        builder.AppendLine(ThoughtLifecycleContract);
-        builder.AppendLine("下面是有来源的过往理解，供本次交流参考。知道这些记录不等于它们适用于眼前的话题；是否采用、提出异议或暂时搁置，由你结合这次交流判断。不必逐条评价，不补写当时没有记录的心理，也不把它们当作玩家说过的事实。");
+        builder.AppendLine("下面是你过往留下的理解与相处心得，供这次交流参考。知道这些记录不等于眼前非要照搬；是否采用、换个主意或放到一边，由你结合眼前的气氛自己拿主意。");
+        if (chosen.Any(IsSettledLifecycle))
+            builder.AppendLine("注：标记「曾收起」的想法只代表当时先放下了，如今仍可重新斟酌。");
         int appendedCount = 0;
         bool AppendWhole(string text, string id)
         {
@@ -1445,15 +1777,23 @@ internal sealed partial class MemoryStore
         }
         foreach (MemoryTurn note in chosen)
         {
+            bool isSpark = ReferenceEquals(note, sparkNote);
+            string time = note.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            string settleTag = IsSettledLifecycle(note)
+                ? " | 曾收起" + (note.SettleReason.Length > 0 ? "：" + note.SettleReason : "")
+                : isSpark ? " | 偶发联想（未严格匹配当前字面，可接可不接）" : "";
+            string sourceAttr = DescribeSourceAttribution(note);
             string fragment = (IsSettledLifecycle(note) ? SettledNoteHeader : ChatNoteHeader) + Environment.NewLine
-                + DescribeThoughtVersion(note, pool) + Environment.NewLine
-                + "source_event_ids=" + string.Join(",", note.SourceEventIds) + Environment.NewLine;
+                + "[" + time + settleTag + "] " + note.Text
+                + (sourceAttr.Length > 0 ? Environment.NewLine + sourceAttr : "")
+                + Environment.NewLine;
             var basis = Basis(note);
             string reason = semantic?.RelevancePlan is {} admission ? "independent_"+admission.Role(note.EventId)
-                :ReferenceEquals(note, retrievedNote) ? "retrieved_source" : "focus_exchange_source";
+                : isSpark ? "associative_spark"
+                : ReferenceEquals(note, retrievedNote) ? "retrieved_source" : "focus_exchange_source";
             bool appended = AppendWhole(fragment, note.EventId);
             Observe(onObservation, Fact(note, appended ? ReflectionProjectionStage.Selected : ReflectionProjectionStage.BudgetOmitted,
-                true, note.SourceEventIds, basis.Matched, true, appended) with
+                true, note.SourceEventIds, isSpark ? Array.Empty<string>() : basis.Matched, true, appended) with
                 { FocusSourceIds = basis.Visible, RetrievedSourceIds = basis.Retrieved, SupplyReason = reason,
                     OmissionReason = appended ? "" : "block_budget" });
             if (!appended) continue;
@@ -1466,18 +1806,51 @@ internal sealed partial class MemoryStore
         {
             lesson=selectedLesson;
             var fragment = new StringBuilder();
-            fragment.AppendLine(LessonHeader);
-            fragment.AppendLine("lesson=" + lesson.EventId + "; revision=" + lesson.Revision
-                + "; state=" + lesson.LifecycleState + "; at=" + lesson.Timestamp.ToString("O") + "; text=" + lesson.Text);
-            fragment.AppendLine("source_note_ids=" + string.Join(",", lesson.SourceNoteIds)
-                + "; source_event_ids=" + string.Join(",", lesson.SourceEventIds));
-            fragment.AppendLine("这只是她从过往经历里得出的做法，不是硬规则，也不是玩家说过的事实；可以不同意，也可以完全不提。");
+            string time = lesson.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             string sourceContext = DescribeSourceAttribution(lesson);
+            fragment.AppendLine(LessonHeader);
+            fragment.AppendLine("[" + time + "] " + lesson.Text);
             if (sourceContext.Length > 0) fragment.AppendLine(sourceContext);
+            fragment.AppendLine("这只是你从过往相处里攒下的互动手艺与主意，不是硬规矩；眼下合适就用，不合适就丢开。");
             if (AppendWhole(fragment.ToString(), lesson.EventId)) onSupplied?.Invoke(new[] { lesson });
         }
         return appendedCount > 0 ? builder.ToString() : "";
     }
+    private MemoryTurn? TrySelectChatSparkNote(IReadOnlyList<MemoryTurn> heads, IReadOnlyList<MemoryTurn> chosen,
+        Func<MemoryTurn, string> family, string query)
+    {
+        var candidates = heads.Where(h => !IsSettledLifecycle(h)
+            && chosen.All(c => family(c) != family(h))).ToList();
+        lock (_experienceLock)
+        {
+            int sparkTurn = ++_chatSparkTurnCounter;
+            bool cooldownReady = _lastChatSparkTurn < 0 || sparkTurn - _lastChatSparkTurn >= 3;
+            if (!cooldownReady || candidates.Count == 0)
+                return null;
+            var queryTokens = MemorySemantics.MatchingTokens(query);
+            DateTimeOffset nowUtc = DateTimeOffset.UtcNow;
+            MemoryTurn? pick = candidates
+                .Select(t =>
+                {
+                    double novelty = _recentChatSparkNotes.Contains(t.EventId, StringComparer.Ordinal) ? -1.0 : 0.50;
+                    double cue = queryTokens.Count > 0 && MemorySemantics.MatchingTokens(t.Text).Any(queryTokens.Contains) ? 0.25 : 0d;
+                    double ageDays = Math.Clamp((nowUtc - t.Timestamp).TotalDays, 0d, 60d);
+                    return (Turn: t, Score: novelty + cue + (ageDays / 60d) * 0.15);
+                })
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Turn.Timestamp)
+                .ThenBy(x => x.Turn.EventId, StringComparer.Ordinal)
+                .Select(x => x.Turn)
+                .FirstOrDefault();
+            if (pick != null)
+            {
+                _lastChatSparkTurn = sparkTurn;
+                RememberSurfaced(_recentChatSparkNotes, pick.EventId, 4);
+            }
+            return pick;
+        }
+    }
+
     internal const int ChatThoughtCharLimit = 2400;
     internal const int ChatThoughtByteLimit = 8192;
 }

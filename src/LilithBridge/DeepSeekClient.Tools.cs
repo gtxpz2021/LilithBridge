@@ -62,7 +62,10 @@ internal sealed partial class DeepSeekClient
         bool expressionYield = request.WorkPrototype?.CanYield == true && request.CanChooseNativeTool;
         if (expressionYield) tools.Add(ExpressionYieldToolDefinition());
         var revisitTargets = request.RevisitActionOffer();
-        if (revisitTargets.Length > 0) tools.Add(RevisitActionToolDefinition(revisitTargets));
+        bool staticRevisitTool = revisitTargets.Length > 0
+            || (request.RevisitAction != null && !request.RevisitAttempt.Used
+                && !request.IsCancelled && request.RequestConfig.ReflectionEnabled && request.CanChooseNativeTool);
+        if (staticRevisitTool) tools.Add(RevisitActionToolDefinition());
         offer = new NativeToolOffer(screen, review&&(newReviewRead||retainedResult.Length>0||stop!=null), stop, request.ReviewBudget, request.CanChooseNativeTool,request.MethodHttpOffer,workReference,Reconsider:review&&request.CanStartReviewReconsider,Archive:newReviewRead&&request.ReviewStore?.HasLegacyArchive==true,ExpressionYield:expressionYield, RevisitTargets:revisitTargets);
         return tools.ToArray();
     }
@@ -96,6 +99,9 @@ internal sealed partial class DeepSeekClient
     }
 
     private static bool ParseReviewArguments(string json, out ReviewToolArgs? args, out string error)
+        => ParseReviewArguments(json, null, out args, out error);
+
+    private static bool ParseReviewArguments(string json, DialogueRequest? request, out ReviewToolArgs? args, out string error)
     {
         args = null;
         error = "";
@@ -169,11 +175,20 @@ internal sealed partial class DeepSeekClient
             if(root.TryGetProperty("revisit_id",out var ri))
             {if(mode!="revisit"||ri.ValueKind!=JsonValueKind.String||(revisitId=ri.GetString()??"").Length==0||revisitId.Length>256){error="revisit_id requires revisit mode and a bounded returned identity";return false;}}
             string rootVersion="";
+            ReviewCandidateHandle? resolvedRootHandle = null;
             if(root.TryGetProperty("root_version",out var version))
             {
-                if(version.ValueKind!=JsonValueKind.String || !Guid.TryParseExact(version.GetString(),"N",out _))
-                {error="root_version must be an exact 32-character relationship EventId";return false;}
-                rootVersion=version.GetString()!;
+                if(version.ValueKind!=JsonValueKind.String){error="root_version must be a string";return false;}
+                string rawRoot=(version.GetString()??"").Trim();
+                if(request!=null && request.TryResolveReviewHandle(rawRoot,out var rHandle))
+                {
+                    resolvedRootHandle=rHandle;
+                    rootVersion=rHandle!.RootVersion.Length>0?rHandle.RootVersion
+                        :rHandle.HistoryRef.Contains(':')?rHandle.HistoryRef[(rHandle.HistoryRef.IndexOf(':')+1)..]:"";
+                }
+                else rootVersion=rawRoot;
+                if(!Guid.TryParseExact(rootVersion,"N",out _))
+                {error="root_version must be an exact 32-character relationship EventId or returned short handle (#N)";return false;}
             }
             if(mode is "history" or "artifact" or "revisit" or "thought" && (refs.Count>0 || includePrior))
             {error="history uses typed history_ref; source_refs and prior thought are unsupported";return false;}
@@ -186,8 +201,22 @@ internal sealed partial class DeepSeekClient
             {error="history_find must be a literal of at most 120 characters";return false;}
             if(root.TryGetProperty("history_scope",out var hs))
             {if(hs.ValueKind!=JsonValueKind.String||(scope=hs.GetString()??"") is not ("focus" or "versions" or "sources" or "record")){error="history_scope invalid";return false;}}
+            ReviewCandidateHandle? resolvedRefHandle = null;
             if(root.TryGetProperty("history_ref",out var hr))
-            {if(hr.ValueKind!=JsonValueKind.String||(historyRef=hr.GetString()??"").Length>160||!System.Text.RegularExpressions.Regex.IsMatch(historyRef,@"^(reading|note|lesson|utterance|day):[A-Za-z0-9_.:-]{1,128}$")){error="history_ref invalid";return false;}}
+            {
+                if(hr.ValueKind!=JsonValueKind.String){error="history_ref invalid";return false;}
+                string rawRef=(hr.GetString()??"").Trim();
+                if(rawRef.StartsWith('#'))
+                {
+                    if(request==null || !request.TryResolveReviewHandle(rawRef,out var hHandle)){error="history_ref short handle not offered in this turn";return false;}
+                    resolvedRefHandle=hHandle;
+                    historyRef=hHandle!.HistoryRef;
+                }
+                else historyRef=rawRef;
+                if(historyRef.Length>160||!System.Text.RegularExpressions.Regex.IsMatch(historyRef,@"^(reading|note|lesson|utterance|day):[A-Za-z0-9_.:-]{1,128}$")){error="history_ref invalid";return false;}
+            }
+            if(rootVersion.Length==0 && (resolvedRefHandle ?? resolvedRootHandle) is { RootVersion.Length: > 0 } autoRoot)
+                rootVersion=autoRoot.RootVersion;
             if(root.TryGetProperty("history_cursor",out var hc))
             {if(hc.ValueKind!=JsonValueKind.String||(cursor=hc.GetString()??"").Length>160){error="history_cursor invalid";return false;}}
             if(root.TryGetProperty("before_revision",out var br))
@@ -251,7 +280,7 @@ internal sealed partial class DeepSeekClient
             else if(hasMessageFields){error="message fields require message mode";return false;}
             if(!ParseExperienceTraversalOptions(root,mode,out var traversal,out error))return false;
             if(!ParseContextDiscoveryOptions(root,mode,out var discovery,out error))return false;
-            if(!ParseThoughtReadOptions(root,mode,scope,historyRef,out var thoughtVersion,out var thoughtDomain,out error))return false;
+            if(!ParseThoughtReadOptions(root,mode,scope,historyRef,resolvedRefHandle,out var thoughtVersion,out var thoughtDomain,out error))return false;
             args = new ReviewToolArgs(questionText, mode, query, refs, includePrior, offset,operationId,rootVersion,HistoryOptions:mode is "history" or "artifact" or "revisit" or "thought"?new ChatHistoryReadOptions(scope,historyRef,before,offset,cursor,bodyChars,historyFind):null,Archive:archive,Message:message,Discovery:discovery,Traversal:traversal,RevisitId:revisitId,ThoughtVersion:thoughtVersion,ThoughtDomain:thoughtDomain);
             return true;
         }
@@ -406,7 +435,7 @@ internal sealed partial class DeepSeekClient
         {
             if (!offer.Review && offer.StopTarget == null)
                 return RejectCompletion(envelope, "rejected_review_request", "Review was not declared for this HTTP");
-            if (!ParseReviewArguments(args.GetString()!, out ReviewToolArgs? reviewArgs, out string argumentError))
+            if (!ParseReviewArguments(args.GetString()!, envelope.DialogueRequest, out ReviewToolArgs? reviewArgs, out string argumentError))
             {
                 envelope.PendingNativeCall = new PendingNativeCall(NativeToolKind.Review, id.GetString()!, message.Clone(),
                     null, "invalid_arguments:" + argumentError, extras);
@@ -554,6 +583,10 @@ internal sealed partial class DeepSeekClient
                 }
                 object? workReceipt = request.WorkPrototype?.ReceiptMessage();
                 if(workReceipt!=null)messages.Add(workReceipt);
+                object? revisitOfferMsg = round > 0 && offer.RevisitTargets is { Length: > 0 } && request.RevisitToolTargets.Count > 0
+                    ? new { role = "system", content = RevisitActionOfferContext(offer.RevisitTargets) }
+                    : null;
+                if (revisitOfferMsg != null) messages.Add(revisitOfferMsg);
                 // Optional previous-turn work data is separate from native tool protocol.
                 // Fit after declarations/host receipts, against the complete adapted request.
                 object? previousWork = FitPreviousWorkMaterial(config, payload, messages, request);
@@ -578,6 +611,7 @@ internal sealed partial class DeepSeekClient
                 }
                 finally
                 {
+                    if(revisitOfferMsg!=null)messages.Remove(revisitOfferMsg);
                     if(previousWork!=null)messages.Remove(previousWork);
                     if(workReceipt!=null)messages.Remove(workReceipt);
                     if(methodHost!=null)messages.Remove(methodHost);

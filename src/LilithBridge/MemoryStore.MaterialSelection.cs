@@ -93,8 +93,8 @@ internal sealed partial class MemoryStore
         bool explicitRelationship = LooksLikeRelationshipQuestion(text);
         MemoryTurn? selected = candidates
             .Where(t => explicitRelationship || t.SourceEventIds.Any(sourceIds.Contains)
-                || MemorySemantics.IsRelevantRecall(text, t.Text))
-            .OrderByDescending(t => MemorySemantics.Similarity(text, t.Text))
+                || IsRelevantRecallCached(text, t.Text))
+            .OrderByDescending(t => SimilarityCached(text, t.Text))
             .ThenByDescending(t => t.Timestamp)
             .FirstOrDefault();
         string reason = selected == null

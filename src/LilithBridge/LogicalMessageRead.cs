@@ -11,8 +11,11 @@ internal sealed record ExperienceBodyView(string Block, string DataJson, IReadOn
 {
     // Renderer-owned selection receipt. A rendered neighbour is body supply,
     // not another semantic seed. Never reconstruct this from free JSON/text.
+    internal string ProgramBlockId { get; init; } = "";
+    internal IReadOnlyList<LogicalDialogueUnit> Units { get; init; } = Array.Empty<LogicalDialogueUnit>();
     internal IReadOnlyList<string> DirectEventIds {get;init;} = Array.Empty<string>();
     internal IReadOnlyList<string> AnchorEventIds {get;init;} = Array.Empty<string>();
+    internal IReadOnlyList<string> SparkEventIds {get;init;} = Array.Empty<string>();
 }
 internal sealed record LogicalMessageReadOptions(string Reference = "", string Cursor = "", int Offset = 0, int BodyChars = 0);
 internal sealed record LogicalMessagePage([property: JsonIgnore] LogicalDialogueUnit Unit,
@@ -156,15 +159,14 @@ internal static class LogicalMessageProjection
 
 internal sealed partial class MemoryStore
 {
-    internal static ExperienceBodyView RenderExperienceBodyView(IReadOnlyList<MemoryTurn> turns, string blockId = "experience_recall", IEnumerable<string>? directEventIds = null, IEnumerable<string>? anchorEventIds = null)
+    internal static ExperienceBodyView RenderExperienceBodyView(IReadOnlyList<MemoryTurn> turns, string blockId = "experience_recall", IEnumerable<string>? directEventIds = null, IEnumerable<string>? anchorEventIds = null, IEnumerable<string>? sparkEventIds = null, bool includeHeader = true)
     {
         if (turns.Count == 0) return new("", "", Array.Empty<RequestSourceBody>());
         var units = turns is LogicalDialogueSelection selected ? selected.Units : LogicalDialogueCatalog.Build(turns).Units;
-        var revisions = turns.Where(t => t.NaturalMemoryReadContext.Length > 0).Select(t => t.EventId).ToArray();
-        string data = JsonSerializer.Serialize(new { program_block_id = blockId,
-            qualification = "historical_utterances_not_current_facts; program_gap_markers_are_not_source_text; no_required_use_or_mention",
-            messages = units.Select(unit => LogicalMessageProjection.Message(unit, 0, unit.Text, true, null, "",
-                revisionAssociations: revisions)).ToArray() }, DialogueMaterialEnvelope.DataJson);
+        var revisions = turns.Where(t => t.NaturalMemoryReadContext.Length > 0).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        var sparkSet = (sparkEventIds ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
+        var textBuilder = new StringBuilder();
+        if (includeHeader) textBuilder.AppendLine("[找回的过往原话（历史片段，非当前事实）]");
         var bodies = new List<RequestSourceBody>();
         for (int at = 0; at < units.Count; at++)
         {
@@ -178,11 +180,27 @@ internal sealed partial class MemoryStore
                         raw.Role, raw.Origin, raw.DeliveryState, span.OffsetInUnit, span.Chars);
                     if (body.Qualified) bodies.Add(body);
                 }
+            string who = unit.Role == "user" ? "玩家" : "莉莉丝";
+            string time = unit.Timestamp == default ? "" : unit.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            string head = time.Length > 0 ? time + " | " + who : who;
+            bool isSpark = unit.Members.Any(m => sparkSet.Contains(m.EventId));
+            string tag = isSpark ? "[联想碎片]" : "";
+            var notes = new List<string>();
+            if (!unit.HeadKnown || !unit.TailKnown || unit.HasGaps) notes.Add("片段可能不完整");
+            if (unit.Members.Any(m => revisions.Contains(m.EventId))) notes.Add("后有自然更正");
+            var firstReport = unit.Members.Select(m => UtteranceAttribution.Reported(m.Role, m.Text)).FirstOrDefault(r => r != null);
+            if (firstReport != null) notes.Add("含转述前缀“" + firstReport.source_label + "”未核实");
+            string noteSuffix = notes.Count > 0 ? "（" + string.Join("；", notes) + "）" : "";
+            string unitText = unit.Text.Replace("\n[logical_source_gap: non-contiguous recorded fragments; no missing text supplied]\n", " …… ", StringComparison.Ordinal);
+            textBuilder.AppendLine($"- {tag}[{head}]{noteSuffix} {unitText}");
         }
-        return new("[找回的原始发言（按消息组织）]\n" + data + "\n", data, bodies) {
+        return new(textBuilder.ToString(), "", bodies) {
+            ProgramBlockId = blockId,
+            Units = units,
             AnchorEventIds=(anchorEventIds??Array.Empty<string>()).Where(id=>turns.Any(t=>t.EventId==id)).Distinct(StringComparer.Ordinal).ToArray(),
             DirectEventIds=(directEventIds ?? (turns as LogicalDialogueSelection)?.DirectHitEventIds ?? Array.Empty<string>())
-                .Where(id=>turns.Any(t=>t.EventId==id)).Distinct(StringComparer.Ordinal).ToArray()
+                .Where(id=>turns.Any(t=>t.EventId==id)).Distinct(StringComparer.Ordinal).ToArray(),
+            SparkEventIds=sparkSet.Where(id=>turns.Any(t=>t.EventId==id)).ToArray()
         };
     }
 

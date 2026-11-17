@@ -36,8 +36,7 @@ internal static class InitiativeSource
         {
             candidates.Add(new InitiativeCandidate(
                 "unfinished_topic",
-                "历史话题线索（记录时间 " + lastScene.Timestamp.ToString("O") + "；来源 "
-                    + string.Join(",", lastScene.SourceEventIds) + "；是否继续需结合当前情况判断）：" + lastScene.TopicText,
+                "历史话题线索（记录时间 " + lastScene.Timestamp.ToString("O") + "；是否继续需结合当前情况判断）：" + lastScene.TopicText,
                 0.90,
                 lastScene.TopicText));
         }
@@ -58,7 +57,7 @@ internal static class InitiativeSource
                 "最近四分钟检测到触碰输入：" + JsonSerializer.Serialize(state.RecentEvents
                     .Where(e => e.Timestamp >= DateTimeOffset.UtcNow - TimeSpan.FromMinutes(4)
                         && e.Kind is SceneEventKind.Touch or SceneEventKind.NativeHitArea)
-                    .Select(e => new { event_id=e.EventId, at=e.Timestamp, kind=e.Kind.ToString(), actor=e.Actor, area=e.Area }), DialogueMaterialEnvelope.DataJson)
+                    .Select(e => new { at=e.Timestamp, kind=e.Kind.ToString(), actor=e.Actor, area=e.Area }), DialogueMaterialEnvelope.DataJson)
                     + "；这里只记录输入事件，不预设双方感受或关系变化。",
                 0.60));
         }
@@ -67,9 +66,14 @@ internal static class InitiativeSource
             && appChangeAllowed
             && state.HasRecentAppChange(TimeSpan.FromSeconds(90)))
         {
+            string categoryName = AppCategoryName(state.ForegroundApp?.Category ?? "电脑");
+            string title = PrivacySafety.RedactWindowTitle(state.ForegroundApp?.WindowTitle ?? "");
+            string detail = title.Length > 0 && !string.Equals(title, state.ForegroundApp?.ProcessName, StringComparison.OrdinalIgnoreCase)
+                ? categoryName + "（窗口：" + title + "）"
+                : categoryName;
             candidates.Add(new InitiativeCandidate(
                 "app_changed",
-                "玩家现在正在使用：" + AppCategoryName(state.ForegroundApp?.Category ?? "电脑"),
+                "玩家现在正在使用：" + detail,
                 0.50));
         }
 
@@ -80,7 +84,7 @@ internal static class InitiativeSource
                 && e.Actor.Equals("player", StringComparison.OrdinalIgnoreCase) && e.Details == state.LastUserText);
             if (utterance != null)
                 lateReason += " 最近一条由玩家提交的原话（引语中的人物及意图未核实）："
-                    + JsonSerializer.Serialize(new { event_id=utterance.EventId, at=utterance.Timestamp, submitted_by=utterance.Actor, text=utterance.Details }, DialogueMaterialEnvelope.DataJson)
+                    + JsonSerializer.Serialize(new { at=utterance.Timestamp, submitted_by=utterance.Actor, text=utterance.Details }, DialogueMaterialEnvelope.DataJson)
                     + "；请按原话和语境理解，不将否定、转述或提问改写为玩家的早睡承诺。";
             candidates.Add(new InitiativeCandidate(
                 "late_night",

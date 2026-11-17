@@ -93,6 +93,9 @@ internal sealed partial class BridgeController
         // Observe the UI before cancelling ownership; an appeared bubble counts
         // in full, while an unconfirmed accepted call remains uncertain.
         NativeBubblePresenter.FlushObservedAppearance();
+        bool wasActiveOrUnfinished = _activeDialogue != null && (_requestPending || _queuedReply != null
+            || _aiSpeechActive || NativeBubblePresenter.HasPendingReply
+            || _reviewHandoff.HasRunning || !_activeDialogue.DeliveryCompleted);
         if(!preserveReview)_reviewHandoff.Stop();
         _activeDialogue?.PreparationTrace?.Finish("cancelled");
         // Nullable-owner proactive callbacks share this cancellation generation.
@@ -116,9 +119,12 @@ internal sealed partial class BridgeController
         CancelAiSpeech(reason);
         // Ownership is cancelled, callbacks reject this request, and both the
         // controller queue and presenter have now been synchronously cleared.
-        _memory.EndReflectionDelivery(cancelled.UserEventId, cancelled.Id, "cancelled", false);
-        NativeEventLog.Trace("dialogue.cancelled", "mod", reason == "sleep" ? "system" : "player", "ordinary dialogue cancelled",
-            "request_id=" + cancelled.Id + ";http_attempts=" + cancelled.HttpAttempts + ";reason=" + reason);
+        if (wasActiveOrUnfinished)
+        {
+            _memory.EndReflectionDelivery(cancelled.UserEventId, cancelled.Id, "cancelled", false);
+            NativeEventLog.Trace("dialogue.cancelled", "mod", reason == "sleep" ? "system" : "player", "ordinary dialogue cancelled",
+                "request_id=" + cancelled.Id + ";http_attempts=" + cancelled.HttpAttempts + ";reason=" + reason);
+        }
     }
 
     [HideFromIl2Cpp]

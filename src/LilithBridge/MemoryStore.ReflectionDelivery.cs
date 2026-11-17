@@ -155,7 +155,6 @@ internal sealed partial class MemoryStore
             return "terminal_unknown; delivery_receipt_stale; archived display differs from receipt; not a verified complete exchange";
         if (receipt.Outcome == "open" && receipt.SessionId != _sessionId)
             return "interrupted_unknown; only archived displayed prefix is evidence; not a complete exchange";
-        return "outcome=" + receipt.Outcome + ";complete=" + ReflectionDeliveryComplete(user, archivedIds, archive)
-            + ";request_id=" + receipt.RequestId + ";last_shown_event_id=" + receipt.LastShownEventId;
+        return "outcome=" + receipt.Outcome + ";complete=" + ReflectionDeliveryComplete(user, archivedIds, archive);
     }
 }

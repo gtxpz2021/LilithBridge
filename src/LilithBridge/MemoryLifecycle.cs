@@ -210,10 +210,19 @@ internal static class MemoryLifecycle
 
     public static bool IsStale(MemoryTurn turn, DateTimeOffset now)
     {
-        return turn != null
-            && turn.Strength <= MinStrength
-            && turn.Importance < 0.25
-            && (now - turn.UpdatedAt).TotalDays >= 30d;
+        if (turn == null || turn.Strength > MinStrength)
+            return false;
+        double daysSinceUpdate = (now - turn.UpdatedAt).TotalDays;
+        if (daysSinceUpdate < 30d)
+            return false;
+        if (turn.Importance < 0.25)
+            return true;
+        bool reinforced = turn.CreatedAt != default && turn.LastReinforcedAt > turn.CreatedAt.AddMinutes(5);
+        return !reinforced
+            && !string.Equals(turn.Category, "profile", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(turn.Role, "user", StringComparison.OrdinalIgnoreCase)
+            && turn.Importance < 0.55
+            && daysSinceUpdate >= 60d;
     }
 
     public static bool Merge(

@@ -6,7 +6,7 @@ namespace LilithBridge;
 internal sealed partial class DeepSeekClient
 {
     private static bool ParseThoughtReadOptions(JsonElement root, string mode, string scope, string reference,
-        out string version, out string domain, out string error)
+        ReviewCandidateHandle? resolvedRefHandle, out string version, out string domain, out string error)
     {
         version = ""; domain = "reflection"; error = "";
         bool supplied = root.TryGetProperty("thought_version", out var v);
@@ -28,12 +28,27 @@ internal sealed partial class DeepSeekClient
             { error = "retained_b1 browses focus only; follow read_with for an exact version"; return false; }
             return true;
         }
-        if (supplied && (v.ValueKind != JsonValueKind.String || (version = v.GetString() ?? "").Length != 64 || !version.All(Uri.IsHexDigit)))
-        { error = "thought_version must be the returned exact version"; return false; }
+        if (supplied)
+        {
+            if (v.ValueKind != JsonValueKind.String)
+            { error = "thought_version must be the returned exact version"; return false; }
+            string rawVersion = (v.GetString() ?? "").Trim();
+            if (resolvedRefHandle != null && resolvedRefHandle.VersionFingerprint.Length == 64 && rawVersion.StartsWith('#'))
+                version = resolvedRefHandle.VersionFingerprint;
+            else if (rawVersion.Length == 64 && rawVersion.All(Uri.IsHexDigit))
+                version = rawVersion;
+            else
+            { error = "thought_version must be the returned exact version"; return false; }
+        }
+        else if (resolvedRefHandle != null && resolvedRefHandle.VersionFingerprint.Length == 64)
+        {
+            version = resolvedRefHandle.VersionFingerprint;
+            supplied = true;
+        }
         if (scope == "focus" ? supplied || reference.Length > 0
             : scope is not ("record" or "sources") || !supplied || !(reference.StartsWith("note:", StringComparison.Ordinal)
                 || reference.StartsWith("lesson:", StringComparison.Ordinal) || reference.StartsWith("reading:", StringComparison.Ordinal)))
-        { error = "thought focus browses; record/sources require an exact thought ref and version"; return false; }
+        { error = "thought focus browses; record/sources require a returned thought ref (#N) or exact ref and version"; return false; }
         return true;
     }
 
@@ -61,35 +76,48 @@ internal sealed partial class DeepSeekClient
 
     private static string ThoughtReadJson(ThoughtReadPacket p, DialogueRequest request)
     {
-        object? RecordLocator(ThoughtReadItem i) => i.Material.Ref.Kind is "note" or "lesson" or "reading"
-            ? new { mode = "thought", history_scope = "record", history_ref = i.Material.Ref.Key, thought_version = i.Material.VersionFingerprint } : null;
+        string RegisterItem(ThoughtReadItem i) => request.RegisterReviewHandle("thought", i.Material.Ref.Key,
+            i.Material.Ref.Kind == "day" ? i.Turn.EventId : "", i.Material.VersionFingerprint);
+        object? RecordLocator(ThoughtReadItem i, string alias) => i.Material.Ref.Kind is "note" or "lesson" or "reading"
+            ? new { mode = "thought", history_scope = "record", history_ref = alias } : null;
+        string? sourceAlias = p.Options.Reference.Length > 0
+            ? request.RegisterReviewHandle("thought", p.Options.Reference, versionFingerprint: p.RequestedVersion)
+            : null;
         return ReviewContext.Serialize(new {
             mode = "thought", status = p.Status, reason = p.Reason, history_scope = p.Options.Scope,
             coverage = "仅本页当前合资格的思想、理解或声明来路，未列不等于不存在；生命周期不代表现在认同，目录摘句不等于全文已读。",
             order = p.Options.Scope == "focus" ? p.Query.Length == 0 ? "written_time_descending" : "query_lexical_order_then_written_time;not_importance;all_qualified_rows_pageable" : "declared_record_or_sources",
             query = p.Query, available_count_at_read = p.Status == "ok" ? (int?)p.AvailableCount : null,
             next_action = p.Status == "ok" ? null : "可在权限与剩余阅读预算允许时重新定位；本次未供正文。",
-            source_anchor = p.Anchor == null ? null : new { history_ref = p.Anchor.Ref.Key, version = p.Anchor.VersionFingerprint },
-            records = p.Items.Select(i => new {
-                history_ref = i.Material.Ref.Key, version = i.Material.VersionFingerprint, kind = i.Turn.Kind,
-                at = i.Turn.Timestamp, origin = i.Turn.Origin, validity = i.Turn.Validity,
-                lifecycle = i.Turn.LifecycleState, state = i.Material.State, revision = i.Turn.Revision,
-                body_kind = p.Options.Scope == "focus" ? "directory_excerpt" : p.Options.Scope == "record" ? "record_text" : "source_locator",
-                text = i.Text, offset = i.Offset, total_chars = i.Turn.Text.Length,
-                record_complete = p.Options.Scope == "record" && i.Offset == 0 && i.Text.Length == i.Turn.Text.Length,
-                source_context = i.Material.Scope,
-                read_record_with = RecordLocator(i),
-                read_sources_with = i.Material.Ref.Kind is "note" or "lesson" or "reading" ? new { mode = "thought", history_scope = "sources",
-                    history_ref = i.Material.Ref.Key, thought_version = i.Material.VersionFingerprint } : null,
-                original_message = i.MessageRef.Length > 0 ? new { mode = "message", message_ref = i.MessageRef } : null,
-                day_artifact = i.Material.Ref.Kind == "day" && Guid.TryParseExact(i.Turn.EventId, "N", out _) ? new { mode = "artifact", root_version = i.Turn.EventId } : null,
-                next_locator = p.Options.Scope == "record" && i.NextOffset.HasValue ? new { mode = "thought", history_scope = "record",
-                    history_ref = i.Material.Ref.Key, thought_version = i.Material.VersionFingerprint,
-                    offset = i.NextOffset, history_cursor = i.NextCursor } : null }),
+            source_anchor = p.Anchor == null ? null : new { history_ref = request.RegisterReviewHandle("thought",
+                p.Anchor.Ref.Key, versionFingerprint: p.Anchor.VersionFingerprint) },
+            records = p.Items.Select(i =>
+            {
+                string alias = RegisterItem(i);
+                string? dayAlias = i.Material.Ref.Kind == "day" && Guid.TryParseExact(i.Turn.EventId, "N", out _)
+                    ? request.RegisterReviewHandle("artifact", "day:" + i.Turn.EventId, rootVersion: i.Turn.EventId)
+                    : null;
+                return new {
+                    history_ref = alias, kind = i.Turn.Kind,
+                    at = i.Turn.Timestamp, origin = i.Turn.Origin, validity = i.Turn.Validity,
+                    lifecycle = i.Turn.LifecycleState, state = i.Material.State, revision = i.Turn.Revision,
+                    body_kind = p.Options.Scope == "focus" ? "directory_excerpt" : p.Options.Scope == "record" ? "record_text" : "source_locator",
+                    text = i.Text, offset = i.Offset, total_chars = i.Turn.Text.Length,
+                    record_complete = p.Options.Scope == "record" && i.Offset == 0 && i.Text.Length == i.Turn.Text.Length,
+                    source_context = i.Material.Scope,
+                    read_record_with = RecordLocator(i, alias),
+                    read_sources_with = i.Material.Ref.Kind is "note" or "lesson" or "reading"
+                        ? new { mode = "thought", history_scope = "sources", history_ref = alias } : null,
+                    original_message = i.MessageRef.Length > 0 ? new { mode = "message", message_ref = i.MessageRef } : null,
+                    day_artifact = dayAlias != null ? new { mode = "artifact", root_version = dayAlias } : null,
+                    next_locator = p.Options.Scope == "record" && i.NextOffset.HasValue
+                        ? new { mode = "thought", history_scope = "record", history_ref = alias,
+                            offset = i.NextOffset, history_cursor = i.NextCursor } : null
+                };
+            }),
             next_locator = p.NextCursor.Length == 0 ? null : p.Options.Scope == "focus"
                 ? (object)new { mode = "thought", history_scope = "focus", query = p.Query, history_cursor = p.NextCursor }
-                : new { mode = "thought", history_scope = "sources", history_ref = p.Options.Reference,
-                    thought_version = p.RequestedVersion, history_cursor = p.NextCursor },
+                : new { mode = "thought", history_scope = "sources", history_ref = sourceAlias, history_cursor = p.NextCursor },
             used_calls = request.ReviewCalls, remaining_calls = Math.Max(0, ReviewContext.MaxCallsPerTurn - request.ReviewCalls),
             write_references_added = false
         });

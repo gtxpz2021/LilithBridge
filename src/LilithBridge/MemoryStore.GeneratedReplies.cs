@@ -25,7 +25,7 @@ internal sealed partial class MemoryStore
         if (bytes > 8 * 1024 * 1024) return;
         if (_generatedReadCache.Remove(key, out var old))
             _generatedReadCacheBytes -= (long)old.MetadataBytes.Length + old.BodyBytes.Length;
-        if (_generatedReadCache.Count >= 64 || _generatedReadCacheBytes + bytes > 8 * 1024 * 1024)
+        if (_generatedReadCache.Count >= 1024 || _generatedReadCacheBytes + bytes > 8 * 1024 * 1024)
         { _generatedReadCache.Clear(); _generatedReadCacheBytes = 0; }
         _generatedReadCache[key] = new(metadataBytes, bodyBytes, metadata, snapshot);
         _generatedReadCacheBytes += bytes;
@@ -36,8 +36,14 @@ internal sealed partial class MemoryStore
         => "generated/" + SemanticTextHash(JsonSerializer.Serialize(new[] { session, request, attempt, sourceUser }));
     private string GeneratedKey(ApiResult reply) => GeneratedReplyKey(_sessionId, reply.RequestId,
         reply.Response.AttemptId, reply.SourceUserEventId);
-    private static bool ValidGeneratedKey(string key) => key != null && key.Length == 74 && key.StartsWith("generated/", StringComparison.Ordinal)
-        && key.AsSpan(10).ToString().All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+    private static bool ValidGeneratedKey(string key)
+    {
+        if (key == null || key.Length != 74 || !key.StartsWith("generated/", StringComparison.Ordinal)) return false;
+        foreach (char c in key.AsSpan(10))
+            if (c is not ((>= '0' and <= '9') or (>= 'a' and <= 'f')))
+                return false;
+        return true;
+    }
     private string GeneratedPath(string key, string extension) => Path.Combine(GeneratedRepliesDirectory, key[10..] + extension);
     private static string GeneratedHash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
@@ -259,7 +265,7 @@ internal sealed partial class MemoryStore
         lock (_generatedRepliesLock)
         {
             using var validation=BeginSourceValidation();
-            try { var snapshot=LoadGenerated(key); return snapshot != null && QualifyGeneratedReply(snapshot).Permitted ? snapshot : null; }
+            try { var snapshot=LoadGenerated(key); return snapshot != null && _longTermEnabled && _historyArchiveRequired && QualifyGeneratedReplyInScope(snapshot, snapshot).Permitted ? snapshot : null; }
             catch { return null; }
         }
     }
@@ -273,9 +279,9 @@ internal sealed partial class MemoryStore
             using var validation=BeginSourceValidation();
             try { return Directory.EnumerateFiles(GeneratedRepliesDirectory,"*.json").Select(p=>"generated/"+Path.GetFileNameWithoutExtension(p))
                 .Select(ReadGeneratedReply).Where(s=>s!=null).Select(s=>s!)
-                .GroupBy(s=>s.Metadata.FinalPublicCanonical?.GenerationId??s.Metadata.PublicExpression?.FinalProgress?.GenerationId??s.Key)
-                .Select(g=>g.OrderByDescending(s=>s.Metadata.FinalPublicCanonical!=null).ThenByDescending(s=>s.Metadata.PublicExpression?.FinalProgress?.Revision??0).ThenByDescending(s=>s.Metadata.CapturedAtUtc).First())
-                .OrderBy(s=>s.Metadata.CapturedAtUtc).ToArray(); }
+                .GroupBy(s=>s.ReadMetadata.FinalPublicCanonical?.GenerationId??s.ReadMetadata.PublicExpression?.FinalProgress?.GenerationId??s.Key)
+                .Select(g=>g.OrderByDescending(s=>s.ReadMetadata.FinalPublicCanonical!=null).ThenByDescending(s=>s.ReadMetadata.PublicExpression?.FinalProgress?.Revision??0).ThenByDescending(s=>s.ReadMetadata.CapturedAtUtc).First())
+                .OrderBy(s=>s.ReadMetadata.CapturedAtUtc).ToArray(); }
             catch { return Array.Empty<GeneratedReplySnapshot>(); }
         }
     }
@@ -290,14 +296,29 @@ internal sealed partial class MemoryStore
             return QualifyGeneratedReplyInScope(snapshot);
         }
     }
-    private GeneratedReplyQualification QualifyGeneratedReplyCore(GeneratedReplySnapshot snapshot)
+    private sealed record QualifiedGeneratedMemo(long MutationStamp, string VersionFingerprint, string Body,
+        MentionReadPolicy? MentionPolicy, NativeDialoguePolicy? NativePolicy, string DataRoot, GeneratedReplyQualification Result);
+    private readonly Dictionary<string, QualifiedGeneratedMemo> _qualifiedGeneratedCache = new(StringComparer.Ordinal);
+
+    private GeneratedReplyQualification QualifyGeneratedReplyCore(GeneratedReplySnapshot snapshot, GeneratedReplySnapshot? preloaded = null)
     {
             try
             {
-                var fresh=LoadGenerated(snapshot.Key);
+                var fresh = preloaded ?? LoadGenerated(snapshot.Key);
                 if (fresh == null || fresh.VersionFingerprint != snapshot.VersionFingerprint || fresh.Body != snapshot.Body)
                     return new(false,"stored_body_or_state_changed");
-                var m=fresh.Metadata; var denied=SuppressedExperienceIds();
+                long stamp = Volatile.Read(ref _sourceMutationStamp);
+                bool canStoreMemo = _nativeDialoguePolicy.Value?.Authorization == null
+                    && CurrentSourceValidation is not { Frames.Count: > 0 };
+                var mentionPolicy = _mentionReadPolicy.Value;
+                var nativePolicy = _nativeDialoguePolicy.Value;
+                string dataRoot = DataPaths.Root();
+                if (canStoreMemo && _qualifiedGeneratedCache.TryGetValue(snapshot.Key, out var cachedMemo)
+                    && cachedMemo.MutationStamp == stamp && cachedMemo.VersionFingerprint == fresh.VersionFingerprint
+                    && cachedMemo.Body == fresh.Body && Equals(cachedMemo.MentionPolicy, mentionPolicy)
+                    && Equals(cachedMemo.NativePolicy, nativePolicy) && cachedMemo.DataRoot == dataRoot)
+                    return cachedMemo.Result;
+                var m=fresh.ReadMetadata; var denied=SuppressedExperienceIds();
                 if (m.SchemaVersion == 2 && !PublicExpressionSourcesPermitted(fresh))
                     return new(false,"public_expression_source_unavailable_or_not_transferable");
                 var raw=GetExperienceValidationView();
@@ -314,7 +335,7 @@ internal sealed partial class MemoryStore
                 foreach(string id in ids)
                 {
                     if(!raw.TryGetUnique(id,out var match) || !IsMentionAllowed(match) || !IsNativeSupplyAllowed(match)) return new(false,"source_unavailable_or_not_permitted");
-                    string fingerprint=LogicalDialogueCatalog.RawFingerprint(match);
+                    string fingerprint=raw.GetRawFingerprint(match);
                     if (id == m.SourceUserEventId && (m.SourceUserFingerprint.Length == 0 || match.Role != "user"
                         || fingerprint != m.SourceUserFingerprint)) return new(false,"source_user_changed_or_unverified");
                     foreach(var shown in m.ShownRanges.Where(r=>r.EventId==id))
@@ -322,8 +343,16 @@ internal sealed partial class MemoryStore
                 }
                 var qualificationView=new MemoryTurn { EventId=m.Key,SourceEventId=m.SourceUserEventId,SourceEventIds=ids,
                     SessionId=m.SessionId,Role="assistant",Origin=m.Origin,Kind="generated.public",Text=fresh.Body,DeliveryState="generated_not_spoken" };
-                return IsMentionAllowed(qualificationView)&&IsNativeSupplyAllowed(qualificationView)
-                    ? new(true,"generated_public_only;display_ranges_separate;not_told_or_read_receipt") : new(false,"body_not_permitted");
+                var outcome = IsMentionAllowed(qualificationView)&&IsNativeSupplyAllowed(qualificationView)
+                    ? new GeneratedReplyQualification(true,"generated_public_only;display_ranges_separate;not_told_or_read_receipt")
+                    : new GeneratedReplyQualification(false,"body_not_permitted");
+                if (canStoreMemo && stamp == Volatile.Read(ref _sourceMutationStamp))
+                {
+                    if (_qualifiedGeneratedCache.Count >= 1024) _qualifiedGeneratedCache.Clear();
+                    _qualifiedGeneratedCache[snapshot.Key] = new(stamp, fresh.VersionFingerprint, fresh.Body,
+                        mentionPolicy, nativePolicy, dataRoot, outcome);
+                }
+                return outcome;
             }
             catch { return new(false,"store_or_permission_unavailable"); }
     }

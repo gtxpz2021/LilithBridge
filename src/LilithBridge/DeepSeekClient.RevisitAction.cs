@@ -9,27 +9,39 @@ namespace LilithBridge;
 internal sealed partial class DeepSeekClient
 {
     internal const string RevisitActionToolName = "revisit_thought";
-    private static object RevisitActionToolDefinition(ThoughtRevisitTarget[] targets) => new
+    // Keep the tool schema completely static so DeepSeek KV prefix cache never
+    // invalidates when optional revisit targets appear/disappear between turns.
+    private static readonly object StaticRevisitToolDefinition = new
     {
         type = "function", function = new
         {
             name = RevisitActionToolName,
-            description = "可选：从本次已看到的思想中指定一条，请求一次后台重访。reason 简短说明想回看什么，不写私密推理。"
-                + "返回受理、忙碌或版本变化后继续交流；受理不等于完成，不必等待或插话。每次交流只尝试一次，不自动续想。"
-                + "可选对象如下（最多列32条；text 是已供正文的定位摘句，不是重要性排序；版本须照填）："
-                + ReviewContext.Serialize(targets.Select(t => new { history_ref = "note:" + t.Target.EventId,
-                    version = t.Target.Fingerprint, location = t.Location, text = RevisitLocatorText(t.VisibleText) })),
+            description = "可选：当本轮上下文末尾明确给出了「可选重访想法」（如 #1、#2）且确有必要时，请求一次后台重访。"
+                + "reason 简短说明想回看什么，不写私密推理。未列出可选对象时不要调用。"
+                + "返回受理、忙碌或版本变化后继续交流；受理不等于完成，不必等待或插话。每次交流只尝试一次，不自动续想。",
             parameters = new
             {
                 type = "object", properties = new
                 {
-                    history_ref = new { type = "string", @enum = targets.Select(t => "note:" + t.Target.EventId).Distinct().ToArray() },
-                    version = new { type = "string", minLength = 64, maxLength = 64 },
+                    target = new { type = "string",
+                        description = "本轮上下文末尾列出的短编号，例如 #1。" },
                     reason = new { type = "string", minLength = 1, maxLength = 600 }
-                }, required = new[] { "history_ref", "version", "reason" }, additionalProperties = false
+                }, required = new[] { "target", "reason" }, additionalProperties = false
             }
         }
     };
+
+    private static object RevisitActionToolDefinition() => StaticRevisitToolDefinition;
+
+    internal static string RevisitActionOfferContext(ThoughtRevisitTarget[] targets)
+    {
+        if (targets.Length == 0) return "";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("[可选重访想法（供 revisit_thought 引用，target 仅本轮有效，按需选用）]");
+        for (int i = 0; i < targets.Length; i++)
+            sb.Append('#').Append(i + 1).Append(" | ").AppendLine(RevisitLocatorText(targets[i].VisibleText));
+        return sb.ToString().TrimEnd();
+    }
 
     private static string RevisitLocatorText(string text)
     {
@@ -44,11 +56,29 @@ internal sealed partial class DeepSeekClient
         try
         {
             using var document = JsonDocument.Parse(json); var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 3
-                || root.EnumerateObject().Any(p => p.Name is not ("history_ref" or "version" or "reason") || p.Value.ValueKind != JsonValueKind.String)
-                || root.EnumerateObject().GroupBy(p => p.Name).Any(g => g.Count() != 1)) return null;
-            string reference = root.GetProperty("history_ref").GetString()!, version = root.GetProperty("version").GetString()!, reason = root.GetProperty("reason").GetString()!;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            var props = root.EnumerateObject().ToArray();
+            if (props.GroupBy(p => p.Name).Any(g => g.Count() != 1) || props.Any(p => p.Value.ValueKind != JsonValueKind.String))
+                return null;
+            if (!root.TryGetProperty("reason", out var reasonEl)) return null;
+            string reason = reasonEl.GetString()!;
             if (string.IsNullOrWhiteSpace(reason) || reason.Length > 600) return null;
+
+            // Preferred single-turn short handle (#1..#N): C# restores full EventId + SHA256.
+            if (props.Length == 2 && root.TryGetProperty("target", out var targetEl))
+            {
+                string target = (targetEl.GetString() ?? "").Trim();
+                error = "target_not_offered_for_this_http";
+                if (!target.StartsWith('#') || !int.TryParse(target[1..], out int index)
+                    || index < 1 || index > offered.Length)
+                    return null;
+                error = ""; return new(offered[index - 1].Target, reason);
+            }
+
+            // Legacy compatibility: accept exact (history_ref, version, reason) if directly passed.
+            if (props.Length != 3 || props.Any(p => p.Name is not ("history_ref" or "version" or "reason")))
+                return null;
+            string reference = root.GetProperty("history_ref").GetString()!, version = root.GetProperty("version").GetString()!;
             error = "target_not_offered_for_this_http";
             var matches = offered.Where(t => "note:" + t.Target.EventId == reference && t.Target.Fingerprint == version).ToArray();
             if (matches.Length != 1) return null;

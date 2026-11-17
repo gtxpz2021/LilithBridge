@@ -257,6 +257,8 @@ internal sealed partial class BridgeConfig
     // tokenizer/model-window claim and never clips messages to fit a limit.
     public int FinalOutboundMaxUtf8Bytes { get; set; } = 0;
     public int PreparationTimingTurns { get; set; } = 0;
+    public bool VerboseTelemetryEnabled { get; set; } = false;
+    public int PromptCacheHistoryStride { get; set; } = 8;
     public bool ResponseObservationEnabled { get; set; } = false;
     /// <summary>
     /// Read-only bypass for the claim line (2026-09-20 observation phase). Off by
@@ -419,6 +421,7 @@ internal static partial class ConfigStore
         config.MethodCapabilityGeneration = _methodCapabilityOwner.Publish(config);
         _cached = config;
         _cachedAt = DateTimeOffset.UtcNow;
+        SourcePermissionScope.Invalidate();
         return config;
     }
 
@@ -532,6 +535,9 @@ internal static partial class ConfigStore
                 if (dialogue.TryGetProperty("thinking_max_tokens", out var budget)
                     && budget.ValueKind == JsonValueKind.Number && budget.TryGetInt32(out int tokens))
                     config.DialogueThinkingMaxTokens = Math.Clamp(tokens, 256, 8192);
+                if (dialogue.TryGetProperty("prompt_cache_history_stride", out var stride)
+                    && stride.ValueKind == JsonValueKind.Number && stride.TryGetInt32(out int parsedStride))
+                    config.PromptCacheHistoryStride = Math.Clamp(parsedStride, 0, 24);
             }
             if (root.TryGetProperty("shared_activity", out var sharedActivity) && sharedActivity.ValueKind == JsonValueKind.Object)
                 config.SharedActivityEnabled = ReadBoolean(sharedActivity, "enabled", false);
@@ -618,6 +624,8 @@ internal static partial class ConfigStore
                     ReadBoolean(promptTelemetry, "prompt_dump_enabled", false);
                 config.ResponseObservationEnabled =
                     ReadBoolean(promptTelemetry, "response_observation_enabled", false);
+                config.VerboseTelemetryEnabled =
+                    ReadBoolean(promptTelemetry, "verbose_supply_trace", false);
             }
             if (root.TryGetProperty("runtime_context_cleanup_enabled", out JsonElement cleanupValue)
                 && cleanupValue.ValueKind is JsonValueKind.True or JsonValueKind.False)

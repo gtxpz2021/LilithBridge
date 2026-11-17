@@ -85,6 +85,12 @@ internal sealed partial class DeepSeekClient
                 if (lesson.TryGetProperty("revises", out JsonElement lessonRevises)
                     && lessonRevises.ValueKind == JsonValueKind.String)
                     proposal.Revises = lessonRevises.GetString() ?? "";
+                if (lesson.TryGetProperty("settles", out JsonElement lessonSettles)
+                    && lessonSettles.ValueKind == JsonValueKind.String)
+                    proposal.Settles = lessonSettles.GetString() ?? "";
+                if (lesson.TryGetProperty("settle_reason", out JsonElement lessonSettleReason)
+                    && lessonSettleReason.ValueKind == JsonValueKind.String)
+                    proposal.SettleReason = MemoryStore.Clean(lessonSettleReason.GetString());
                 if (lesson.TryGetProperty("source_note_ids", out JsonElement lessonIds)
                     && lessonIds.ValueKind == JsonValueKind.Array)
                     proposal.SourceNoteIds = lessonIds.EnumerateArray()

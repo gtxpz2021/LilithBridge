@@ -72,7 +72,7 @@ internal sealed class GeneratedReadableView
         // Do not silently omit advanced meaning.
         var known=new HashSet<string>(new[]{"SchemaVersion","Key","SessionId","RequestId","AttemptId","SourceUserEventId","SourceUserFingerprint","Origin","BodyHash","BodyChars","BodyUtf8Bytes","CapturedAtUtc","PublicTextExtent","NetworkBodyComplete","NetworkOutcome","NetworkTerminalEvent","NetworkFinishReason","NetworkIncompleteReason","Revision","DisplayPlanVersion","DisplayMappingState","PlanChunks","WhitespaceOmissions","ShownRanges","DeliveryTerminal","DeliveryOutcome","DeliveryReason","DeliveryEndedAtUtc","UnknownChunks","UnknownChars","AbandonedChunks","AbandonedChars","PublicExpression","PublicExpressionFinalSources","PublicResponseItem","PublicResponseItems","FinalPublicCanonical","StreamAppearanceImports","PresenterEffects"},StringComparer.Ordinal);
         if(typeof(GeneratedReplyMetadata).GetProperties().Any(p=>!known.Contains(p.Name)))return false;
-        var metadataSnapshots=sources.Select(source=>source.Metadata).ToArray();
+        var metadataSnapshots=sources.Select(source=>source.ReadMetadata).ToArray();
         // Schema1 can carry the presenter's dispatch receipt independently of
         // public-expression/appearance schemas. Preserve its known fields as
         // source data; it proves neither native completion nor text delivery.
@@ -90,55 +90,24 @@ internal sealed class GeneratedReadableView
             || identities[i].Request!=source.RequestId || identities[i].Attempt!=source.AttemptId
             || !identities[i].SameAnswers.SequenceEqual(new[]{ContextRelevanceViewIdentity.GeneratedRef(source)})).Any()))
         {reason="generated_selector_identity_mismatch";return false;}
-        var s=new StringBuilder(Header);var slices=new List<GeneratedReadableSlice>();
+        var s=new StringBuilder("[未完整展示的草稿回复（参考草稿，未展示部分玩家未看到）]\n");var slices=new List<GeneratedReadableSlice>();
         void Line(string value="")=>s.Append(value).Append('\n');
-        Line(pageChars<0?"程序已解析接收原文和逐字显示证据，下面按原顺序直接给出全部收到的公开文字，不含隐藏推理。"
-            :"程序已解析本次实际返回页的原文和逐字显示证据；下面只给这一页，不补入页外正文，不含隐藏推理。");
-        Line("已接收不等于已说；没有显示确认不等于肯定未见。显示也不证明玩家读过、认可或已证实。无需按偏移重建正文。");
-        Line("接收记录/片段标签只定位本次资料，不是B1来源授权；可选保留仍须使用实际供给的材料N或工具source_ref。没有续说未确认部分的义务。");
-        Line("原消息组只表示程序记录归属，不把不同接收记录当成多次独立发言。");
-        if(identities!=null)Line(ContextRelevanceViewIdentity.Contract);
-        var owners=new Dictionary<string,int>(StringComparer.Ordinal);
         for(int record=0;record<sources.Count;record++)
         {
             var source=sources[record];var metadata=metadataSnapshots[record];string body=source.BodyText;
             if(metadata.BodyChars!=body.Length || metadata.BodyUtf8Bytes!=Encoding.UTF8.GetByteCount(body)
                 || !Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).Equals(source.BodyHash,StringComparison.OrdinalIgnoreCase))
             {reason="generated_body_identity_mismatch";return false;}
-            if(!owners.TryGetValue(source.LogicalOwnerKey,out int owner))owners[source.LogicalOwnerKey]=owner=owners.Count+1;
-            Line();Line("〔接收记录"+(record+1)+"〕 "+(source.Origin=="model"?"莉莉丝的模型公开文字":"原来源："+source.Origin)+"；原消息组"+owner);
-            if(identities!=null)Line("选择视图身份（程序已核对归属，仅与本次选材记录对照；不用于拼接原文或授予B1资格）："
-                +JsonSerializer.Serialize(identities[record].Wire(),DialogueMaterialEnvelope.DataJson));
-            if(identities!=null)Line("原问题记录标识："+source.SourceUserId+"；原显示映射状态："+metadata.DisplayMappingState);
-            if(pageChars>=0)Line("本页原问题记录标识："+source.SourceUserId+"；原显示映射状态："+metadata.DisplayMappingState
-                +"。以下接收、网络和终止事实属于整份接收记录，不代表已提供页外正文或已确认页外显示。");
-            Line("接收记录时间："+metadata.CapturedAtUtc.ToString("O",CultureInfo.InvariantCulture));
-            Line("网络记录：响应体完整标记="+(metadata.NetworkBodyComplete?"是":"否")+"；结果="+metadata.NetworkOutcome
-                +"；终止事件="+metadata.NetworkTerminalEvent+"；结束标记="+metadata.NetworkFinishReason);
-            if(metadata.NetworkIncompleteReason.Length>0)Line("原不完整原因："+metadata.NetworkIncompleteReason);
-            Line("记录仅覆盖本机收到的公开文本，不推断远端生成范围。原范围标记："+metadata.PublicTextExtent);
-            Line("显示终止记录："+(metadata.DeliveryTerminal?"有":"未确认")+"；结果="+metadata.DeliveryOutcome+"；原因="+metadata.DeliveryReason
-                +"；结束时间="+(metadata.DeliveryEndedAtUtc?.ToString("O",CultureInfo.InvariantCulture)??"未记录"));
-            Line("终止记录另有未确定出现"+metadata.UnknownChunks+"片/"+metadata.UnknownChars+"字符，放弃显示"+metadata.AbandonedChunks+"片/"+metadata.AbandonedChars+"字符；这些计数不分配给下列具体原文范围。");
-            if(metadata.PresenterEffects!=null)Line("附带动作派发回执（原字段；不是原生动作完成、正文显示范围或玩家已读证明，不新增动作权限）："
-                +JsonSerializer.Serialize(metadata.PresenterEffects,DialogueMaterialEnvelope.DataJson));
+            string localTime = metadata.CapturedAtUtc == default ? "" : metadata.CapturedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            Line($"〔草稿{record + 1}{(localTime.Length > 0 ? " | " + localTime : "")}〕{(pageChars >= 0 ? "（分页原文）" : "")}");
             var confirmed=new List<GeneratedReplyProjection.ConfirmedRange>();
             var other=new List<GeneratedReplyDisplayRange>();
-            int confirmedRecords=0;
             foreach(var range in metadata.ShownRanges)
             {
                 if(GeneratedReplyProjection.TryConfirmedRanges(source,metadata,range,out var pieces))
-                {
-                    confirmed.AddRange(pieces);confirmedRecords++;
-                    if(pageChars>=0)Line("整份记录中的逐字显示观察："+range.EventId+"；原气泡索引="+range.ChunkIndex
-                        +"；观察时间="+range.RecordedAtUtc.ToString("O",CultureInfo.InvariantCulture)
-                        +"。这是观察身份与时间，不提供页外正文，也不是raw/B1来源授权。");
-                }
+                    confirmed.AddRange(pieces);
                 else other.Add(range);
             }
-            if(pageChars>=0)Line("整份记录合格逐字显示观察数："+confirmedRecords+"；观察气泡不改变原消息/本次请求页的单位。");
-            // A sweep preserves overlapping display observations and internal
-            // whitespace gaps without quadratic repeated interval searches.
             int pageStart=pageChars<0?0:pageOffset,pageEnd=pageChars<0?body.Length:pageOffset+pageChars;
             var points=new SortedSet<int>{pageStart,pageEnd};
             var starts=new Dictionary<int,List<int>>();var ends=new Dictionary<int,List<int>>();
@@ -152,22 +121,51 @@ internal sealed class GeneratedReadableView
                 if(!ends.ContainsKey(end))ends[end]=new();ends[end].Add(i);
             }
             var boundaries=points.ToArray();var active=new SortedSet<int>();int segment=0;
+            var rawSegments=new List<(bool Shown, int Start, int Count, int SliceIndex)>();
             for(int i=0;i<boundaries.Length-1;i++)
             {
                 int start=boundaries[i],count=boundaries[i+1]-start;
                 if(ends.TryGetValue(start,out var removing))foreach(int id in removing)active.Remove(id);
                 if(starts.TryGetValue(start,out var adding))foreach(int id in adding)active.Add(id);
                 if(count==0)continue;
+                string piece = body.Substring(start, count);
+                if (string.IsNullOrWhiteSpace(piece) && active.Count > 0) continue;
+                bool isShown = active.Count > 0;
                 string label="接收记录"+(record+1)+"·片段"+(++segment);
-                Line();Line("〔"+label+"〕 "+(active.Count>0?"本段有逐字显示确认":"本段没有显示确认；不推定肯定未见"));
-                foreach(int id in active)Line("显示确认时间："+confirmed[id].RecordedAtUtc.ToString("O",CultureInfo.InvariantCulture));
-                Line("原文：");int textStart=s.Length;s.Append(body,start,count);Line();
-                slices.Add(new(record,start,count,textStart,label,active.Select(id=>confirmed[id].EventId).ToArray()));
+                int idx = slices.Count;
+                slices.Add(new(record,start,count,0,label,active.Select(id=>confirmed[id].EventId).ToArray()));
+                rawSegments.Add((isShown, start, count, idx));
             }
-            if(pageChars==0)Line("本次返回页为空，没有提供页外正文。");
-            foreach(var range in other)Line((pageChars<0?"另有无法逐字对应到上述接收正文的显示记录：":"整份接收记录另有未建立逐字对应的显示观察；不据此确认本页显示：")+range.RecordedAtUtc.ToString("O",CultureInfo.InvariantCulture)
-                +(pageChars<0?"":"；原观察标识="+range.EventId+"；原气泡索引="+range.ChunkIndex)
-                +"；实际记录"+range.Chars+"字符；原对应状态="+range.MappingState+"。不把它标成这段正文已显示。");
+            int pos = 0;
+            while (pos < rawSegments.Count)
+            {
+                bool shown = rawSegments[pos].Shown;
+                int runStart = rawSegments[pos].Start;
+                int runEnd = runStart + rawSegments[pos].Count;
+                var runSliceIndices = new List<int> { rawSegments[pos].SliceIndex };
+                pos++;
+                while (pos < rawSegments.Count && rawSegments[pos].Shown == shown
+                    && string.IsNullOrWhiteSpace(body.Substring(runEnd, rawSegments[pos].Start - runEnd)))
+                {
+                    runEnd = rawSegments[pos].Start + rawSegments[pos].Count;
+                    runSliceIndices.Add(rawSegments[pos].SliceIndex);
+                    pos++;
+                }
+                string mergedText = body.Substring(runStart, runEnd - runStart);
+                if (string.IsNullOrWhiteSpace(mergedText)) continue;
+                string prefix = shown ? "- 已展示：" : "- 未展示/未确认：";
+                s.Append(prefix);
+                int textStart = s.Length;
+                s.Append(mergedText);
+                Line();
+                foreach (int si in runSliceIndices)
+                {
+                    var old = slices[si];
+                    slices[si] = old with { TextStart = textStart + (old.Start - runStart) };
+                }
+            }
+            if(pageChars==0)Line("（本次分页为空）");
+            if(other.Count>0)Line($"（另有 {other.Count} 条未确定对应关系的显示片段）");
         }
         var result=new GeneratedReadableView(s.ToString(),slices,sources,identities!=null);
         var bodies=new List<GeneratedReadableBody>();
@@ -201,6 +199,11 @@ internal sealed class GeneratedReadableView
                     content.ValueKind==JsonValueKind.Array?content.EnumerateArray().Where(p=>p.TryGetProperty("text",out var t)&&t.ValueKind==JsonValueKind.String).Select(p=>p.GetProperty("text").GetString()!).ToArray():Array.Empty<string>();
                 foreach(var text in texts)
                 {
+                    if (text.StartsWith("[程序提供的近期对话与背景", StringComparison.Ordinal))
+                    {
+                        if (ContainsExactlyOnce(text)) count++;
+                        continue;
+                    }
                     try
                     {
                         using var inner=JsonDocument.Parse(text);var root=inner.RootElement;

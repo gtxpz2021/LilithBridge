@@ -14,6 +14,7 @@ internal sealed record DayTaskSnapshot(string RequestId, string Source, IReadOnl
     public long SelectionGeneration { get; init; }
     public IReadOnlyList<DaySourceDependency> Dependencies { get; init; } = Array.Empty<DaySourceDependency>();
     public IReadOnlyList<MemoryTurn> RebuildTargets { get; init; } = Array.Empty<MemoryTurn>();
+    public Dictionary<string, string>? ShortAliases { get; init; }
 }
 internal sealed class DayArtifactSupport
 {
@@ -42,15 +43,20 @@ internal sealed partial class MemoryStore
     private IReadOnlyList<MemoryTurn> SelectAvailableDayArtifacts(int max,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes)
     {
+        if (restoredNotes == null && TryGetCachedDayArtifacts(out var cached))
+            return cached.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
+        List<MemoryTurn> available;
         lock (_experienceLock)
         {
             var materialPermitted = CreateMaterialPermissionEvaluator();
-            var isCurrent = CreateCurrentBasisEvaluator(restoredNotes: restoredNotes);
-            return _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind)
-                .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && IsDayArtifactCurrent(t, materialPermitted, restoredNotes)
-                    && isCurrent(t))
-                .TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
+            var isDayCurrent = CreateDayArtifactCurrentEvaluator(materialPermitted, restoredNotes);
+            var isCurrent = CreateCurrentBasisEvaluator(restoredNotes: restoredNotes, dayCurrent: isDayCurrent);
+            available = _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind)
+                .Where(t => IsMentionAllowed(t) && IsActiveLifecycle(t) && isDayCurrent(t) && isCurrent(t))
+                .ToList();
         }
+        if (restoredNotes == null) CacheDayArtifacts(available);
+        return available.TakeLast(Math.Max(0, max)).Select(t => t.Copy()).ToList();
     }
 
     // Membership in a successful window, not response time, defines coverage.
@@ -134,20 +140,26 @@ internal sealed partial class MemoryStore
                 var dependency = DayDependency("utterance", raw[id]);
                 if (!dependencies.Contains(dependency)) dependencies.Add(dependency);
             }
+            var aliases = new ShortAliasTable();
+            aliases.RegisterAll("e", evidence);
+            if (previous != null) aliases.Register("d", previous.EventId);
+            aliases.RegisterAll("n", notes);
+            aliases.RegisterAll("t", targets);
             string source = JsonSerializer.Serialize(new
             {
                 now = DateTimeOffset.UtcNow, window_start = evidence.Min(t => t.Timestamp), window_end = evidence.Max(t => t.Timestamp),
-                utterances = evidence.Select(t => new { event_id = t.EventId, speaker = t.Role, origin = t.Origin, text = t.Text,
+                utterances = evidence.Select(t => new { event_id = aliases.AliasOrId(t.EventId), speaker = t.Role, origin = t.Origin, text = t.Text,
                     at = t.Timestamp, reported_speech = UtteranceAttribution.Reported(t.Role,t.Text) }),
-                previous_consolidation = previous == null ? null : new { day_id = previous.EventId, revision = previous.Revision,
+                previous_consolidation = previous == null ? null : new { day_id = aliases.AliasOrId(previous.EventId), revision = previous.Revision,
                     text = previous.Text, at = previous.Timestamp, source_context = DescribeSourceAttribution(previous) },
-                recent_thoughts = notes.Select(t => new { note_id = t.EventId, revision = t.Revision, text = t.Text,
+                recent_thoughts = notes.Select(t => new { note_id = aliases.AliasOrId(t.EventId), revision = t.Revision, text = t.Text,
                     at = t.Timestamp, source_context = DescribeSourceAttribution(t) }),
-                revision_targets = targets.Select(t => new { day_id = t.EventId, kind = t.Kind, text = t.Text,
+                revision_targets = targets.Select(t => new { day_id = aliases.AliasOrId(t.EventId), kind = t.Kind, text = t.Text,
                     status = "historical_unknown_support; target only, not current evidence" })
             });
             return new(Guid.NewGuid().ToString("N"), source, evidence.AsReadOnly())
-                { SelectionGeneration = selectionGeneration, Dependencies = dependencies.AsReadOnly(), RebuildTargets = targets.AsReadOnly() };
+                { SelectionGeneration = selectionGeneration, Dependencies = dependencies.AsReadOnly(),
+                    RebuildTargets = targets.AsReadOnly(), ShortAliases = aliases.AliasToId };
         }
     }
 
@@ -212,10 +224,30 @@ internal sealed partial class MemoryStore
             }
             var chainedParents = new List<MemoryTurn>();
             var created = new List<MemoryTurn>();
-            bool Add(string text, string kind, DayArtifactSupport? support)
+            static DayArtifactSupport? ResolveDaySupportAliases(DayArtifactSupport? raw, IReadOnlyDictionary<string, string>? aliases) =>
+                raw == null ? null : new DayArtifactSupport
+                {
+                    SourceEventIds = ShortAliasTable.ResolveAll(aliases, raw.SourceEventIds),
+                    SourceNoteIds = ShortAliasTable.ResolveAll(aliases, raw.SourceNoteIds),
+                    SourceDayIds = ShortAliasTable.ResolveAll(aliases, raw.SourceDayIds),
+                };
+            bool Add(string text, string kind, DayArtifactSupport? rawSupport)
             {
                 if (text.Length == 0) return true;
-                if (!TrySelectDaySupport(support, request, out var selected, out var sources)) return false;
+                DayArtifactSupport? support = ResolveDaySupportAliases(rawSupport, request.ShortAliases);
+                DaySourceDependency[] selected;
+                string[] sources;
+                bool hasExplicitSupport = support != null && ((support.SourceEventIds?.Length ?? 0) > 0
+                    || (support.SourceNoteIds?.Length ?? 0) > 0 || (support.SourceDayIds?.Length ?? 0) > 0);
+                if (kind == DayDreamKind && !hasExplicitSupport)
+                {
+                    // Free-association dream: allow omitting dream_support while still locking
+                    // ContextDependencies to the window for deletion/withdrawal cascade cleanup.
+                    selected = Array.Empty<DaySourceDependency>();
+                    sources = Array.Empty<string>();
+                }
+                else if (!TrySelectDaySupport(support, request, out selected, out sources))
+                    return false;
                 var parent = targets.FirstOrDefault(t => t!.Kind == kind);
                 // Earlier bounded batches may already have produced replacements for the same
                 // preserved target. Continue the recorded version chain to its newest product
@@ -238,7 +270,7 @@ internal sealed partial class MemoryStore
                     SourceDayIds = selected.Where(d => d.Kind == "day").Select(d => d.EventId).ToArray(),
                     SourceDependencies = selected, ContextDependencies = request.Dependencies.ToArray(), DayProvenanceVersion = 2,
                     Role = "assistant", Kind = kind, Tier = "archival", Category = "memory", Origin = "reflection",
-                    Source = "model_day_task", Text = kind == DayDreamKind ? "梦/想象，不是事实或新事件：" + text : text,
+                    Source = "model_day_task", Text = text,
                     Validity = "inferred", LifecycleState = "active", SessionId = _sessionId });
                 return true;
             }
@@ -360,12 +392,136 @@ internal sealed partial class MemoryStore
     // a permission/existence view of what the request actually read. A footprint that was
     // explicitly withdrawn or purged is not re-read through this product, while ordinary
     // revision of a footprint never retires an independent product.
+    private static bool IsFreeAssociationDream(MemoryTurn turn) =>
+        turn.Kind == DayDreamKind
+        && turn.DayProvenanceVersion == 2
+        && turn.SourceDependencies.Length == 0
+        && turn.SourceEventIds.Length == 0
+        && (turn.ContextDependencies?.Length ?? 0) > 0;
+
+    private Func<MemoryTurn, bool> CreateDayArtifactCurrentEvaluator(
+        Func<DaySourceDependency, bool>? materialPermitted = null,
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
+    {
+        bool borrowed = _b1BorrowedArchive != null;
+        var archive = GetExperienceValidationView();
+        materialPermitted ??= CreateMaterialPermissionEvaluator(borrowArchive: borrowed);
+        var denied = SuppressedExperienceIds();
+        if (!borrowed && archive.HasVisibleAmbiguity(denied)) throw new ArgumentException("Ambiguous experience event ids");
+        var notes = ReflectionNoteView(restoredNotes).GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+        var days = _dreams.Where(t => t.Kind is DayConsolidationKind or DayDreamKind)
+            .GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+        var validDepMemo = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var depCache = new Dictionary<string, DaySourceDependency>(StringComparer.Ordinal);
+        var activeCorrections = ActiveCorrectionList();
+        DaySourceDependency GetDep(string kind, MemoryTurn t)
+        {
+            string cacheKey = kind + ":" + t.EventId + "@" + t.Revision + ":" + t.DayProvenanceVersion;
+            if (depCache.TryGetValue(cacheKey, out var cachedDep)) return cachedDep;
+            var created = DayDependencyWithCorrections(kind, t, activeCorrections);
+            depCache[cacheKey] = created;
+            return created;
+        }
+        bool TryRaw(string id, out MemoryTurn source)
+        {
+            if (!denied.Contains(id) && archive.TryGetUnique(id, out var found)) { source = found; return true; }
+            source = null!; return false;
+        }
+        var visiting = new HashSet<string>(StringComparer.Ordinal);
+        bool VisitDep(DaySourceDependency dependency)
+        {
+            string key = dependency.Kind + ":" + dependency.EventId;
+            MemoryTurn? source;
+            bool found = dependency.Kind == "utterance" ? TryRaw(dependency.EventId, out source)
+                : dependency.Kind == "note" ? notes.TryGetValue(dependency.EventId, out source)
+                : days.TryGetValue(dependency.EventId, out source);
+            if (dependency.Kind is not ("utterance" or "note" or "day")
+                || !found || source == null
+                || GetDep(dependency.Kind, source) != dependency) return false;
+            if (validDepMemo.TryGetValue(key, out bool cached)) return cached;
+            if (!visiting.Add(key)) return false;
+            bool valid;
+            if (dependency.Kind == "utterance")
+            {
+                valid = source.DeliveryState is "received" or "delivered";
+            }
+            else
+            {
+                valid = (IsActiveLifecycle(source) || IsSettledLifecycle(source))
+                    && source.Origin == "reflection" && source.SourceEventIds.Length > 0
+                    && !HasUnincorporatedCorrectionFast(source, activeCorrections)
+                    && materialPermitted(dependency);
+                if (valid && dependency.Kind == "day")
+                    valid = source.DayProvenanceVersion == 2
+                        && FootprintPermitted(source, materialPermitted)
+                        && (IsFreeAssociationDream(source)
+                            ? source.ContextDependencies.Any(d => d.Kind == "utterance")
+                            : source.SourceDependencies.Length > 0 && source.SourceDependencies.All(VisitDep));
+                if (valid)
+                    valid = source.SourceEventIds.All(id => TryRaw(id, out var t) && VisitDep(GetDep("utterance", t)));
+                if (valid && dependency.Kind == "note")
+                    valid = source.SourceDayIds.All(id => days.TryGetValue(id, out var t) && VisitDep(GetDep("day", t)));
+                if (valid && source.SourceEventIds.Length == 0) valid = false;
+            }
+            visiting.Remove(key);
+            validDepMemo[key] = valid;
+            return valid;
+        }
+        var turnMemo = new Dictionary<string, bool>(StringComparer.Ordinal);
+        return turn =>
+        {
+            if (turn.DayProvenanceVersion != 2) return false;
+            if (turnMemo.TryGetValue(turn.EventId, out bool known)) return known;
+            bool ok = FootprintPermitted(turn, materialPermitted)
+                && (IsFreeAssociationDream(turn)
+                    ? turn.ContextDependencies.Any(d => d.Kind == "utterance")
+                    : turn.SourceDependencies.Length > 0 && VisitDep(GetDep("day", turn)));
+            turnMemo[turn.EventId] = ok;
+            return ok;
+        };
+    }
+
+    private List<MemoryTurn> ActiveCorrectionList()
+    {
+        var list = new List<MemoryTurn>();
+        foreach (var a in _autonomous)
+            if (a.RequestKind == "correct" && IsAuthoritativeStoredCorrection(a))
+                list.Add(a);
+        return list;
+    }
+
+    private static bool HasUnincorporatedCorrectionFast(MemoryTurn turn, IReadOnlyList<MemoryTurn> corrections)
+    {
+        for (int i = 0; i < corrections.Count; i++)
+        {
+            var c = corrections[i];
+            if (!IsActiveLifecycle(c) || c.SourceEventId.Length == 0) continue;
+            if (!turn.SourceEventIds.Contains(c.SourceEventId)
+                && c.SourceEventIds.Any(id => id != c.SourceEventId && turn.SourceEventIds.Contains(id)))
+                return true;
+        }
+        return false;
+    }
+
+    private DaySourceDependency DayDependencyWithCorrections(string kind, MemoryTurn t, IReadOnlyList<MemoryTurn> corrections) => new(kind, t.EventId,
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            t.EventId, t.Revision, t.Text, t.Role, t.Origin, t.Kind, t.DeliveryState,
+            t.SourceEventId, t.Timestamp, t.SessionId, t.Sequence,
+            t.SourceEventIds, t.SourceDayIds, t.SourceNoteIds, t.SourceDependencies, t.ContextDependencies, t.DayProvenanceVersion,
+            corrections = kind == "utterance" ? corrections
+                .Where(a => a.SourceEventIds.Contains(t.EventId))
+                .Select(a => new { a.EventId, a.Revision, a.Text }).OrderBy(a => a.EventId).ToArray() : null
+        })))));
+
     private bool IsDayArtifactCurrent(MemoryTurn turn, Func<DaySourceDependency, bool> materialPermitted,
         IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null) =>
         turn.DayProvenanceVersion == 2
-        && turn.SourceDependencies.Length > 0
         && FootprintPermitted(turn, materialPermitted)
-        && TryResolveDayDependencies(new[] { DayDependency("day", turn) }, out _, materialPermitted, restoredNotes);
+        && (IsFreeAssociationDream(turn)
+            ? turn.ContextDependencies.Any(d => d.Kind == "utterance")
+            : turn.SourceDependencies.Length > 0
+              && TryResolveDayDependencies(new[] { DayDependency("day", turn) }, out _, materialPermitted, restoredNotes));
 
     // Exact source identities are checked again under the commit lock. Flattened
     // raw IDs let the existing delete owner purge every downstream day artifact.
@@ -421,9 +577,11 @@ internal sealed partial class MemoryStore
                     && !HasUnincorporatedCorrection(source)
                     && materialPermitted(dependency);
                 if (valid && dependency.Kind == "day")
-                    valid = source.DayProvenanceVersion == 2 && source.SourceDependencies.Length > 0
+                    valid = source.DayProvenanceVersion == 2
                         && FootprintPermitted(source, materialPermitted)
-                        && source.SourceDependencies.All(Visit);
+                        && (IsFreeAssociationDream(source)
+                            ? source.ContextDependencies.Any(d => d.Kind == "utterance")
+                            : source.SourceDependencies.Length > 0 && source.SourceDependencies.All(Visit));
                 if (valid)
                     valid = source.SourceEventIds.All(id => TryRaw(id, out var t)
                         && Visit(DayDependency("utterance", t)));

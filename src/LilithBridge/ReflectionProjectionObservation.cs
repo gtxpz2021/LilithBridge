@@ -128,9 +128,35 @@ internal static class ReflectionProjectionTrace
     {
         if (observations.Count == 0)
             return;
+        bool section = SectionInContext(finalContext);
+        var groups = observations.GroupBy(o => o.NoteId).ToList();
+        var selectedNotes = new List<string>();
+        var labelCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var group in groups)
+        {
+            var terminal = group.Last();
+            string label = ReflectionProjectionDecision.Label(terminal);
+            labelCounts[label] = labelCounts.GetValueOrDefault(label) + 1;
+            if (terminal.NoteAddedToProjection) selectedNotes.Add(terminal.NoteId);
+        }
+        IReadOnlyList<string>? history = observations[0].SuppliedHistoryEventIds;
+        IReadOnlyList<string>? retrieved = observations[0].RetrievedExperienceEventIds;
+        IReadOnlyList<string>? supplied = observations[0].SuppliedExperienceIds;
+        string summary = "request_id=" + requestId
+            + ";section_in_context=" + Bool(section)
+            + ";notes=" + groups.Count
+            + ";supplied_history_count=" + (history?.Count ?? 0)
+            + ";retrieved_count=" + (retrieved?.Count ?? 0)
+            + ";supplied_count=" + (supplied?.Count ?? 0)
+            + ";selected_notes=" + Join(selectedNotes)
+            + ";outcomes=" + string.Join(",", labelCounts.Select(kv => kv.Key + ":" + kv.Value));
         NativeEventLog.Trace(Kind, "mod", "system",
             "reflection projection supply chain",
-            Describe(requestId, observations, finalContext));
+            summary);
+        if (ConfigStore.Load().VerboseTelemetryEnabled)
+            NativeEventLog.TraceVerbose(Kind, "mod", "system",
+                "reflection projection supply chain",
+                Describe(requestId, observations, finalContext));
     }
 
     private static string Join(IReadOnlyList<string>? ids) =>

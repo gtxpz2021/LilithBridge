@@ -30,9 +30,7 @@ internal sealed class InitialExperiencePacket
         // A refreshed context must still contain every exact renderer-owned
         // carrier. Never emit dangling refs or silently claim omitted words.
         if(Reused.Any(r=>!actualContext.Contains(r.Block,StringComparison.Ordinal)
-            ||actualContext.IndexOf(r.Block,StringComparison.Ordinal)!=actualContext.LastIndexOf(r.Block,StringComparison.Ordinal)
-            ||r.ProgramBlockId.Length>0&&System.Text.RegularExpressions.Regex.Matches(actualContext,
-                "\"program_block_id\"\\s*:\\s*"+System.Text.RegularExpressions.Regex.Escape(JsonSerializer.Serialize(r.ProgramBlockId))).Count!=1))
+            ||actualContext.IndexOf(r.Block,StringComparison.Ordinal)!=actualContext.LastIndexOf(r.Block,StringComparison.Ordinal)))
             throw new SemanticMaterialException("initial_experience_carrier_changed");
         return Block;
     }

@@ -39,11 +39,10 @@ internal static class UtteranceAttribution
             speechPrefix ? "explicit_speech_prefix_in_original_text" : "leading_label_in_original_text");
     }
 
-    public const string Contract = "speaker/role 表示该条消息的提交者；user 文本里的引用、转述、假设不因此成为玩家本人的经历或观点。reported_speech 只描述原文的发言标记或前缀标签，不验证第三方身份，也不保证标签是人名；按原文区分转交者、被引者和引文中的对象。";
+    public const string Contract = "说话人标注仅表示该条消息的提交者；玩家原话里的引文、转述或假设不自动成为本人经历。有转述前缀时按原文区分转交者与被引对象，不默认来源身份已核实。";
 
     public static string Describe(string role, string text) => Reported(role,text) is { } frame
-        ? "[提交者=user；原文发言标记或前缀标签=" + JsonSerializer.Serialize(frame.source_label, DialogueMaterialEnvelope.DataJson)
-            + "；来源身份未验证] " : "";
+        ? "[转述前缀：" + frame.source_label + "，来源身份未核实] " : "";
 
     // Literal lookup is an additional ranking signal, not an attribution verdict.
     // Short ambiguous quotes do not get this priority; all existing permission,

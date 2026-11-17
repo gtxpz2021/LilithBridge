@@ -16,6 +16,7 @@ internal sealed partial class MemoryStore
     private ExperienceValidationView? _b1BorrowedArchive;
     private Func<DaySourceDependency, bool> _b1Permission = _ => false;
     private Dictionary<string, B1Resolution> _b1ResolutionMemo = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _b1FoundMemo = new(StringComparer.Ordinal);
     private List<B1Entry>? _b1IndexedEntries;
     private Dictionary<string, B1Entry> _b1Index = new(StringComparer.Ordinal);
     private Dictionary<string, HashSet<string>> _b1SearchIndex = new(StringComparer.Ordinal);
@@ -43,15 +44,22 @@ internal sealed partial class MemoryStore
         }
         return _b1Index.GetValueOrDefault(id);
     }
-    private bool _b1ReadSession, _b1ReadSessionBuilt;
+    private bool _b1ReadSession, _b1ReadSessionBuilt, _b1ReadSessionBorrowed;
+    private int _b1ReadSessionThreadId;
     private B1Document? _b1MemoDocument;
     // Caller owns fixed mention/native scopes. Thread-affine, synchronous, ends before owner yield.
     internal IDisposable BeginB1ReadSession()
     {
         System.Threading.Monitor.Enter(_experienceLock);
         if(_b1ReadSession){System.Threading.Monitor.Exit(_experienceLock);throw new InvalidOperationException("nested B1 read session");}
-        _b1ReadSession=true;_b1ReadSessionBuilt=false;_b1MemoDocument=null;
+        _b1ReadSession=true;_b1ReadSessionBuilt=false;_b1ReadSessionBorrowed=false;_b1MemoDocument=null;
+        _b1ReadSessionThreadId=Environment.CurrentManagedThreadId;
         return new B1ReadSession(this);
+    }
+    internal IDisposable? BeginOrReuseB1ReadSession()
+    {
+        if (_b1ReadSession && _b1ReadSessionThreadId == Environment.CurrentManagedThreadId) return null;
+        return BeginB1ReadSession();
     }
     private sealed class B1ReadSession:IDisposable
     {
@@ -60,24 +68,89 @@ internal sealed partial class MemoryStore
         public void Dispose()
         {
             if(_store==null)return;var store=_store;_store=null;
-            store._b1ReadSession=false;store._b1ReadSessionBuilt=false;store._b1MemoDocument=null;store._b1ResolutionMemo.Clear();
+            store._b1ReadSession=false;store._b1ReadSessionBuilt=false;store._b1ReadSessionBorrowed=false;store._b1ReadSessionThreadId=0;store._b1MemoDocument=null;store._b1ResolutionMemo.Clear();store._b1FoundMemo.Clear();
             System.Threading.Monitor.Exit(store._experienceLock);
         }
     }
     private void BeginB1Read(bool borrowArchive = false)
     {
-        if(_b1ReadSession&&_b1ReadSessionBuilt){using var reused=PreparationTiming.Measure("b1.read_reused");return;}
+        if(_b1ReadSession&&_b1ReadSessionBuilt&&_b1ReadSessionBorrowed==borrowArchive){using var reused=PreparationTiming.Measure("b1.read_reused");return;}
         using var diagnostic=PreparationTiming.Measure("b1.read_build");
         _b1ResolutionMemo.Clear();
+        _b1FoundMemo.Clear();
         _b1BorrowedArchive=borrowArchive?GetExperienceValidationView():null;
         var archive=borrowArchive?Enumerable.Empty<MemoryTurn>():ReadExperiences(true);
-        _b1ReadTurns = archive.Concat(_reflectionNotes).Concat(_reflectionLessons)
-            .Concat(_relationshipReadings).Concat(_dreams).Concat(_autonomous).Concat(_profile).Concat(_summaries)
-            .Concat(_native).Concat(_events).Where(t => t.EventId.Length > 0)
-            .GroupBy(t => B1Kind(t) + ":" + t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+        var map = new Dictionary<string, MemoryTurn>(StringComparer.Ordinal);
+        void Collect(IEnumerable<MemoryTurn> items)
+        {
+            foreach (var t in items)
+                if (t.EventId.Length > 0) map[B1Kind(t) + ":" + t.EventId] = t;
+        }
+        Collect(archive);
+        Collect(_reflectionNotes);
+        Collect(_reflectionLessons);
+        Collect(_relationshipReadings);
+        Collect(_dreams);
+        Collect(_autonomous);
+        Collect(_profile);
+        Collect(_summaries);
+        Collect(_native);
+        Collect(_events);
+        _b1ReadTurns = map;
         BuildRawSourceCorrectionReadView(_b1BorrowedArchive);
         _b1Permission = CreateMaterialPermissionEvaluator(borrowArchive);
-        if(_b1ReadSession)_b1ReadSessionBuilt=true;
+        if(_b1ReadSession){_b1ReadSessionBuilt=true;_b1ReadSessionBorrowed=borrowArchive;}
+    }
+
+    private long _sourceMutationStamp = 1;
+    private void NotifySourcePermissionMutation()
+    {
+        Interlocked.Increment(ref _sourceMutationStamp);
+        SourcePermissionScope.Invalidate();
+    }
+    private sealed class BorrowedB1ReadBasis
+    {
+        internal long MutationStamp;
+        internal B1Document? Doc;
+        internal ExperienceValidationView? BorrowedArchive;
+        internal Dictionary<string, MemoryTurn> ReadTurns = null!;
+        internal Dictionary<string, List<string>> ExactCorrections = null!;
+        internal Dictionary<string, List<string>> PossibleCorrections = null!;
+        internal string RawCorrectionSignature = "";
+        internal Func<DaySourceDependency, bool> Permission = null!;
+    }
+    private B1Document? BeginBorrowedB1ReadInScope()
+    {
+        var scope = SourcePermissionScope.Current;
+        long stamp = Volatile.Read(ref _sourceMutationStamp);
+        if (scope != null && scope.BorrowedB1Bases.TryGetValue(this, out var raw)
+            && raw is BorrowedB1ReadBasis basis && basis.MutationStamp == stamp)
+        {
+            _b1BorrowedArchive = basis.BorrowedArchive;
+            _b1ReadTurns = basis.ReadTurns;
+            _readSourceCorrections = basis.ExactCorrections;
+            _readPossibleSourceCorrections = basis.PossibleCorrections;
+            _rawCorrectionReadSignature = basis.RawCorrectionSignature;
+            _b1Permission = basis.Permission;
+            return basis.Doc;
+        }
+        BeginB1Read(borrowArchive: true);
+        var doc = ReadB1Storage(initializeMissing: false);
+        if (scope != null)
+        {
+            scope.BorrowedB1Bases[this] = new BorrowedB1ReadBasis
+            {
+                MutationStamp = Volatile.Read(ref _sourceMutationStamp),
+                Doc = doc,
+                BorrowedArchive = _b1BorrowedArchive,
+                ReadTurns = _b1ReadTurns,
+                ExactCorrections = _readSourceCorrections,
+                PossibleCorrections = _readPossibleSourceCorrections,
+                RawCorrectionSignature = _rawCorrectionReadSignature,
+                Permission = _b1Permission
+            };
+        }
+        return doc;
     }
 
     // Exact boolean gates may borrow archive records under _experienceLock.
@@ -128,17 +201,23 @@ internal sealed partial class MemoryStore
         .SelectMany(m => m.DisplayedReplyFragments ?? Array.Empty<B1Delivery>())
         .Where(d => d.Text.Length > 0).Select(d => new B1Ref("utterance", d.EventId, B1Hash(d.Text), "permission"));
 
-    private B1Resolution ResolveB1(B1Ref reference, B1Document doc, HashSet<string> visiting)
+    private B1Resolution ResolveB1(B1Ref reference, B1Document doc, HashSet<string> visiting, bool needMaterial = true)
     {
         using var diagnostic=PreparationTiming.Measure("b1.resolve");
-        if(_b1ReadSession&&!ReferenceEquals(_b1MemoDocument,doc)){_b1ResolutionMemo.Clear();_b1MemoDocument=doc;}
+        if(_b1ReadSession&&!ReferenceEquals(_b1MemoDocument,doc)){_b1ResolutionMemo.Clear();_b1FoundMemo.Clear();_b1MemoDocument=doc;}
         string key = reference.Key + "|" + reference.Purpose + "|" + reference.Sha256;
         if (_b1ResolutionMemo.TryGetValue(key, out var known)) return known;
-        var result = ResolveB1Core(reference, doc, visiting);
-        if (result.Reason != "cycle") _b1ResolutionMemo[key] = result;
+        if (!needMaterial && _b1FoundMemo.TryGetValue(key, out bool found))
+            return found ? new(true, reference.Purpose) : new(false, "memo_not_found");
+        var result = ResolveB1Core(reference, doc, visiting, needMaterial);
+        if (result.Reason != "cycle")
+        {
+            if (needMaterial || !result.Found) _b1ResolutionMemo[key] = result;
+            else _b1FoundMemo[key] = result.Found;
+        }
         return result;
     }
-    private B1Resolution ResolveB1Core(B1Ref reference, B1Document doc, HashSet<string> visiting)
+    private B1Resolution ResolveB1Core(B1Ref reference, B1Document doc, HashSet<string> visiting, bool needMaterial = true)
     {
         if (reference.Purpose is not ("current" or "history" or "permission")) return new(false, "purpose_required");
         if (!visiting.Add(reference.Key)) return new(false, "cycle");
@@ -153,8 +232,9 @@ internal sealed partial class MemoryStore
                 if (!IsMentionTextAllowed(e.Text + " " + e.Scope) || SuppressedTextMatches(e.Text)
                     || SuppressedExperienceIds().Contains(e.Version)) return new(false, "permission_denied");
                 foreach (var r in e.Sources.Concat(e.ObjectAnchors).Concat(e.Packet.Footprint).Concat(B1DisplayFootprint(e.Packet)))
-                    if (!ResolveB1(r with { Purpose = "permission" }, doc, visiting).Found)
+                    if (!ResolveB1(r with { Purpose = "permission" }, doc, visiting, needMaterial: false).Found)
                         return new(false, "source_permission_denied");
+                if (!needMaterial && reference.Purpose != "current") return new(true, reference.Purpose);
                 bool objectQualified = e.AnchorStatus is not ("turn_only" or "unbound_limited" or "legacy_turn_only");
                 bool current = objectQualified && B1ManagementState(doc, e.Version) != "withdrawn"
                     && doc.Current.TryGetValue(e.LogicalId, out string? currentHead) && currentHead == e.Version
@@ -162,12 +242,13 @@ internal sealed partial class MemoryStore
                     // corrected raw object into a current object assertion.
                     // A historical B judgment may itself be the stated object
                     // of a new qualification/revision, so keep that purpose.
-                    && e.ObjectAnchors.All(r => ResolveB1(r.Kind == "b1" ? r : r with { Purpose = "current" }, doc, visiting).Found)
-                    && e.Sources.All(r => ResolveB1(r, doc, visiting).Found)
+                    && e.ObjectAnchors.All(r => ResolveB1(r.Kind == "b1" ? r : r with { Purpose = "current" }, doc, visiting, needMaterial: false).Found)
+                    && e.Sources.All(r => ResolveB1(r, doc, visiting, needMaterial: false).Found)
                     && e.Packet.Materials.Where(m => m.DependencyRole == "object")
-                        .All(m => ResolveB1(m.Ref, doc, visiting).Found);
+                        .All(m => ResolveB1(m.Ref, doc, visiting, needMaterial: false).Found);
                 string? head = doc.Current.GetValueOrDefault(e.LogicalId);
                 if (reference.Purpose == "current" && !current) return new(false, objectQualified ? "not_current" : e.AnchorStatus);
+                if (!needMaterial) return new(true, current ? "current" : "historical");
                 return new(true, current ? "current" : "historical", new(reference with { Sha256 = B1Hash(e.Text) }, e.Text, e.Scope,
                     e.At, e.GeneratedBy switch { "b1_reconsideration" => "reconsideration_retained_result_not_utterance",
                         _ => "main_model_retained_result_not_utterance" }, !objectQualified ? e.AnchorStatus + "_retained_not_object_assertion"
@@ -175,7 +256,7 @@ internal sealed partial class MemoryStore
                     B1Hash(JsonSerializer.Serialize(e) + "|management=" + B1ManagementState(doc, e.Version)
                         + (reference.Purpose == "current" ? "|" + head : "")),
                     doc.Deliveries.Where(d => d.StepId == e.StepId && d.Text.Length > 0
-                        && ResolveB1(new("utterance", d.EventId, B1Hash(d.Text), "permission"), doc, visiting).Found).ToList(),
+                        && ResolveB1(new("utterance", d.EventId, B1Hash(d.Text), "permission"), doc, visiting, needMaterial: false).Found).ToList(),
                     Relation: e.Relation, Target: e.Target, LogicalId: e.LogicalId, Revision: e.Revision,
                     Nature: e.Nature, Conditions: e.Conditions, AnchorStatus: e.AnchorStatus));
             }
@@ -188,7 +269,7 @@ internal sealed partial class MemoryStore
             if (reference.Kind is "note" or "lesson" or "reading" or "day")
             {
                 if (!_b1Permission(new(reference.Kind, t.EventId, ""))
-                    || t.SourceEventIds.Any(id => !ResolveB1(new("utterance", id, "", "permission"), doc, visiting).Found))
+                    || t.SourceEventIds.Any(id => !ResolveB1(new("utterance", id, "", "permission"), doc, visiting, needMaterial: false).Found))
                     return new(false, "source_permission_denied");
             }
             else if (t.SourceEventIds.Any(suppressed.Contains) || t.ContextDependencies.Any(d =>
@@ -196,9 +277,11 @@ internal sealed partial class MemoryStore
             if (reference.Kind == "utterance" && t.DeliveryState is not ("received" or "delivered")) return new(false, "delivery_unknown");
             if (reference.Kind == "utterance" && (t.Role is not ("user" or "assistant")
                 || t.Origin is not ("user" or "model" or "game" or LocalFallbackOrigin))) return new(false, "source_identity_unknown");
+            if (!needMaterial && reference.Purpose != "current") return new(true, reference.Purpose);
             bool isCurrent = AssessMaterialSupply(t).Current && !HasUnincorporatedCorrection(new MemoryTurn { SourceEventIds = new[] { t.EventId } })
                 && !HasRawSourceCorrection(t.EventId);
             if (reference.Purpose == "current" && !isCurrent) return new(false, "not_current");
+            if (!needMaterial) return new(true, "current");
             return new(true, isCurrent ? "current" : "historical", new(reference with { Sha256 = B1Hash(t.Text) }, t.Text,
                 "source_kind=" + t.Kind + ";role=" + t.Role + ";delivery=" + t.DeliveryState + ";" + NaturalMemoryContext(t),
                 t.Timestamp, t.Origin, isCurrent ? "current" : "historical", SourceVersion(reference.Kind, t).Fingerprint));
@@ -237,7 +320,7 @@ internal sealed partial class MemoryStore
         _mentionReadPolicy.Value = null; _nativeDialoguePolicy.Value = null;
         void ResetResolution()
         {
-            _b1ReadSessionBuilt = false; _b1MemoDocument = null; _b1ResolutionMemo.Clear();
+            _b1ReadSessionBuilt = false; _b1MemoDocument = null; _b1ResolutionMemo.Clear(); _b1FoundMemo.Clear();
         }
         void Restore()
         {
@@ -322,8 +405,8 @@ internal sealed partial class MemoryStore
             using var mention = BeginMentionRequest(query);
             BeginB1Read();
             var doc = LoadB1();
-            return doc != null && packet.Materials.All(m => ResolveB1(m.Ref with { Purpose = "permission" }, doc, new()).Found)
-                && packet.Footprint.Concat(B1DisplayFootprint(packet)).All(r => ResolveB1(r with { Purpose = "permission" }, doc, new()).Found);
+            return doc != null && packet.Materials.All(m => ResolveB1(m.Ref with { Purpose = "permission" }, doc, new(), needMaterial: false).Found)
+                && packet.Footprint.Concat(B1DisplayFootprint(packet)).All(r => ResolveB1(r with { Purpose = "permission" }, doc, new(), needMaterial: false).Found);
         }
     }
 

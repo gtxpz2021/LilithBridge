@@ -129,13 +129,47 @@ internal static class ReflectionIntentTrace
         qualification = Qualification
     };
 
+    internal static object DispatchCompact(ReflectionRequestSnapshot request, ReflectionServiceTrace? capture) => new {
+        stage = "dispatch_callback_invoked", operation_id = request.RequestId,
+        capture = capture == null ? null : new { capture.PreparationId, capture.PreparationGeneration,
+            capture.ModelRequestSerialAtCapture, capture.ModelRequestedAtCapture, capture.ServiceKind,
+            capture.SelectionLane, gate_window_count = capture.GateWindowEventIds?.Length ?? 0 },
+        supplied_body_sha256 = MemoryStore.SemanticTextHash(request.Source),
+        counts = new {
+            evidence = request.Evidence.Count, notes = request.Notes.Count, lessons = request.Lessons.Count,
+            readings = request.Readings.Count, day_artifacts = request.DayArtifacts.Count,
+            settled = request.Settled.Count, revision_targets = request.RevisionTargets.Count,
+            note_history = request.NoteHistory.Count, relationship_history = request.RelationshipHistoryRecords.Count
+        },
+        qualification = Qualification
+    };
+
     internal static void Emit(Func<object> observe)
     {
         try {
-            if (!ConfigStore.Load().TraceEnabled) return;
+            var cfg = ConfigStore.Load();
+            if (!cfg.TraceEnabled) return;
+            object value = observe();
             NativeEventLog.Trace("memory.reflection.intent_trace", "mod", "system",
-            "reflection request and actual service observation", JsonSerializer.Serialize(observe())); }
+                "reflection request and actual service observation", JsonSerializer.Serialize(value)); }
         catch { /* Existing optional telemetry must never change the original path. */ }
+    }
+
+    internal static void EmitDispatch(ReflectionRequestSnapshot request, ReflectionServiceTrace? capture)
+    {
+        try
+        {
+            var cfg = ConfigStore.Load();
+            if (!cfg.TraceEnabled) return;
+            NativeEventLog.Trace("memory.reflection.intent_trace", "mod", "system",
+                "reflection request and actual service observation",
+                JsonSerializer.Serialize(DispatchCompact(request, capture)));
+            if (cfg.VerboseTelemetryEnabled)
+                NativeEventLog.TraceVerbose("memory.reflection.intent_trace", "mod", "system",
+                    "reflection request and actual service observation",
+                    JsonSerializer.Serialize(Dispatch(request, capture)));
+        }
+        catch { }
     }
 }
 

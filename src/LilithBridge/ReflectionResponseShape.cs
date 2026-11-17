@@ -28,7 +28,7 @@ internal static class ReflectionResponseShape
             {
                 if (property.Value.ValueKind == JsonValueKind.Null) continue;
                 if (property.Value.ValueKind != JsonValueKind.Object) return "schema_type_error";
-                string? failure = Proposal(property.Value, property.Name == "note");
+                string? failure = Proposal(property.Value, property.Name);
                 if (failure != null) return failure;
             }
             // Reject known protocol fields in the wrong scope; ignore inert
@@ -41,15 +41,15 @@ internal static class ReflectionResponseShape
         return null;
     }
 
-    private static string? Proposal(JsonElement proposal, bool note)
+    private static string? Proposal(JsonElement proposal, string kind)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonProperty property in proposal.EnumerateObject())
         {
             if (!seen.Add(property.Name)) return "schema_duplicate_field";
             bool scalar = property.Name is "text" or "revises"
-                || (note && property.Name is ("settles" or "settle_reason"));
-            bool ids = note ? property.Name is "source_event_ids" or "source_day_ids"
+                || (kind is "note" or "lesson" && property.Name is ("settles" or "settle_reason"));
+            bool ids = kind == "note" ? property.Name is "source_event_ids" or "source_day_ids"
                 : property.Name == "source_note_ids";
             if (!scalar && !ids)
             {

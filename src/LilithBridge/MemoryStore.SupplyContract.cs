@@ -52,7 +52,8 @@ internal sealed partial class MemoryStore
         _reflectionNotes.Select(t => restored != null && restored.TryGetValue(t.EventId, out var prior) ? prior : t);
 
     private Func<MemoryTurn, bool> CreateCurrentBasisEvaluator(HashSet<string>? rawIds = null,
-        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null)
+        IReadOnlyDictionary<string, MemoryTurn>? restoredNotes = null,
+        Func<MemoryTurn, bool>? dayCurrent = null)
     {
         // Boolean source membership borrows the store's immutable archive
         // index. A caller-supplied set remains authoritative; no turn escapes.
@@ -65,20 +66,23 @@ internal sealed partial class MemoryStore
         var days = _dreams.GroupBy(t => t.EventId).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
         var visiting = new HashSet<string>(StringComparer.Ordinal);
         var memo = new Dictionary<string, bool>(StringComparer.Ordinal);
-        var materialPermitted = CreateMaterialPermissionEvaluator(borrowArchive:_b1BorrowedArchive!=null);
+        var activeCorrections = ActiveCorrectionList();
+        var isDayCurrent = dayCurrent ?? CreateDayArtifactCurrentEvaluator(
+            CreateMaterialPermissionEvaluator(borrowArchive: _b1BorrowedArchive != null), restoredNotes);
         bool Visit(MemoryTurn t)
         {
-            // A day product is current only under the rule its own consumer applies:
-            // declared support, the recorded read footprint and the per-source
-            // version fingerprints must all still resolve. This shared view used to
-            // re-derive a local version of that question, so a thought read through
-            // a day could drift from the day consumer's answer; now it asks the day
-            // supplier itself, keeping one definition of "this day is current".
-            if ((t.Kind is DayConsolidationKind or DayDreamKind)
-                && !IsDayArtifactCurrent(t, materialPermitted, restoredNotes)) return false;
-            if (!(IsActiveLifecycle(t) || IsSettledLifecycle(t)) || HasUnincorporatedCorrection(t)
-                || !IsMentionAllowed(t) || t.SourceEventIds.Length == 0 || !t.SourceEventIds.All(RawContains)) return false;
             if (memo.TryGetValue(t.EventId, out bool known)) return known;
+            if ((t.Kind is DayConsolidationKind or DayDreamKind) && !isDayCurrent(t))
+            { memo[t.EventId] = false; return false; }
+            if (!(IsActiveLifecycle(t) || IsSettledLifecycle(t)) || HasUnincorporatedCorrectionFast(t, activeCorrections)
+                || !IsMentionAllowed(t)) { memo[t.EventId] = false; return false; }
+            if (IsFreeAssociationDream(t))
+            {
+                if (!t.ContextDependencies.Where(d => d.Kind == "utterance").All(d => RawContains(d.EventId)))
+                { memo[t.EventId] = false; return false; }
+            }
+            else if (t.SourceEventIds.Length == 0 || !t.SourceEventIds.All(RawContains))
+            { memo[t.EventId] = false; return false; }
             if (!visiting.Add(t.EventId)) return false;
             bool current = t.SourceNoteIds.All(id => notes.TryGetValue(id, out var n) && Visit(n))
                 && t.SourceDayIds.All(id => days.TryGetValue(id, out var d) && Visit(d));
@@ -190,7 +194,7 @@ internal sealed partial class MemoryStore
                     var record = found![0];
                     allowed = (IsActiveLifecycle(record) || IsSettledLifecycle(record) || IsSupersededLifecycle(record))
                         && IsMentionAllowed(record) && permitted(new(kind, id, ""))
-                        && record.SourceEventIds.Length > 0
+                        && (record.SourceEventIds.Length > 0 || (kind == "day" && IsFreeAssociationDream(record)))
                         && record.SourceEventIds.All(source => Visit("utterance", source))
                         && record.SourceNoteIds.All(source => Visit("note", source))
                         && record.SourceDayIds.All(source => Visit("day", source))

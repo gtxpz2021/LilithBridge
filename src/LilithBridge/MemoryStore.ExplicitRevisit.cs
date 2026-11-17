@@ -123,28 +123,36 @@ internal sealed partial class MemoryStore
             if (evidence.Sum(t => (long)t.Text.Length) + target.Text.Length + days.Sum(t => (long)t.Text.Length) > 24000) return null;
             var notes = IsActiveLifecycle(target) ? new[] { target } : Array.Empty<MemoryTurn>();
             var settled = IsSettledLifecycle(target) ? new[] { target } : Array.Empty<MemoryTurn>();
-            var history = CaptureNoteHistory(new[] { target });
-            object Note(MemoryTurn t) => new { note_id = t.EventId, text = t.Text, state = t.LifecycleState,
-                revision = t.Revision, revises = t.SourceEventId, source_event_ids = t.SourceEventIds,
+            var aliases = new ShortAliasTable();
+            aliases.RegisterAll("e", evidence);
+            aliases.RegisterAll("n", notes);
+            aliases.RegisterAll("s", settled);
+            aliases.RegisterAll("d", days);
+            var history = CaptureNoteHistory(new[] { target }, aliases);
+            object Note(MemoryTurn t) => new { note_id = aliases.AliasOrId(t.EventId), text = t.Text, state = t.LifecycleState,
+                revision = t.Revision, revises = aliases.AliasOrRegister("h", t.SourceEventId),
+                source_event_ids = aliases.AliasOrIds(t.SourceEventIds),
                 at = t.Timestamp, settled_at = t.SettledAt, settle_reason = t.SettleReason,
-                source_context = DescribeSourceAttribution(t) };
+                source_context = DescribeSourceAttribution(t),
+                surfaced_usage = DescribeReflectionUsageLocked(t.EventId) };
             string source = JsonSerializer.Serialize(new {
                 work_kind = "explicit_thought_revisit", explicit_revisit = RevisitProjection(invocation),
                 context = "这是一次对指定旧想法的重访，没有新交流。对象来自本次调用，不表示它重要或必须改变；可维持、联想、修订、放下或无新产物。",
                 now = DateTimeOffset.UtcNow, window_event_ids = Array.Empty<string>(),
                 window_start = (DateTimeOffset?)null, window_end = (DateTimeOffset?)null, turn_count = evidence.Length,
-                utterances = evidence.Select(t => new { event_id = t.EventId, speaker = t.Role, origin = t.Origin,
+                utterances = evidence.Select(t => new { event_id = aliases.AliasOrId(t.EventId), speaker = t.Role, origin = t.Origin,
                     text = t.Text, at = t.Timestamp, source_revision_context = NaturalMemoryContext(t),
                     reported_speech = UtteranceAttribution.Reported(t.Role, t.Text) }),
                 previous_notes = notes.Select(Note), settled_notes = settled.Select(Note), note_history = history.Projection,
-                day_artifacts = days.Select(t => new { day_id = t.EventId, kind = t.Kind, at = t.Timestamp,
+                day_artifacts = days.Select(t => new { day_id = aliases.AliasOrId(t.EventId), kind = t.Kind, at = t.Timestamp,
                     text = t.Text, source_context = DescribeSourceAttribution(t) })
             }, DialogueMaterialEnvelope.DataJson);
             var request = new ReflectionRequestSnapshot(operationId, source, evidence, notes,
                 Array.Empty<MemoryTurn>(), Array.Empty<MemoryTurn>(), days, settled) {
                 RevisitContext = invocation, SelectionGeneration = generation,
                 Dependencies = CaptureReflectionVersions(evidence, new[] { target }, Array.Empty<MemoryTurn>(), Array.Empty<MemoryTurn>(), days),
-                NoteHistory = history.Notes, NoteHistoryPermissions = history.Permissions
+                NoteHistory = history.Notes, NoteHistoryPermissions = history.Permissions,
+                ShortAliases = aliases.AliasToId
             };
             reason = "captured"; return request;
         }
@@ -166,7 +174,8 @@ internal sealed partial class MemoryStore
     }
 
     private string[] RevisitResults(string operationId) => _reflectionNotes.Where(t => t.OperationId == operationId
-            || t.ReflectionSettlementOperationId == operationId).Concat(_reflectionLessons.Where(t => t.OperationId == operationId))
+            || t.ReflectionSettlementOperationId == operationId).Concat(_reflectionLessons.Where(t => t.OperationId == operationId
+            || t.ReflectionSettlementOperationId == operationId))
         .Concat(_relationshipReadings.Where(t => t.OperationId == operationId)).Select(t => t.EventId).Distinct(StringComparer.Ordinal).ToArray();
 
     internal bool RecordBlockedExplicitRevisit(ReflectionWindowCursor cursor, string operationId,

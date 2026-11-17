@@ -108,6 +108,9 @@ internal sealed class LogicalDialogueUnit
     internal static LogicalDialogueUnit FromOwnedSnapshots(IReadOnlyList<MemoryTurn> members, bool isMessage,
         string? overrideCoverage, Func<MemoryTurn, string> fingerprint)
         => new(members, isMessage, overrideCoverage, true, fingerprint);
+    internal static LogicalDialogueUnit Create(IReadOnlyList<MemoryTurn> members, bool isMessage,
+        string? overrideCoverage, Func<MemoryTurn, string> fingerprint)
+        => new(members, isMessage, overrideCoverage, false, fingerprint);
     public string Key { get; }
     public string VersionFingerprint { get; }
     public string Text { get; }
@@ -134,20 +137,44 @@ internal sealed class LogicalDialogueUnit
     public IReadOnlyList<LogicalDialogueGap> Gaps { get; }
     public bool ContainsExact(string text) => Runs.Any(r => r.Text.Contains(text, StringComparison.Ordinal));
     private HashSet<string>? _matchingTokens;
+    private bool? _isLowInfoFiller;
+    private string? _comparableText;
     // Pure text computation; never a relevance or source permission decision.
     internal IReadOnlySet<string> MatchingTokens => _matchingTokens ??= MemorySemantics.MatchingTokens(Text);
+    // Pure text computation; never a relevance or source permission decision.
+    internal bool IsLowInfoFiller => _isLowInfoFiller ??= MemorySemantics.IsLowInfoGreetingOrFiller(Text);
+    // Pure text computation; never a relevance or source permission decision.
+    internal string ComparableText => _comparableText ??= MemorySemantics.NormalizeComparableText(Text);
 }
 
 internal sealed class LogicalDialogueCatalog
 {
     private readonly Dictionary<string, LogicalDialogueUnit> _events;
     private readonly Dictionary<string, LogicalDialogueUnit> _keys;
+    private Dictionary<string, int[]>? _tokenIndex;
     private LogicalDialogueCatalog(IReadOnlyList<LogicalDialogueUnit> units, IReadOnlyList<string> omissions)
     {
         Units = Array.AsReadOnly(units.ToArray()); Omissions = Array.AsReadOnly(omissions.ToArray());
         _keys = Units.ToDictionary(u => u.Key, StringComparer.Ordinal);
         _events = new(StringComparer.Ordinal);
         foreach (var unit in Units) foreach (var span in unit.SourceSpans) _events.Add(span.EventId, unit);
+    }
+    internal Dictionary<string, int[]> TokenIndex => _tokenIndex ??= BuildTokenIndex();
+    private Dictionary<string, int[]> BuildTokenIndex()
+    {
+        var map = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < Units.Count; i++)
+        {
+            foreach (string token in Units[i].MatchingTokens)
+            {
+                if (!map.TryGetValue(token, out var list))
+                    map[token] = list = new List<int>(4);
+                list.Add(i);
+            }
+        }
+        var result = new Dictionary<string, int[]>(map.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in map) result[kv.Key] = kv.Value.ToArray();
+        return result;
     }
     public IReadOnlyList<LogicalDialogueUnit> Units { get; }
     public IReadOnlyList<string> Omissions { get; }
@@ -161,15 +188,34 @@ internal sealed class LogicalDialogueCatalog
         && t.SourceEventId != null && t.DeliveryState != null && t.SourceEventIds != null
         && t.SourceNoteIds != null && t.SourceDayIds != null && t.SourceDependencies != null && t.DayCoveredEventIds != null
         && t.ContextDependencies != null;
-    public static LogicalDialogueCatalog Build(IEnumerable<MemoryTurn> raw)
+    public static LogicalDialogueCatalog Build(IEnumerable<MemoryTurn> raw) => Build(raw, null, null);
+    internal static LogicalDialogueCatalog Build(IEnumerable<MemoryTurn> raw, Func<MemoryTurn, string>? knownFingerprint)
+        => Build(raw, knownFingerprint, null);
+    internal static LogicalDialogueCatalog Build(IEnumerable<MemoryTurn> raw, Func<MemoryTurn, string>? knownFingerprint,
+        Func<IReadOnlyList<MemoryTurn>, bool, string?, Func<MemoryTurn, string>, LogicalDialogueUnit>? getOrCreateUnit)
     {
         var omissions = new List<string>(); var source = new List<MemoryTurn>();
+        bool ownAtInput = getOrCreateUnit == null;
+        var originals = ownAtInput && knownFingerprint != null
+            ? new Dictionary<MemoryTurn, MemoryTurn>(ReferenceEqualityComparer.Instance) : null;
         foreach (var row in raw)
-            if (Copyable(row)) source.Add(row.Copy()); else omissions.Add("invalid_source_record");
+            if (Copyable(row))
+            {
+                var item = ownAtInput ? row.Copy() : row;
+                source.Add(item);
+                if (originals != null) originals[item] = row;
+            }
+            else omissions.Add("invalid_source_record");
         var accepted = new List<MemoryTurn>();
         Dictionary<MemoryTurn, string>? duplicateFingerprints = null;
         string Fingerprint(MemoryTurn turn) => duplicateFingerprints != null && duplicateFingerprints.TryGetValue(turn, out var known)
-            ? known : RawFingerprint(turn);
+            ? known
+            : !ownAtInput && knownFingerprint != null ? knownFingerprint(turn)
+            : originals != null && originals.TryGetValue(turn, out var orig) ? knownFingerprint!(orig) : RawFingerprint(turn);
+        LogicalDialogueUnit BuildUnit(IReadOnlyList<MemoryTurn> members, bool isMessage, string? coverage)
+            => getOrCreateUnit != null
+                ? getOrCreateUnit(members, isMessage, coverage, Fingerprint)
+                : LogicalDialogueUnit.FromOwnedSnapshots(members, isMessage, coverage, Fingerprint);
         foreach (var group in source.GroupBy(t => t.EventId, StringComparer.Ordinal))
         {
             var first = group.First();
@@ -177,7 +223,7 @@ internal sealed class LogicalDialogueCatalog
             // is computed by the unit; duplicate groups keep the exact check.
             if (group.Skip(1).Any())
             {
-                var versions = group.Select(RawFingerprint).Distinct(StringComparer.Ordinal).Take(2).ToArray();
+                var versions = group.Select(Fingerprint).Distinct(StringComparer.Ordinal).Take(2).ToArray();
                 if (versions.Length > 1) { omissions.Add("conflicting_source_identity:" + group.Key); continue; }
                 (duplicateFingerprints ??= new())[first] = versions[0];
             }
@@ -192,8 +238,8 @@ internal sealed class LogicalDialogueCatalog
         {
             if (!ambiguousSequence.Contains(row.EventId) && HistoryBoundary.TryReplyBubble(row, out string request, out _))
                 strict.Add((row, request));
-            else units.Add(LogicalDialogueUnit.FromOwnedSnapshots(new[] { row }, false,
-                ambiguousSequence.Contains(row.EventId) ? "ambiguous_sequence;independent_record_only" : null, Fingerprint));
+            else units.Add(BuildUnit(new[] { row }, false,
+                ambiguousSequence.Contains(row.EventId) ? "ambiguous_sequence;independent_record_only" : null));
         }
         foreach (var group in strict.GroupBy(x => (x.Turn.SessionId, x.Request, x.Turn.Origin, x.Turn.SourceEventId)))
         {
@@ -205,9 +251,9 @@ internal sealed class LogicalDialogueCatalog
                 if (index <= previous) ambiguous = true; previous = index;
             }
             if (ambiguous)
-                foreach (var row in members) units.Add(LogicalDialogueUnit.FromOwnedSnapshots(new[] { row }, false,
-                    "ambiguous_chunk_order;independent_record_only", Fingerprint));
-            else units.Add(LogicalDialogueUnit.FromOwnedSnapshots(members, true, null, Fingerprint));
+                foreach (var row in members) units.Add(BuildUnit(new[] { row }, false,
+                    "ambiguous_chunk_order;independent_record_only"));
+            else units.Add(BuildUnit(members, true, null));
         }
         return new(units.OrderBy(u => u.SourceSpans.Min(s => positions[s.EventId])).ToArray(), omissions.AsReadOnly());
     }
@@ -229,7 +275,7 @@ internal sealed class LogicalDialogueSelection : IReadOnlyList<MemoryTurn>
 {
     private readonly MemoryTurn[] _records;
     public LogicalDialogueSelection(IEnumerable<LogicalDialogueUnit> units, IEnumerable<string>? directHitEventIds = null,
-        Func<MemoryTurn, MemoryTurn>? materialize = null)
+        Func<MemoryTurn, MemoryTurn>? materialize = null, IEnumerable<string>? sparkEventIds = null)
     {
         var chosen = units.ToArray();
         foreach (var group in chosen.GroupBy(u => u.Key, StringComparer.Ordinal))
@@ -239,11 +285,14 @@ internal sealed class LogicalDialogueSelection : IReadOnlyList<MemoryTurn>
         _records = Units.SelectMany(u => u.Members).DistinctBy(t => t.EventId)
             .Select(t => materialize?.Invoke(t.Copy()) ?? t.Copy()).ToArray();
         DirectHitEventIds = Array.AsReadOnly((directHitEventIds ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray());
+        SparkEventIds = Array.AsReadOnly((sparkEventIds ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray());
     }
-    public static LogicalDialogueSelection FromRecords(IEnumerable<MemoryTurn> records, IEnumerable<string>? directHitEventIds = null)
-        => new(LogicalDialogueCatalog.Build(records).Units, directHitEventIds);
+    public static LogicalDialogueSelection FromRecords(IEnumerable<MemoryTurn> records, IEnumerable<string>? directHitEventIds = null,
+        IEnumerable<string>? sparkEventIds = null)
+        => new(LogicalDialogueCatalog.Build(records).Units, directHitEventIds, null, sparkEventIds);
     public IReadOnlyList<LogicalDialogueUnit> Units { get; }
     public IReadOnlyList<string> DirectHitEventIds { get; }
+    public IReadOnlyList<string> SparkEventIds { get; }
     public int Count => _records.Length;
     public MemoryTurn this[int index] => _records[index].Copy();
     public IEnumerator<MemoryTurn> GetEnumerator() => _records.Select(t => t.Copy()).GetEnumerator();

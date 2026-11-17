@@ -60,9 +60,13 @@ internal sealed partial class BridgeController
         PreparationTiming.Current?.Mark("input.archived");
         _reviewHandoff.Trim(_memory,_config);
         if(TryHandleMemoryCommand(userTurn,out var memoryOutcome))return;
+        bool reusedUserTurn = _sessionState.LastUserEventId.Length > 0 && userTurn != null && _sessionState.LastUserEventId == userTurn.EventId;
         _sessionState.LastUserText=text;_sessionState.LastUserEventId=userTurn?.EventId??"";
-        _sessionState.AddSceneEvent(new LilithSceneEvent{EventId=userTurn?.EventId??Guid.NewGuid().ToString("N"),Kind=SceneEventKind.UserInput,Actor="player",Details=text});
-        _memory.AddInteractionMemory("玩家说："+text,"","user_input");
+        if (!reusedUserTurn)
+        {
+            _sessionState.AddSceneEvent(new LilithSceneEvent{EventId=userTurn?.EventId??Guid.NewGuid().ToString("N"),Kind=SceneEventKind.UserInput,Actor="player",Details=text});
+            _memory.AddInteractionMemory("玩家说："+text,"","user_input");
+        }
         NativeEventLog.Trace("chat.send","mod","player",text);
         SubmitRequest(text,userEventId:userTurn?.EventId??"",memoryOperation:memoryOutcome,reviewAuthorized:reviewAuthorized);
     }

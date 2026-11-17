@@ -7,6 +7,10 @@ namespace LilithBridge;
 internal sealed partial class MemoryStore
 {
     private ExperienceValidationView? _experienceValidationView;
+    private Dictionary<MemoryTurn, string>? _retainedRawFingerprints;
+    private Dictionary<string, List<CachedLogicalUnit>>? _retainedLogicalUnits;
+
+    private sealed record CachedLogicalUnit(MemoryTurn[] OrigMembers, bool IsMessage, string? Coverage, LogicalDialogueUnit Unit);
 
     // The archive cache owns these records. This private view borrows them only
     // for synchronous reads under _experienceLock. Public/general readers still
@@ -17,16 +21,27 @@ internal sealed partial class MemoryStore
         internal IReadOnlyList<MemoryTurn> NativeHistoryTurns { get; }
         internal bool HasAmbiguousEventIds { get; private set; }
         private readonly Dictionary<string, MemoryTurn?> _byId = new(StringComparer.Ordinal);
-        private readonly LogicalArchiveView _logical = new(), _scopedLogical = new(), _messageLogical = new(), _reviewLogical = new();
+        private readonly Dictionary<MemoryTurn, string> _rawFingerprints;
+        private readonly Dictionary<string, List<CachedLogicalUnit>> _retainedUnits;
+        private readonly LogicalArchiveView _logical = new(), _scopedLogical = new(), _messageLogical = new(), _reviewLogical = new(), _semanticLogical = new();
         private ReflectionArchiveIndex? _reflectionArchive;
         internal ReflectionArchiveIndex ReflectionArchive => _reflectionArchive ??= IndexReflectionArchive(Turns);
         private readonly Dictionary<(string Session, string Source, string Origin, string Request), IReadOnlyList<MemoryTurn>> _byOwner;
 
-        internal ExperienceValidationView(IEnumerable<MemoryTurn> records)
+        internal ExperienceValidationView(IEnumerable<MemoryTurn> records, Dictionary<MemoryTurn, string>? priorFingerprints = null,
+            Dictionary<string, List<CachedLogicalUnit>>? priorUnits = null)
         {
             var ordered = records.OrderBy(t => t.Timestamp).ThenBy(t => t.SessionId, StringComparer.Ordinal)
                 .ThenBy(t => t.Sequence).ToArray();
             Turns = Array.AsReadOnly(ordered);
+            _retainedUnits = priorUnits ?? new(StringComparer.Ordinal);
+            _rawFingerprints = new Dictionary<MemoryTurn, string>(ordered.Length, ReferenceEqualityComparer.Instance);
+            if (priorFingerprints != null)
+            {
+                foreach (var turn in ordered)
+                    if (priorFingerprints.TryGetValue(turn, out var fp))
+                        _rawFingerprints[turn] = fp;
+            }
             var owners = new Dictionary<(string, string, string, string), List<MemoryTurn>>();
             var native = new List<MemoryTurn>();
             foreach (var turn in ordered)
@@ -47,6 +62,46 @@ internal sealed partial class MemoryStore
             NativeHistoryTurns = native.AsReadOnly();
         }
 
+        internal Dictionary<MemoryTurn, string> RawFingerprints => _rawFingerprints;
+        internal Dictionary<string, List<CachedLogicalUnit>> RetainedUnits => _retainedUnits;
+        internal string GetRawFingerprint(MemoryTurn turn)
+        {
+            if (_rawFingerprints.TryGetValue(turn, out var fp)) return fp;
+            fp = LogicalDialogueCatalog.RawFingerprint(turn);
+            _rawFingerprints[turn] = fp;
+            return fp;
+        }
+        private LogicalDialogueUnit GetOrCreateLogicalUnit(IReadOnlyList<MemoryTurn> members, bool isMessage,
+            string? coverage, Func<MemoryTurn, string> fingerprint)
+        {
+            string anchorId = members[0].EventId;
+            lock (_retainedUnits)
+            {
+                if (_retainedUnits.TryGetValue(anchorId, out var list))
+                {
+                    foreach (var entry in list)
+                    {
+                        if (entry.IsMessage == isMessage && entry.Coverage == coverage && entry.OrigMembers.Length == members.Count)
+                        {
+                            bool same = true;
+                            for (int i = 0; i < members.Count; i++)
+                                if (!ReferenceEquals(entry.OrigMembers[i], members[i])) { same = false; break; }
+                            if (same) return entry.Unit;
+                        }
+                    }
+                }
+            }
+            var created = LogicalDialogueUnit.Create(members, isMessage, coverage, fingerprint);
+            var refs = members is MemoryTurn[] arr ? (MemoryTurn[])arr.Clone() : members.ToArray();
+            lock (_retainedUnits)
+            {
+                if (!_retainedUnits.TryGetValue(anchorId, out var list))
+                    _retainedUnits[anchorId] = list = new(1);
+                list.Add(new(refs, isMessage, coverage, created));
+            }
+            return created;
+        }
+
         internal bool TryGetUnique(string id, out MemoryTurn turn)
         {
             if (_byId.TryGetValue(id, out var found) && found != null) { turn = found; return true; }
@@ -62,15 +117,19 @@ internal sealed partial class MemoryStore
         // visibility is evaluated on every read; only an unchanged projection
         // is reused, never an earlier permission decision.
         internal LogicalDialogueCatalog LogicalCatalog(Func<MemoryTurn, bool> visible, bool scoped, bool dialogueOnly)
-            => (dialogueOnly ? _messageLogical : scoped ? _scopedLogical : _logical).Read(Turns, visible);
+            => (dialogueOnly ? _messageLogical : scoped ? _scopedLogical : _logical).Read(Turns, visible, GetRawFingerprint, GetOrCreateLogicalUnit);
+        internal LogicalDialogueCatalog SemanticCatalog(Func<MemoryTurn, bool> visible)
+            => _semanticLogical.Read(Turns, visible, GetRawFingerprint, GetOrCreateLogicalUnit);
         internal LogicalDialogueCatalog ReviewCatalog(Func<MemoryTurn, bool> visible)
-            => _reviewLogical.Read(Turns, visible);
+            => _reviewLogical.Read(Turns, visible, GetRawFingerprint, GetOrCreateLogicalUnit);
 
         private sealed class LogicalArchiveView
         {
             private bool[]? _visible;
             private LogicalDialogueCatalog? _catalog;
-            internal LogicalDialogueCatalog Read(IReadOnlyList<MemoryTurn> turns, Func<MemoryTurn, bool> visible)
+            internal LogicalDialogueCatalog Read(IReadOnlyList<MemoryTurn> turns, Func<MemoryTurn, bool> visible,
+                Func<MemoryTurn, string>? knownFingerprint = null,
+                Func<IReadOnlyList<MemoryTurn>, bool, string?, Func<MemoryTurn, string>, LogicalDialogueUnit>? getOrCreateUnit = null)
             {
                 var mask = new bool[turns.Count];
                 bool changed = _visible == null || _visible.Length != mask.Length;
@@ -81,7 +140,7 @@ internal sealed partial class MemoryStore
                 }
                 if (changed || _catalog == null)
                 {
-                    var catalog = LogicalDialogueCatalog.Build(turns.Where((_, i) => mask[i]));
+                    var catalog = LogicalDialogueCatalog.Build(turns.Where((_, i) => mask[i]), knownFingerprint, getOrCreateUnit);
                     _catalog = catalog; _visible = mask;
                 }
                 return _catalog;
@@ -93,8 +152,14 @@ internal sealed partial class MemoryStore
                 ? found : Array.Empty<MemoryTurn>();
     }
 
-    private void InvalidateExperienceValidationView()
+    private void InvalidateExperienceValidationView(bool preserveFingerprints = false)
     {
+        _retainedRawFingerprints = preserveFingerprints
+            ? (_experienceValidationView?.RawFingerprints ?? _retainedRawFingerprints)
+            : null;
+        _retainedLogicalUnits = preserveFingerprints
+            ? (_experienceValidationView?.RetainedUnits ?? _retainedLogicalUnits)
+            : null;
         _experienceValidationView = null;
         InvalidateSourceValidation();
     }
@@ -108,7 +173,13 @@ internal sealed partial class MemoryStore
             if (!_experienceArchiveEnabled || !System.IO.Directory.Exists(ExperienceDirectory))
                 return new ExperienceValidationView(Array.Empty<MemoryTurn>());
             if (_experienceCache == null) LoadExperienceCache();
-            return _experienceValidationView ??= new ExperienceValidationView(_experienceCache!);
+            if (_experienceValidationView == null)
+            {
+                _experienceValidationView = new ExperienceValidationView(_experienceCache!, _retainedRawFingerprints, _retainedLogicalUnits);
+                _retainedRawFingerprints = _experienceValidationView.RawFingerprints;
+                _retainedLogicalUnits = _experienceValidationView.RetainedUnits;
+            }
+            return _experienceValidationView;
         }
     }
 

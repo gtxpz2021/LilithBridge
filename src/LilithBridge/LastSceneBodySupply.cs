@@ -63,56 +63,42 @@ internal static class LastSceneBodySupply
                 replyEnd = replyRecords[^1];
             }
         }
-        string Identity(MemoryTurn t) => "utterance:" + t.EventId + ";sha256=" + RequestSourceBody.Hash(t.Text);
-        string Body(MemoryTurn t)
+        if (onBodyReference != null && hostBodies.Count > 0 && scene.BoundaryHint.Length == 0 && scene.SchemaVersion >= 3
+            && (user != null ? hostBodies.Any(h => h.Qualified && h.EventId == user.EventId && h.Text == user.Text) : scene.UserText.Length == 0)
+            && (replyRecords.Count > 0 ? replyRecords.All(r => hostBodies.Any(h => h.Qualified && h.EventId == r.EventId && h.Text == r.Text)) : resolvedReply.Length == 0))
+            return "";
+        string BodyOrRef(MemoryTurn t)
         {
-            // Same identity AND exact version, never same wording from another turn.
             var matches = hostBodies.Where(h => h.Qualified && h.EventId == t.EventId && h.Text == t.Text
                 && h.Role == t.Role && h.Origin == t.Origin && h.DeliveryState == t.DeliveryState).Distinct().ToArray();
             if (matches.Length == 1)
             {
                 onBodyReference!(matches[0]);
-                return "[正文引用 " + Identity(t) + ";body=" + matches[0].Location
-                    + ";start_char=" + matches[0].TextStart + ";char_count=" + t.Text.Length + "]";
+                return t.Text;
             }
-            return "[来源 " + Identity(t) + "] " + t.Text;
+            return t.Text;
         }
         builder.AppendLine("[上一幕的历史线索]");
-        builder.AppendLine("- 原记录时间=" + scene.Timestamp.ToString("O") + "; 来源="
-            + string.Join(",", scene.SourceEventIds.Concat(supplied.Select(t => t.EventId)).Distinct(StringComparer.Ordinal)));
+        builder.AppendLine("- 记录时间：" + scene.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
         if (scene.SchemaVersion < 3)
-            builder.AppendLine("- 旧格式摘要；来源与时间仅为当时快照所载，未单独核实话题原始事件，不视为未完成事项或逐字原话。");
-        if (scene.TopicText.Length > 0)
-            builder.AppendLine(user != null && scene.TopicText == SnapshotPrefix(user.Text, 80)
-                ? "- 当时的话题线索：同一玩家发言的前缀摘录；来源=" + Identity(user) + ";正文见该发言。"
-                : "- 当时的话题线索：" + scene.TopicText);
+            builder.AppendLine("- 旧格式摘要；仅供背景参考，不视为未完成事项或逐字原话。");
+        if (scene.TopicText.Length > 0 && !(user != null && scene.TopicText == SnapshotPrefix(user.Text, 80)))
+            builder.AppendLine("- 当时话题：" + scene.TopicText);
         if (scene.UserText.Length > 0)
             builder.AppendLine(user == null
-                ? "- 当时快照记录的玩家发言（来源未能重新核实）：" + userAttribution + scene.UserText
-                : "- 当时玩家提交的原文：" + userAttribution + Body(user));
+                ? "- 当时玩家（快照未重新核实）：" + userAttribution + scene.UserText
+                : "- 当时玩家：" + userAttribution + BodyOrRef(user));
         if (scene.AssistantText.Length > 0)
         {
             if (replyRecords.Count > 0)
             {
-                builder.AppendLine("- 此后实际交付的莉莉丝回复（已核片段，不代表整次生成）：");
-                foreach (var fragment in replyRecords)
-                    builder.AppendLine("  - " + fragment.Timestamp.ToString("O") + " " + Body(fragment));
+                string joined = string.Concat(replyRecords.Select(BodyOrRef));
+                builder.AppendLine("- 当时莉莉丝已回复：" + joined);
             }
-            else builder.AppendLine("- 当时快照记录的莉莉丝回复片段（来源未能重新核实）（"
-                + scene.AssistantTimestamp?.ToString("O") + "）：" + resolvedReply);
+            else builder.AppendLine("- 当时莉莉丝（快照未重新核实）：" + resolvedReply);
         }
-        if (scene.NotableEvent.Length > 0)
-        {
-            var notableSources = new List<MemoryTurn>();
-            if (replyEnd != null && replyRecords.Count > 0 && new[] { "莉莉丝（AI）说：", "莉莉丝（AI）注意到：", "莉莉丝（原生）说：" }
-                .Any(prefix => scene.NotableEvent == SnapshotPrefix(prefix + scene.AssistantText, 60)))
-                notableSources.AddRange(scene.AssistantText == resolvedReply ? replyRecords : new[] { replyEnd });
-            if (user != null && replyEnd == null && new[] { "玩家说：", "玩家选择了：" }
-                .Any(prefix => scene.NotableEvent == SnapshotPrefix(prefix + user.Text, 60))) notableSources.Add(user);
-            builder.AppendLine(notableSources.Count > 0
-                ? "- 当时的事件摘录：同一发言的事件标签及前缀；逐片来源=" + string.Join(",", notableSources.Select(Identity)) + ";正文见各片段。"
-                : "- 当时的事件摘录：" + scene.NotableEvent);
-        }
+        if (scene.NotableEvent.Length > 0 && replyRecords.Count == 0 && user == null)
+            builder.AppendLine("- 事件摘录：" + scene.NotableEvent);
         if (scene.BoundaryHint.Length > 0) builder.AppendLine("- 当时的边界线索：" + scene.BoundaryHint);
         builder.AppendLine("这些记录不表示话题尚未结束，也不要求继续；按原话、已给的回复和当前情况判断是否值得提起，可以保持安静。");
         return builder.ToString();

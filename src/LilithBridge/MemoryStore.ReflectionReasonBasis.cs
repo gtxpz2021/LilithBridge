@@ -119,7 +119,7 @@ internal sealed partial class MemoryStore
         if (original == null) return false;
         IEnumerable<MemoryTurn> pool = source.Kind == "note" ? _reflectionNotes : source.Kind == "lesson" ? _reflectionLessons : _relationshipReadings;
         bool own = pool.Any(t => t.OperationId == request.RequestId && t.SourceEventId == source.Id)
-            || source.Kind == "note" && pool.Any(t => t.EventId == source.Id && t.ReflectionSettlementOperationId == request.RequestId);
+            || source.Kind is "note" or "lesson" && pool.Any(t => t.EventId == source.Id && t.ReflectionSettlementOperationId == request.RequestId);
         var current = pool.FirstOrDefault(t => t.EventId == source.Id);
         if (!own || current == null || current.LifecycleState is not ("superseded" or "settled")
             || !IsMentionAllowed(current) || !IsNativeSupplyAllowed(current) || SuppressedTextMatches(current.Text)) return false;

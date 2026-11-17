@@ -12,12 +12,40 @@ internal static class NativeEventLog
 {
     private const int MaxBufferedEvents = 64;
     private const double FlushIntervalSeconds = 1.0;
-    private const long TextFileMaxBytes = 2 * 1024 * 1024;
-    private const long JsonFileMaxBytes = 4 * 1024 * 1024;
+    private const long TextFileMaxBytes = 4 * 1024 * 1024;
+    private const long JsonFileMaxBytes = 8 * 1024 * 1024;
     private static readonly object LogLock = new();
     private static readonly List<string> PendingJson = new();
     private static readonly List<string> PendingText = new();
     private static DateTimeOffset _lastFlushAt = DateTimeOffset.UtcNow;
+
+    public static void TraceVerbose(string kind, string source, string actor, string text, string details = "")
+    {
+        var cfg = ConfigStore.Load();
+        if (!cfg.TraceEnabled || !cfg.VerboseTelemetryEnabled)
+            return;
+        try
+        {
+            string json = JsonSerializer.Serialize(new
+            {
+                ts = DateTimeOffset.UtcNow,
+                kind,
+                source,
+                actor,
+                text,
+                details
+            }) + Environment.NewLine;
+            lock (LogLock)
+            {
+                string dir = Path.Combine(DataPaths.Root(), "telemetry");
+                Directory.CreateDirectory(dir);
+                string path = Path.Combine(dir, "v4-verbose-events.jsonl");
+                RotateFile(path, JsonFileMaxBytes);
+                File.AppendAllText(path, json, new UTF8Encoding(false));
+            }
+        }
+        catch { }
+    }
 
     public static void Trace(string kind, string source, string actor, string text, string details = "")
     {
@@ -438,6 +466,17 @@ internal sealed partial class MemoryStore
             return null;
         if (eventId.Length > 0 && (_seenUtteranceIds.Contains(eventId) || IsExperienceSuppressed(eventId)))
             return null;
+        if (role == "user" && kind == "chat" && eventId.Length == 0 && _history.Count > 0)
+        {
+            MemoryTurn last = _history[^1];
+            if (last.Role == "user" && last.Kind == "chat" && last.SessionId == _sessionId
+                && string.Equals(Clean(last.Text), Clean(text), StringComparison.Ordinal))
+            {
+                last.Timestamp = observedAtUtc ?? DateTimeOffset.UtcNow;
+                SaveList("sessions\\v4-native-chat.json", _history);
+                return last;
+            }
+        }
         var turn = new MemoryTurn
         {
             EventId = eventId.Length > 0 ? eventId : Guid.NewGuid().ToString("N"),
@@ -658,9 +697,23 @@ internal sealed partial class MemoryStore
         if (count == 0)
             return Array.Empty<MemoryTurn>();
         HashSet<string> suppressed = SuppressedExperienceIds();
-        return _history.Where(turn => !suppressed.Contains(turn.EventId) && !suppressed.Contains(turn.SourceEventId)
+        var eligible = _history.Where(turn => !suppressed.Contains(turn.EventId) && !suppressed.Contains(turn.SourceEventId)
                 && IsMentionAllowed(turn) && HistoryBoundary.DisplayedOrLegacyRecord(turn))
-            .TakeLast(count).Select(turn => turn.Copy()).ToList();
+            .ToList();
+        var deduped = new List<MemoryTurn>(eligible.Count);
+        for (int i = 0; i < eligible.Count; i++)
+        {
+            if (i + 1 < eligible.Count
+                && eligible[i].Role == "user" && eligible[i].Kind == "chat"
+                && eligible[i + 1].Role == "user" && eligible[i + 1].Kind == "chat"
+                && eligible[i].SessionId == eligible[i + 1].SessionId
+                && string.Equals(Clean(eligible[i].Text), Clean(eligible[i + 1].Text), StringComparison.Ordinal))
+            {
+                continue;
+            }
+            deduped.Add(eligible[i]);
+        }
+        return deduped.TakeLast(count).Select(turn => turn.Copy()).ToList();
     }
 
     /// <summary>
@@ -798,6 +851,31 @@ internal sealed partial class MemoryStore
         return RankWithNaturalRevisions(candidates.Where(t => IsDerivedMemoryVisible(t) && IsNativeSupplyAllowed(t)).ToList(), query, max);
     }
 
+    internal const string ReflectionDeliveryUsageKind = "reflection_delivery_usage";
+
+    private void TrimRecallLedgerLocked()
+    {
+        const int maxRecall = 200;
+        const int maxUsage = 200;
+        int recallCount = _recallLog.Count(t => t.Kind != ReflectionDeliveryUsageKind);
+        int usageCount = _recallLog.Count - recallCount;
+        if (recallCount <= maxRecall && usageCount <= maxUsage) return;
+        int dropRecall = Math.Max(0, recallCount - maxRecall);
+        int dropUsage = Math.Max(0, usageCount - maxUsage);
+        var retained = new List<MemoryTurn>(_recallLog.Count - dropRecall - dropUsage);
+        foreach (MemoryTurn item in _recallLog)
+        {
+            if (item.Kind == ReflectionDeliveryUsageKind)
+            {
+                if (dropUsage > 0) { dropUsage--; continue; }
+            }
+            else if (dropRecall > 0) { dropRecall--; continue; }
+            retained.Add(item);
+        }
+        _recallLog.Clear();
+        _recallLog.AddRange(retained);
+    }
+
     public void RecordRecall(
         string? query,
         IReadOnlyList<MemoryTurn> candidates,
@@ -848,12 +926,19 @@ internal sealed partial class MemoryStore
                 ",",
                 valid
                     .Where(turn => !string.IsNullOrWhiteSpace(turn.Text))
-                    .Select(turn => PrivacySafety.Redact(
-                        turn.Text.Length > 24 ? turn.Text[..24] : turn.Text))
+                    .Select(turn =>
+                    {
+                        string preview = turn.Kind == MemoryStore.DayDreamKind
+                            || turn.Text.StartsWith("梦/想象，不是事实或新事件：", StringComparison.Ordinal)
+                            || turn.Text.StartsWith("（梦/想象，不是真实发生的事）", StringComparison.Ordinal)
+                            ? MemoryStore.CleanDreamDisplayText(turn.Text)
+                            : turn.Text;
+                        return PrivacySafety.Redact(preview.Length > 24 ? preview[..24] : preview);
+                    })
                     .Take(8));
             var backup = _recallLog.ToList();
             _recallLog.Add(record);
-            Trim(_recallLog, 200);
+            TrimRecallLedgerLocked();
             if (!SaveList("v4-native-recall-ledger.json", _recallLog))
             {
                 _recallLog.Clear();
@@ -1964,6 +2049,7 @@ internal sealed partial class MemoryStore
 
     private bool SaveList(string relative, List<MemoryTurn> list)
     {
+        NotifySourcePermissionMutation();
         if (!_listLoadStates.TryGetValue(relative, out ListLoadState state) || state == ListLoadState.ReadFailed)
         {
             NativeEventLog.Trace("memory.save_blocked", "mod", "system",

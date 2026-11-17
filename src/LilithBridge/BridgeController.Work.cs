@@ -25,20 +25,22 @@ internal sealed partial class BridgeController
     private TemporaryWorkCarry CaptureTemporaryCarry(DialogueRequest? owner)
     {
         if (owner == null) return new("", () => true);
+        using var validationScope = SourcePermissionScope.Enter();
         var recovered = _memory.RecoverPublicExpressionCarry(_config,owner.ReviewCurrentText);
-        var carry = _temporaryExpressions.Capture(recovered.ArchiveSources?.Select(s=>s.Metadata.PublicExpression!.SegmentId).ToArray());
+        var carry = _temporaryExpressions.Capture(recovered.ArchiveSources?.Select(s=>s.Metadata.PublicExpression!.SegmentId).ToArray(), recovered);
         owner.PublicExpressionCarrySources = recovered.ArchiveSources??Array.Empty<GeneratedReplySnapshot>();
         owner.PublicExpressionCarryTracked = carry.Context.Length==0; // session-only final drafts/unknown fragments remain conservative
         string text = carry.Context+(recovered.Context.Length>0?"\n"+recovered.Context:"");
         owner.PublicExpressionCarryText = text;
-        owner.WorkCarryPermission = ()=>carry.Permitted()&&recovered.Permitted();
-        return new(text,owner.WorkCarryPermission,owner.PublicExpressionCarrySources);
+        owner.WorkCarryChain = carry.Chain;
+        owner.WorkCarryPermission = carry.Chain != null ? carry.Chain.PermissionDelegate : carry.Permitted;
+        return new(text,owner.WorkCarryPermission,owner.PublicExpressionCarrySources,carry.Chain);
     }
     [HideFromIl2Cpp]
     private void RetainAndStopTemporaryWork(string reason)
     {
         if (_workPlayback is not { } playback) return;
-        playback.ObserveAppearance(Time.unscaledTime, Time.frameCount, atCancellation: true);
+        playback.ObserveAppearance(NativeAppearanceClock.MonotonicSeconds(), Time.frameCount, atCancellation: true);
         playback.Stop(reason == "request_cancelled" ? "cancelled" : reason);
         _temporaryExpressions.Retain(playback.Work, playback.FinalDraft);
         _workPlayback = null;
@@ -68,7 +70,7 @@ internal sealed partial class BridgeController
             && !HasActiveNativeStoryForProactive() && !NativeBubblePresenter.HasPendingReply
             && (!ActionDirector.NativeBusy(_sessionState) || playback.Active != null);
         bool wasAppeared = playback.ActiveAppeared;
-        bool attempted = playback.Tick(Time.unscaledTime, allowed, AiDeliveryEditing, PresentTemporaryBubble, Time.frameCount);
+        bool attempted = playback.Tick(NativeAppearanceClock.MonotonicSeconds(), allowed, AiDeliveryEditing, PresentTemporaryBubble, Time.frameCount);
         if (!ReferenceEquals(_workPlayback, playback) || !IsCurrentDialogue(owner)) return;
         if (attempted && playback.Active != null)
         {
@@ -99,7 +101,7 @@ internal sealed partial class BridgeController
     }
     private bool FinishTemporaryBubble()
     {
-        if (_workPlayback?.NativeEnded(Time.unscaledTime) != true) return false;
+        if (_workPlayback?.NativeEnded(NativeAppearanceClock.MonotonicSeconds()) != true) return false;
         _aiSpeechActive = false; _lastAiSpeechEndAt = Time.unscaledTime;
         _replyWindowUntil = _config.ReplyWindowSeconds <= 0 ? float.PositiveInfinity : Time.unscaledTime + _config.ReplyWindowSeconds;
         return true;

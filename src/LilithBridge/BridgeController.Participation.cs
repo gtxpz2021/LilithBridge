@@ -8,8 +8,11 @@ internal sealed partial class BridgeController
     {
         try
         {
-            string category = _sessionState.ForegroundApp?.Category ?? "unknown";
-            AppAwareRemarkGate.MarkRemarked(SystemSensor.LocalTime, category);
+            if (reason.StartsWith("玩家现在正在使用：", StringComparison.Ordinal))
+            {
+                string category = _sessionState.ForegroundApp?.Category ?? "unknown";
+                AppAwareRemarkGate.MarkRemarked(SystemSensor.LocalTime, category);
+            }
         }
         catch
         {

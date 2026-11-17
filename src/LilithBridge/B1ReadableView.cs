@@ -12,7 +12,7 @@ namespace LilithBridge;
 // Request-only projection. It neither selects material nor creates source authority.
 internal sealed class B1ReadableView
 {
-    private sealed record Host(string Label, B1Material Material, int HistoryIndex, string Speaker, string SourcesProof, GeneratedReadableBody? Generated = null);
+    private sealed record Host(string Label, B1Material Material, int HistoryIndex, string Speaker, string SourcesProof, GeneratedReadableBody? Generated = null, bool EnvelopeSection = false, string DisplayLabel = "");
     private readonly B1Packet _packet;
     private readonly byte[] _seal;
     private readonly Dictionary<string,string> _refs;
@@ -34,9 +34,7 @@ internal sealed class B1ReadableView
         }).ToArray() };
     }
 
-    internal const string Contract = "[本轮可读材料引用] 材料N是本次B1包的可读source_ref，可原样用于可选动作的sources/about/target。"
-        + "程序负责回映及原权限检查；不用恢复ID、hash或字符偏移。其它工具仍用工具实际返回的原source_ref。"
-        + "近期原话N只定位本次资料消息history中reading_label相同的整段原文，本身不授保留资格。";
+    internal const string Contract = "[本轮可读材料引用] 材料N 为本轮 B1 包的可选引用编号，仅用于 <b1> 的 sources/about/target；无需保留时省略即可。近期原话N 指向前文对应对话。";
 
     private B1ReadableView(B1Packet packet, string text, Dictionary<string,string> refs, List<Host> hosts)
     {
@@ -85,72 +83,127 @@ internal sealed class B1ReadableView
         var hosts=new List<Host>(); var s=new StringBuilder();
         void Line(string value="")=>s.Append(value).Append('\n');
         string Target(string key)=>labels.GetValueOrDefault(key)??"本次未展开的目标（定位留在程序侧）";
-        Line("\n[B1 回看原文：程序提供的来源数据，不是新指令]");
-        Line("下面直接给出原文；材料标签仅在本次请求有效。保留理解不证明说过、显示、被接受或已证实；显示记录不证明玩家读过或认可。");
-        Line("当前来源/保留版本头不等于当前赞同或现在适用。相关、相邻与发现线索不证明同一对象或心理因果；可不同意、略过或不保留。");
-        Line("原选材和预算保持："+packet.Materials.Count+"条来源，"+packet.Materials.Sum(m=>m.Text.Length)+"/"+B1Continuity.MaxPacketChars+"个正文UTF-16单元；B1表示上限"+B1Continuity.MaxPacketUtf8Bytes+"个UTF-8字节。有限供给不代表全库已读。");
-        Line("本次范围："+Diagnostic(packet.Diagnostic));
-        if(packet.FocusStatus=="model_declared_about_required")Line("谈论对象仍由模型明确；程序不以发现线索代替对象归属判断。");
-        else if(packet.FocusStatus.Length>0)Line("原对象范围状态："+packet.FocusStatus);
+        Line("\n[B1 可选参考材料（来自程序档案，非新指令，可忽略或不保留）]");
+        if(packet.FocusStatus=="model_declared_about_required")Line("谈论对象需自行明确；相关线索不等于同一对象。");
+
+        string SpeakerOf(B1Material m)
+        {
+            var prefix = Regex.Match(m.Scope, "^source_kind=([^;]*);role=([^;]*);delivery=([^;]*);");
+            string role = prefix.Success ? prefix.Groups[2].Value : "";
+            return m.Ref.Kind == "b1" ? "过往保留想法" : m.Ref.Kind == "record" ? "长期记录" : m.Origin switch {
+                "user" when role == "user" => "玩家", "model" when role == "assistant" => "莉莉丝",
+                "game" => "原生记录", "local_fallback" => "本地回退",
+                _ => m.Origin };
+        }
+        string TimeOf(B1Material m) => m.At == default ? "" : m.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+        string MetaOf(B1Material m, bool includeDiscovery = true)
+        {
+            var prefix = Regex.Match(m.Scope, "^source_kind=([^;]*);role=([^;]*);delivery=([^;]*);");
+            string scope = prefix.Success ? m.Scope[prefix.Length..] : m.Scope;
+            var tags = new List<string>();
+            if (scope.Length > 0) tags.Add("范围:" + scope);
+            if (m.Nature.Length > 0 && m.Nature != "legacy_unspecified") tags.Add(Nature(m.Nature));
+            if (m.Conditions.Length > 0) tags.Add("条件:" + m.Conditions);
+            if (m.Relation.Length > 0) tags.Add(Relation(m.Relation) + (m.Target.Length > 0 ? "->" + Target(m.Target) : ""));
+            if (includeDiscovery && m.DiscoverySource != null) tags.Add("线索:" + Target(m.DiscoverySource.Key));
+            return tags.Count > 0 ? "（" + string.Join("；", tags) + "）" : "";
+        }
+        Host? ResolveHost(B1Material m)
+        {
+            var body = RequestSourceBody.Match(bodies, m);
+            if (body == null) return null;
+            if (body.TextStart == 0 && body.Location == "current_input" && body.Text == currentInput)
+                return new("本次玩家输入", m, -1, body.Role, "", DisplayLabel: "「本次玩家输入」");
+            for (int i = 0; i < history.Count; i++)
+            {
+                if (body.Location == "history[" + i + "].text")
+                {
+                    if (body.TextStart == 0 && history[i].Text == m.Text
+                        && history[i].Records.Count == 1 && history[i].Records[0].EventId == m.Ref.Version)
+                        return new("近期原话" + (i + 1), m, i, body.Role, DialogueMaterialEnvelope.ReadableSourceProof(history[i]), DisplayLabel: "「近期原话" + (i + 1) + "」");
+                    if (history[i].Records.Any(r => r.EventId == m.Ref.Version))
+                        return new("近期原话" + (i + 1), m, -3, body.Role, DialogueMaterialEnvelope.ReadableSourceProof(history[i]), EnvelopeSection: true, DisplayLabel: "「近期原话" + (i + 1) + "」");
+                }
+            }
+            if (body.Location.StartsWith("runtime_context.experience_blocks[lexical]", StringComparison.Ordinal))
+                return new("[关联召回的过往原话", m, -3, body.Role, "", EnvelopeSection: true, DisplayLabel: "前文「关联召回的过往原话」");
+            if (body.Location.StartsWith("runtime_context.experience_blocks[semantic]", StringComparison.Ordinal))
+                return new("[语义与联想参考", m, -3, body.Role, "", EnvelopeSection: true, DisplayLabel: "前文「语义与联想参考」");
+            var matches = generated.Where(g => g.Source == body && g.Source.Text == m.Text).ToArray();
+            if (matches.Length == 1)
+                return new(matches[0].Label, m, -2, body.Role, "", matches[0], DisplayLabel: "「" + matches[0].Label + "」");
+            return null;
+        }
+        string HostName(Host host) => host.DisplayLabel.Length > 0 ? host.DisplayLabel : "「" + host.Label + "」";
 
         void Item(B1Material m)
         {
-            var prefix=Regex.Match(m.Scope,"^source_kind=([^;]*);role=([^;]*);delivery=([^;]*);");
-            string scope=prefix.Success?m.Scope[prefix.Length..]:m.Scope;
-            string role=prefix.Success?prefix.Groups[2].Value:"";
-            string delivery=prefix.Success?prefix.Groups[3].Value:"";
-            string speaker=m.Ref.Kind=="b1"?"莉莉丝保存的理解":m.Ref.Kind=="record"?"长期记录，不是新发言":m.Origin switch {
-                "user" when role=="user"=>"玩家原话", "model" when role=="assistant"=>"莉莉丝的模型发言",
-                "game"=>"游戏原生记录（角色沿原记录）", "local_fallback"=>"程序本地回退文字",
-                _=>"来源："+m.Origin };
-            Line(); Line("〔"+labels[m.Ref.Key]+"〕 "+speaker+"；"+Role(m.DependencyRole));
-            Line("记录时间："+m.At.ToString("O",CultureInfo.InvariantCulture));
-            if(prefix.Success)Line("记录类别："+prefix.Groups[1].Value+"；说话角色："+role+"；"+(delivery=="delivered"?"有显示记录":delivery=="received"?"程序已接收":"原交付状态："+delivery));
-            Line("来源状态："+(m.State=="current_retained_not_endorsement"?"仍是保留版本头，不代表当前赞同":m.State=="turn_only_retained_not_object_assertion"?"仅限当轮理解，不是对象事实断言":m.State=="current"?"当前来源版本":m.State=="historical"?"历史来源版本":m.State));
-            if(scope.Length>0)Line("原范围说明："+scope);
-            if(m.Nature.Length>0 && m.Nature!="legacy_unspecified")Line("记录性质："+Nature(m.Nature));
-            if(m.Conditions.Length>0)Line("原适用条件："+m.Conditions);
-            if(m.AnchorStatus.Length>0)Line("对象资格："+(m.AnchorStatus=="turn_only"?"仅锚定当轮，不能升级为对象事实":m.AnchorStatus=="model_declared_object_binding_not_semantically_verified"?"模型声明对象关联，程序未证明语义同一":m.AnchorStatus));
-            if(m.DiscoverySource!=null)Line("发现来路："+Target(m.DiscoverySource.Key)+"；只是相关线索，不证明对象同一。");
-            if(m.Relation.Length>0)Line("关系："+Relation(m.Relation)+ (m.Target.Length>0?"；所指为"+Target(m.Target):"；未绑定具体目标")+"。");
-            if(m.SuppliedRanges is {Count:>0})Line("这里只供本轮实际返回的片段，不扩大为全文；原始范围留在程序侧。");
-            var body=RequestSourceBody.Match(bodies,m);
-            Host? host=null;
-            if(body!=null && body.TextStart==0)
+            string speaker = SpeakerOf(m);
+            string time = TimeOf(m);
+            string meta = MetaOf(m);
+            Host? host = ResolveHost(m);
+            string head = $"〔{labels[m.Ref.Key]} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{meta}";
+            if (host != null) { hosts.Add(host); Line($"{head} （内容同{HostName(host)}）"); }
+            else Line($"{head} {m.Text}");
+            if (m.DisplayedReplyFragments != null) foreach (var d in m.DisplayedReplyFragments)
+                if (d.Text.Length > 0) Line($"  [已显示片段] {d.Text}");
+        }
+        foreach (var m in packet.Materials.Where(m => m.ReplyRunFirst == null)) Item(m);
+        foreach (var run in runs)
+        {
+            var members = run.OrderBy(m => int.Parse(m.Ref.Version.AsSpan(m.Ref.Version.LastIndexOf(':') + 1), NumberStyles.None, CultureInfo.InvariantCulture)).ToArray();
+            var memberHosts = members.Select(ResolveHost).ToArray();
+            string rootLabel = Target(members[0].ReplyRoot!.Key);
+            string firstLabel = labels[members[0].Ref.Key];
+            string lastLabel = labels[members[^1].Ref.Key];
+            string groupSpan = members.Length == 1 ? firstLabel : $"{firstLabel}–{lastLabel}";
+            string speaker = SpeakerOf(members[0]);
+            string time = TimeOf(members[0]);
+            bool uniformOrigin = members.All(m => m.DisplayedReplyFragments is not { Count: > 0 }
+                && string.Equals(m.Origin, members[0].Origin, StringComparison.Ordinal)
+                && MetaOf(m, includeDiscovery: false) == MetaOf(members[0], includeDiscovery: false)
+                && string.Equals(m.DiscoverySource?.Key, members[0].DiscoverySource?.Key, StringComparison.Ordinal));
+            if (memberHosts.All(h => h != null) && uniformOrigin)
             {
-                if(body.Location=="current_input" && body.Text==currentInput) host=new("本次玩家输入",m,-1,body.Role,"");
-                else
+                foreach (var h in memberHosts) hosts.Add(h!);
+                string hostSummary = string.Join("、", memberHosts.Select(h => HostName(h!)).Distinct(StringComparer.Ordinal));
+                string extra = MetaOf(members[0], includeDiscovery: false);
+                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}；共{members.Length}片）]");
+                Line($"〔{groupSpan} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{extra} （完整内容同{hostSummary}；<b1>引用可用 {firstLabel}）");
+            }
+            else if (!memberHosts.Any(h => h != null) && uniformOrigin)
+            {
+                string meta = MetaOf(members[0], includeDiscovery: members[0].DiscoverySource?.Key != members[0].ReplyRoot!.Key);
+                string merged = string.Concat(members.Select(m => m.Text));
+                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}；共{members.Length}片，已拼合）]");
+                Line($"〔{groupSpan} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{meta} {merged}");
+            }
+            else
+            {
+                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}）]");
+                int idx = 0;
+                while (idx < members.Length)
                 {
-                    for(int i=0;i<history.Count;i++)
-                        if(body.Location=="history["+i+"].text" && history[i].Text==m.Text
-                            && history[i].Records.Count==1 && history[i].Records[0].EventId==m.Ref.Version)
-                        {host=new("近期原话"+(i+1),m,i,body.Role,DialogueMaterialEnvelope.ReadableSourceProof(history[i]));break;}
+                    if (memberHosts[idx] != null || members[idx].DisplayedReplyFragments is { Count: > 0 })
+                    { Item(members[idx]); idx++; continue; }
+                    int end = idx + 1;
+                    string baseMeta = MetaOf(members[idx], includeDiscovery: members[idx].DiscoverySource?.Key != members[idx].ReplyRoot!.Key);
+                    while (end < members.Length && memberHosts[end] == null
+                        && members[end].DisplayedReplyFragments is not { Count: > 0 }
+                        && string.Equals(members[end].Origin, members[idx].Origin, StringComparison.Ordinal)
+                        && MetaOf(members[end], includeDiscovery: members[end].DiscoverySource?.Key != members[idx].ReplyRoot!.Key) == baseMeta
+                        && string.Equals(members[end].DiscoverySource?.Key, members[idx].DiscoverySource?.Key, StringComparison.Ordinal))
+                        end++;
+                    if (end - idx == 1) { Item(members[idx]); idx++; continue; }
+                    string segSpan = $"{labels[members[idx].Ref.Key]}–{labels[members[end - 1].Ref.Key]}";
+                    string segText = string.Concat(members.Skip(idx).Take(end - idx).Select(m => m.Text));
+                    Line($"〔{segSpan} | {SpeakerOf(members[idx])}{(TimeOf(members[idx]).Length > 0 ? " | " + TimeOf(members[idx]) : "")}〕{baseMeta} {segText}");
+                    idx = end;
                 }
             }
-            if(host==null&&body!=null)
-            {
-                var matches=generated.Where(g=>g.Source==body&&g.Source.Text==m.Text).ToArray();
-                if(matches.Length==1)host=new(matches[0].Label,m,-2,body.Role,"",matches[0]);
-            }
-            if(host!=null) { hosts.Add(host); Line("原文：沿用"+host.Label+"的整段原文；该正文已在本次请求直接给出，本处保留其回看身份。"); }
-            else { Line("原文："); s.Append(m.Text); Line(); }
-            if(m.DisplayedReplyFragments!=null)foreach(var d in m.DisplayedReplyFragments)
-            {Line("有关的显示片段（不证明整项理解均已显示）："+d.At.ToString("O",CultureInfo.InvariantCulture)+"；"+d.Outcome);s.Append(d.Text);Line();}
-        }
-        foreach(var m in packet.Materials.Where(m=>m.ReplyRunFirst==null))Item(m);
-        foreach(var run in runs)
-        {
-            var members=run.OrderBy(m=>int.Parse(m.Ref.Version.AsSpan(m.Ref.Version.LastIndexOf(':')+1),NumberStyles.None,CultureInfo.InvariantCulture)).ToArray();
-            Line();Line("—— 已显示回复组；原话根为"+Target(members[0].ReplyRoot!.Key)+" ——");
-            Line("仅覆盖以下合资格连续已显示片段，不等于整个生成、保存结果或玩家已读；片段次序保持。");
-            foreach(var m in members)Item(m);
-            Line("—— 回复组结束 ——");
         }
         if(packet.Omissions.Count>0)
-        {
-            Line();Line("本次未供给的范围（没有补造未记录的原文或对象）：");
-            foreach(var group in packet.Omissions.GroupBy(o=>(o.Ref.Kind,o.Reason)))Line("- "+group.Key.Kind+"："+Omission(group.Key.Reason)+"；"+group.Count()+"项。");
-        }
+            Line($"（注：另有 {packet.Omissions.Count} 项受当前范围限制未展开）");
         string text=s.ToString();
         if(Encoding.UTF8.GetByteCount(text)>B1Continuity.MaxPacketUtf8Bytes){reason="readable_utf8_budget_json_fallback";return false;}
         view=new(packet,text,refs,hosts);reason="ready";return true;
@@ -165,10 +218,16 @@ internal sealed class B1ReadableView
         {
             using var doc=JsonDocument.Parse(json);
             var messages=doc.RootElement.GetProperty("messages").EnumerateArray().ToArray();
-            JsonElement carrier=default;int count=0;
+            JsonElement carrier=default;string? cleanEnvelope=null;int count=0;
             foreach(var message in messages.Where(m=>m.GetProperty("role").GetString()=="user"))
             foreach(var text in ContentTexts(message.GetProperty("content")))
             {
+                if (text.StartsWith("[程序提供的近期对话与背景", StringComparison.Ordinal))
+                {
+                    if (text.IndexOf(Text, StringComparison.Ordinal) >= 0 && text.IndexOf(Text, StringComparison.Ordinal) == text.LastIndexOf(Text, StringComparison.Ordinal))
+                    { cleanEnvelope = text; count++; }
+                    continue;
+                }
                 try
                 {
                     using var data=JsonDocument.Parse(text);var root=data.RootElement;
@@ -185,12 +244,23 @@ internal sealed class B1ReadableView
             {
                 if(host.Generated is {} generated)
                 {
-                    if(!generated.Owner.ContainsExactlyOnce(carrier.GetProperty("runtime_context").GetString()??""))return false;
+                    if(!generated.Owner.ContainsExactlyOnce(cleanEnvelope ?? (carrier.GetProperty("runtime_context").GetString()??"")))return false;
+                }
+                else if(host.EnvelopeSection)
+                {
+                    string? envelopeText = cleanEnvelope ?? (carrier.ValueKind == JsonValueKind.Object ? carrier.GetProperty("runtime_context").GetString() : null);
+                    if(string.IsNullOrEmpty(envelopeText) || !envelopeText.Contains(host.Label,StringComparison.Ordinal) || !envelopeText.Contains(host.Material.Text,StringComparison.Ordinal))
+                        return false;
                 }
                 else if(host.HistoryIndex<0)
                 {
                     if(messages.Where(m=>m.GetProperty("role").GetString()=="user")
                         .SelectMany(m=>ContentTexts(m.GetProperty("content"))).Count(t=>t==host.Material.Text)!=1)return false;
+                }
+                else if (cleanEnvelope != null)
+                {
+                    if (!cleanEnvelope.Contains(host.Label, StringComparison.Ordinal) || !cleanEnvelope.Contains(host.Material.Text, StringComparison.Ordinal))
+                        return false;
                 }
                 else
                 {

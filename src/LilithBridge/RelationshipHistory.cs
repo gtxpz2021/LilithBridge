@@ -18,7 +18,8 @@ internal sealed partial class MemoryStore
  }
  private RelationshipHistoryCapture CaptureRelationshipHistory(IReadOnlyList<MemoryTurn> roots,
   IReadOnlyList<MemoryTurn> suppliedEvidence,IReadOnlyList<MemoryTurn> suppliedNotes,
-  IReadOnlyList<MemoryTurn> suppliedNoteHistory,IReadOnlyList<MemoryTurn> suppliedSettled)
+  IReadOnlyList<MemoryTurn> suppliedNoteHistory,IReadOnlyList<MemoryTurn> suppliedSettled,
+  ShortAliasTable? aliases=null)
  {
   var readable=CreateNoteHistoryPermissionEvaluator(out _);
   var index=_relationshipReadings.GroupBy(t=>t.EventId).ToDictionary(g=>g.Key,g=>g.ToArray());
@@ -58,30 +59,32 @@ internal sealed partial class MemoryStore
    }
    families.Add(f);
   }
-  object TextRef(string section,string field,MemoryTurn t)=>new{source_section=section,id_field=field,event_id=t.EventId};
+  string Alias(string? id)=>aliases?.AliasOrRegister("h",id)??id??"";
+  string[] AliasList(IEnumerable<string>? ids)=>ids==null?Array.Empty<string>():ids.Select(Alias).Where(s=>s.Length>0).ToArray();
+  object TextRef(string section,string field,MemoryTurn t)=>new{source_section=section,id_field=field,event_id=Alias(t.EventId)};
   string NoteSection(MemoryTurn t)=>suppliedNotes.Any(x=>x.EventId==t.EventId)?"previous_notes"
     :suppliedNoteHistory.Any(x=>x.EventId==t.EventId)?"note_history.entries"
     :suppliedSettled.Any(x=>x.EventId==t.EventId)?"settled_notes":"";
   object Record(MemoryTurn t,IEnumerable<MemoryTurn> pool,string section,string field)
   {
-   if(section.Length>0)return new{event_id=t.EventId,kind=t.Kind,revision=t.Revision,at=t.Timestamp,
-     lifecycle=t.LifecycleState,revises=t.SourceEventId,current_qualification=AssessMaterialSupply(t,isCurrent??=CreateCurrentBasisEvaluator()).Reason,
+   if(section.Length>0)return new{event_id=Alias(t.EventId),kind=t.Kind,revision=t.Revision,at=t.Timestamp,
+     lifecycle=t.LifecycleState,revises=Alias(t.SourceEventId),current_qualification=AssessMaterialSupply(t,isCurrent??=CreateCurrentBasisEvaluator()).Reason,
     text_ref=TextRef(section,field,t)};
-   return new{event_id=t.EventId,recall_id=t.RecallId,kind=t.Kind,revision=t.Revision,at=t.Timestamp,
-    lifecycle=t.LifecycleState,validity=t.Validity,revises=t.SourceEventId,
-    revised_by=pool.Where(x=>x.SourceEventId==t.EventId && readable(t.Kind==RelationshipReadingKind?"reading":"note",x.EventId)).Select(x=>x.EventId).ToArray(),
-     current_qualification=AssessMaterialSupply(t,isCurrent??=CreateCurrentBasisEvaluator()).Reason,source_event_ids=t.SourceEventIds,
-    source_note_ids=t.SourceNoteIds,source_day_ids=t.SourceDayIds,text=t.Text,
+   return new{event_id=Alias(t.EventId),kind=t.Kind,revision=t.Revision,at=t.Timestamp,
+    lifecycle=t.LifecycleState,validity=t.Validity,revises=Alias(t.SourceEventId),
+    revised_by=pool.Where(x=>x.SourceEventId==t.EventId && readable(t.Kind==RelationshipReadingKind?"reading":"note",x.EventId)).Select(x=>Alias(x.EventId)).ToArray(),
+     current_qualification=AssessMaterialSupply(t,isCurrent??=CreateCurrentBasisEvaluator()).Reason,source_event_ids=AliasList(t.SourceEventIds),
+    source_note_ids=AliasList(t.SourceNoteIds),source_day_ids=AliasList(t.SourceDayIds),text=t.Text,
     source_context=DescribeSourceAttribution(t)};
   }
   object Utterance(MemoryTurn t)=>suppliedEvidence.Any(x=>x.EventId==t.EventId)
-    ?new {event_id=t.EventId,speaker=t.Role,origin=t.Origin,delivery=t.DeliveryState,at=t.Timestamp,
+    ?new {event_id=Alias(t.EventId),speaker=t.Role,origin=t.Origin,delivery=t.DeliveryState,at=t.Timestamp,
      text_ref=TextRef("utterances","event_id",t)}
-    :(object)new{event_id=t.EventId,speaker=t.Role,origin=t.Origin,delivery=t.DeliveryState,at=t.Timestamp,
+    :(object)new{event_id=Alias(t.EventId),speaker=t.Role,origin=t.Origin,delivery=t.DeliveryState,at=t.Timestamp,
      text=t.Text,reported_speech=UtteranceAttribution.Reported(t.Role,t.Text)};
   JsonElement Project()=>JsonSerializer.SerializeToElement(new {
    use="只读且可能不完整的历史，不增加引用或revises权限。解释属于各自写下的时点；原话只证明说过什么。current_qualification不是现在赞同。text_ref指向同一Source已供正文。coverage标明未展开范围，不补写缺失经过。可以维持、修订、不提或无新产物。",
-   families=families.Select(f=>new{head_id=f.Root.EventId,
+   families=families.Select(f=>new{head_id=Alias(f.Root.EventId),
     readings=f.SuppliedReadings.OrderBy(t=>t.Revision).Select(t=>Record(t,_relationshipReadings,
      roots.Any(x=>x.EventId==t.EventId)?"previous_readings":"","reading_id")),
     notes=f.SuppliedNotes.OrderBy(t=>t.Timestamp).Select(t=>Record(t,_reflectionNotes,NoteSection(t),"note_id")),

@@ -401,6 +401,7 @@ internal sealed partial class MemoryStore
                 if (db.Scalar("PRAGMA data_version") != dataVersion) _b1DatabaseStamp = "";
                 if (entriesChanged) { _b1IndexedEntries = null; _b1Index.Clear(); _b1SearchIndex.Clear(); }
                 _b1ResolutionMemo.Clear();
+                NotifySourcePermissionMutation();
                 B1StorageStatus = "ready";
                 return true;
             }
@@ -410,6 +411,7 @@ internal sealed partial class MemoryStore
             or InvalidDataException or NullReferenceException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
             _b1 = null; _b1DatabaseStamp = "";
+            NotifySourcePermissionMutation();
             B1StorageStatus = error is InvalidDataException ? error.Message : committed ? "save_result_uncertain" : "save_failed";
             return false;
         }

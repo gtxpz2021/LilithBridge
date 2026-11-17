@@ -200,8 +200,6 @@ internal sealed class SessionState
             + ";moment=" + MomentFocus
             + (MomentReason.Length > 0 ? ";moment_reason=" + MomentReason : "")
             + (MomentWaitingForPlayer ? ";waiting=true" : "")
-            + (MomentListening ? ";listening=true" : "")
-            + (MomentAboutToSpeak ? ";about_to_speak=true" : "")
             + (MomentUncertain ? ";uncertain=true" : "")
             + (PlayerRecentlyReturned ? ";returned=true" : "");
     }
@@ -311,8 +309,7 @@ internal sealed class SessionState
         }
         builder.AppendLine();
         builder.AppendLine("[莉莉丝会话层]");
-        builder.AppendLine((playerDirected ? "当前话题（内部线索，不直接复述）=" : "此前交谈的话题（历史线索，不是新问题）=") + (ConversationTopic.Length > 0 ? ConversationTopic : "还没有固定话题")
-            + "；意图=" + (PendingIntent.Length > 0 ? PendingIntent : "自然回应"));
+        builder.AppendLine((playerDirected ? "当前话题（内部线索，不直接复述）=" : "此前交谈的话题（历史线索，不是新问题）=") + (ConversationTopic.Length > 0 ? ConversationTopic : "还没有固定话题"));
         // Moment focus, reason and flags are serialized once in DescribeState,
         // including when the perspective block is disabled or isolated.
         return builder.ToString();
@@ -524,15 +521,17 @@ internal sealed class SessionState
 
     public bool HasRecentAppChange(TimeSpan window)
     {
-        DateTimeOffset cutoff = DateTimeOffset.UtcNow - window;
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset cutoff = now - window;
+        LilithSceneEvent? latest = null;
         foreach (LilithSceneEvent sceneEvent in RecentEvents)
         {
-            if (sceneEvent.Timestamp < cutoff)
-                continue;
             if (sceneEvent.Kind == SceneEventKind.AppForeground)
-                return true;
+                latest = sceneEvent;
         }
-        return false;
+        if (latest == null || latest.Timestamp < cutoff)
+            return false;
+        return now - latest.Timestamp >= TimeSpan.FromSeconds(25);
     }
 
     private static string Truncate(string value, int max)

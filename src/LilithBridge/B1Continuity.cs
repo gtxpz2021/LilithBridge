@@ -133,16 +133,11 @@ internal static class B1Continuity
         + "包中保留结果可能从未展示，不能说玩家见过、接受或你以前说过；历史版本不能充当当前事实。"
         + "b1正文不会自动显示，也不产生以后必须补发/追问的义务。正常text继续自然交流，不讲这些字段。";
 
-    public static readonly string Contract = "[可选保留动作 v3] 可不同意、略过、转题、不保留；无反思、写作或每轮给槽义务。每轮至多一动作。留下可重看的解释、区别或问题才给 "
-        + "<b1>{\"v\":3,\"text\":\"有限正文\",\"scope\":\"适用范围\",\"nature\":\"inference\",\"about\":[\"对象的source_ref\"],\"sources\":[\"依据的source_ref\"]}</b1>。"
-        + "b1留判断；<memo>待办、<scratch>可见随手记。生成动作不等于保存。"
-        + "about必填数组选对象，最多" + MaxAboutReferences + "项，通常1项；sources选依据，最多" + MaxSourceReferences + "项。两者独立，只用本包或本轮review_context实际返回的source_ref；工具引用仅为所给片段，非全文。引用证供给及版本，不证语义。"
-        + "字符上限：text=" + MaxResultChars + "，scope=" + MaxScopeChars + "，可选conditions=" + MaxConditionsChars + "。"
-        + "about选当前输入为turn_only；邀请保留应选旧材料。about:[]仅限想法/假设/问题，不授对象事实资格。"
-        + "同about不自动关联。关联需平级relation/target，如\"relation\":\"qualify\",\"target\":\"旧解释的source_ref\"；compare/qualify并存，明确替代才用revises；target仅选本包保留结果。"
-        + "nature:reported/inference/hypothesis/question；条件未知写入text，可附conditions。可有新见解，不把静态描述补成动态观察、玩家经历或过去心理。"
-        + "省略动作=未选择；<b1>null</b1>=明确不保留。保留不证说过、交付、认可或证实，不自动显示或追问；台词不讲字段。"
-        + "discovery仅相关线索，不证同一对象；结合原话、更正，保留歧义。not_found仅本次未取得，不代表未保存或未发生；有限供给非全库读取。";
+    public static readonly string Contract = "[可选保留动作 v3] 如形成可重看的判断、区别或问题，可在末尾附 <b1>{\"v\":3,\"text\":\"有限正文\",\"scope\":\"适用范围\",\"nature\":\"inference\",\"about\":[\"对象的source_ref\"],\"sources\":[\"依据的source_ref\"]}</b1>；无需每轮保留，省略或 <b1>null</b1> 表示不保留。"
+        + "只引用本轮实际给出的 source_ref（材料N 或工具标识）；about 选对象（最多" + MaxAboutReferences + "项，无具体对象可用 []），sources 选依据（最多" + MaxSourceReferences + "项）。"
+        + "字符上限：text=" + MaxResultChars + "，scope=" + MaxScopeChars + "，可选 conditions=" + MaxConditionsChars + "。"
+        + "关联已有理解可用 relation(compare/qualify/revises)+target；nature 可为 reported/inference/hypothesis/question。"
+        + "保留结果不自动显示给玩家，也不能当成已确认事实；台词里不提及字段或标签。";
 
     // Small ambient collector only around the synchronous existing context build.
     // It observes the same final supplied list even when recall telemetry is off.

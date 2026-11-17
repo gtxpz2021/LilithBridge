@@ -75,6 +75,7 @@ internal sealed class SemanticRequestMaterial
             if(reason=="materials_rebased")_lastRebasedBoundary=owner.HttpAttempts;
         }
         Current=material;
+        owner.ReplaceSuppliedReflections(material.RecallSources);
         owner.MethodMaterialRevision++;
         owner.MethodRuntimeSources=(material.MethodRuntimeSources??Array.Empty<MemoryTurn>()).Select(t=>t.Copy()).ToArray();
         owner.MethodRuntimeTracked=material.MethodRuntimeTracked;

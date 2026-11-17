@@ -53,7 +53,7 @@ internal sealed class NativeWorkPlayback
     internal void Stop(string reason) { Active = null; _appearance = null; Work.Stop(reason); Work.FlushArchive(); }
 }
 
-internal sealed record TemporaryWorkCarry(string Context, Func<bool> Permitted,GeneratedReplySnapshot[]? ArchiveSources=null);
+internal sealed record TemporaryWorkCarry(string Context, Func<bool> Permitted, GeneratedReplySnapshot[]? ArchiveSources = null, CarryPermissionChain? Chain = null);
 internal sealed class TemporaryExpressionSession
 {
     private readonly List<(DialogueWorkSession Work, ApiResult? Final)> _retained = new();
@@ -62,9 +62,29 @@ internal sealed class TemporaryExpressionSession
     {
         if (_retained.Any(x => ReferenceEquals(x.Work, work))) return;
         _retained.Add((work, final));
-        while (_retained.Count > 4) { _retained[0].Work.Dispose(); _retained.RemoveAt(0); }
+        while (_retained.Count > 4) { _retained[0].Work.DisposeFromRetainEviction(); _retained.RemoveAt(0); }
     }
     private static string Draft(ApiResult? final)
+    {
+        if (final == null) return "";
+        using var scope = SourcePermissionScope.Enter();
+        var state = SourcePermissionScope.Current;
+        if (state != null && state.Drafts.TryGetValue(final, out string? cached)) return cached;
+        string draft = BuildDraft(final, includeCarryChain: true);
+        if (state != null) state.Drafts[final] = draft;
+        return draft;
+    }
+    internal static string DraftSelf(ApiResult? final)
+    {
+        if (final == null) return "";
+        using var scope = SourcePermissionScope.Enter();
+        var state = SourcePermissionScope.Current;
+        if (state != null && state.SelfDrafts.TryGetValue(final, out string? cached)) return cached;
+        string draft = BuildDraft(final, includeCarryChain: false);
+        if (state != null) state.SelfDrafts[final] = draft;
+        return draft;
+    }
+    private static string BuildDraft(ApiResult? final, bool includeCarryChain)
     {
         try
         {
@@ -73,8 +93,11 @@ internal sealed class TemporaryExpressionSession
             // the live-owner gate would otherwise reject every cancelled draft.
             // Keep it for any supplied history, plus all other source/method checks.
             bool hasHistorySources = final?.DialogueRequest?.ChatHistorySnapshots.Count > 0;
+            bool permitted = final != null && (includeCarryChain
+                ? final.RequestSourcesPermitted(includeChatHistory: hasHistorySources)
+                : final.RequestSelfSourcesPermitted(includeChatHistory: hasHistorySources));
             if (final == null || final.Text.Length == 0 || final.Error.Length > 0 || final.Delivery?.IsFullyDelivered == true
-                || final.SendPermission?.Allowed == false || !final.RequestSourcesPermitted(includeChatHistory: hasHistorySources)
+                || final.SendPermission?.Allowed == false || !permitted
                 || final.DialogueRequest?.ReviewSupplyPermitted(includeChatHistory: hasHistorySources) == false
                 || final.DialogueRequest is { } owner && !DeepSeekClient.MethodProtocolPermitted(owner)) return "";
             string draft = System.Text.Json.JsonSerializer.Serialize(new { kind = "undelivered_final_draft", text = final.Text,
@@ -95,22 +118,111 @@ internal sealed class TemporaryExpressionSession
         }
         catch { return ""; }
     }
-    private static string WorkText(DialogueWorkSession work,ApiResult? final,IReadOnlyList<string>? archivedSegments)
+    internal static string WorkText(DialogueWorkSession work,ApiResult? final,IReadOnlyList<string>? archivedSegments)
     {
         var excluded=(archivedSegments??Array.Empty<string>()).ToList();
         if(final?.FinalPublicDraft?.Selected==true&&MemoryStore.Clean(final.Text)==final.FinalPublicDraft.Body)
             excluded.Add(final.FinalPublicDraft.SegmentId);
         return excluded.Count>0?work.ContinuityForNextTurn(excluded):work.ContinuityForNextTurn();
     }
-    internal TemporaryWorkCarry Capture(IReadOnlyList<string>? archivedSegments=null)
+    private static void AddLeaf(Dictionary<object, CarryLeafCheck> map, CarryLeafCheck leaf)
     {
+        if (!map.ContainsKey(leaf.IdentityKey))
+            map[leaf.IdentityKey] = leaf;
+    }
+    private static void CollectSelfLeafChecks(ApiResult? final, Dictionary<object, CarryLeafCheck> map)
+    {
+        if (final == null) return;
+        if (final.SelectionStore is { } store && final.SelectionSnapshot is { } snap)
+        {
+            var key = new SelectionSnapshotKey(store, snap.Generation, snap.PermissionStamp, snap.Config);
+            AddLeaf(map, new CarryLeafCheck(key, () => store.B1SelectionSnapshotCurrent(snap)));
+        }
+        if (final.SendPermission is { } sendPermission)
+            AddLeaf(map, new CarryLeafCheck(sendPermission, () => sendPermission.Allowed));
+        if (final.ReadableB1SourcePermission is { } readableB1)
+            AddLeaf(map, new CarryLeafCheck(readableB1, readableB1));
+        if (final.DialogueRequest is { } owner)
+        {
+            if (owner.SemanticMaterial is { } semantic)
+                AddLeaf(map, new CarryLeafCheck(semantic, () => semantic.RecallSupplementsPermitted()));
+            foreach (var storyCheck in owner.StorySupplyChecks)
+                AddLeaf(map, new CarryLeafCheck(storyCheck, storyCheck));
+            foreach (var historySnapshot in owner.ChatHistorySnapshots)
+            {
+                var captured = historySnapshot;
+                AddLeaf(map, new CarryLeafCheck(captured, () => captured.TryUse(() => true)));
+            }
+            if (owner.HasReviewSupply)
+                AddLeaf(map, new CarryLeafCheck(new TaggedLeafKey(owner, "review"),
+                    () => owner.ReviewSupplyPermitted(includeChatHistory: false)));
+            if (owner.MethodProtocolSources.Count > 0)
+                AddLeaf(map, new CarryLeafCheck(new TaggedLeafKey(owner, "method"),
+                    () => DeepSeekClient.MethodProtocolPermitted(owner)));
+        }
+        if (final.HasTrackedCarryChain)
+        {
+            if (final.ExtraSourceGuards != null)
+                foreach (var guard in final.ExtraSourceGuards)
+                    AddLeaf(map, new CarryLeafCheck(guard, guard));
+            if (final.CarryChain?.RecoveredLeaf is { } recoveredLeaf)
+                AddLeaf(map, recoveredLeaf);
+        }
+        else if (final.RequestSourcePermission is { } customPermission)
+        {
+            AddLeaf(map, new CarryLeafCheck(customPermission, customPermission));
+        }
+    }
+    internal TemporaryWorkCarry Capture(IReadOnlyList<string>? archivedSegments = null, TemporaryWorkCarry? recoveredCarry = null)
+    {
+        using var scope = SourcePermissionScope.Enter();
+        CarryLeafCheck? recoveredLeaf = recoveredCarry is { Context.Length: > 0 }
+            ? new CarryLeafCheck(recoveredCarry.Permitted, recoveredCarry.Permitted)
+            : null;
         var captures = _retained.Select(x => (x.Work, x.Final,
-                Text: WorkText(x.Work,x.Final,archivedSegments), Draft: Draft(x.Final)))
-            .Where(x => x.Draft.Length > 0 || x.Text.Length>0&&x.Work.HasReceivedExpressions).ToArray();
-        if (captures.Length == 0) return new("", () => true);
+                Text: WorkText(x.Work, x.Final, archivedSegments), Draft: Draft(x.Final)))
+            .Where(x => x.Draft.Length > 0 || x.Text.Length > 0 && x.Work.HasReceivedExpressions).ToArray();
+        if (captures.Length == 0)
+        {
+            if (recoveredLeaf == null) return new("", () => true);
+            var recoveredOnlyChain = new CarryPermissionChain(
+                Array.Empty<CarryPermissionChain.DirectEntry>(),
+                archivedSegments,
+                Array.Empty<CarryLeafCheck>(),
+                recoveredLeaf);
+            return new("", recoveredOnlyChain.PermissionDelegate, null, recoveredOnlyChain);
+        }
         string context = "[本会话临时表达·尚未进入长期历史] 程序显示不表示玩家读过；保留修正关系，未显示草稿不当作说过的话。\n"
             + string.Join("\n", captures.Select(x => x.Text + (x.Draft.Length == 0 ? "" : "\n" + x.Draft)));
-        return new(context, () => captures.All(x => (x.Text.Length==0||WorkText(x.Work,x.Final,archivedSegments) == x.Text) && Draft(x.Final) == x.Draft));
+        var directFinals = new HashSet<ApiResult>(ReferenceEqualityComparer.Instance);
+        foreach (var c in captures)
+            if (c.Final != null) directFinals.Add(c.Final);
+        var ancestorLeaves = new Dictionary<object, CarryLeafCheck>(SourcePermissionScope.LeafKeyComparer);
+        var directEntries = new CarryPermissionChain.DirectEntry[captures.Length];
+        for (int i = 0; i < captures.Length; i++)
+        {
+            var c = captures[i];
+            bool carryDraft = c.Draft.Length > 0;
+            directEntries[i] = new CarryPermissionChain.DirectEntry(c.Work, carryDraft ? c.Final : null, c.Text, c.Draft);
+            if (carryDraft && c.Final?.CarryChain is { } childChain)
+            {
+                foreach (var leaf in childChain.AncestorLeaves)
+                    AddLeaf(ancestorLeaves, leaf);
+                if (childChain.RecoveredLeaf is { } childRecovered)
+                    AddLeaf(ancestorLeaves, childRecovered);
+                foreach (var older in childChain.DirectEntries)
+                {
+                    if (older.Final == null || !directFinals.Contains(older.Final))
+                    {
+                        foreach (var wl in older.Work.SnapshotSourceLeaves())
+                            AddLeaf(ancestorLeaves, wl);
+                        CollectSelfLeafChecks(older.Final, ancestorLeaves);
+                    }
+                }
+            }
+        }
+        var chain = new CarryPermissionChain(directEntries, archivedSegments, ancestorLeaves.Values.ToArray(), recoveredLeaf);
+        return new(context, chain.PermissionDelegate, null, chain);
     }
 }
 

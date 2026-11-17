@@ -47,10 +47,12 @@ internal sealed partial class DialogueWorkSession : IDisposable
     private WorkBubble? _active;
     private bool _editing, _generationDone, _integrationTaken, _disposed;
     private bool _yieldUsed;
+    private CarryLeafCheck[]? _evictedSourceLeaves;
     private long _stateRevision = 1;
     private string _outcome = "running";
     internal string OperationId { get; }
     internal string SourceUserEventId { get; set; } = "";
+    internal CarryLeafCheck[]? EvictedSourceLeaves { get { lock (_gate) return _evictedSourceLeaves; } }
     internal bool HasReceivedExpressions
     { get { lock (_gate) return _segments.Any(s => Allowed(s)); } }
     internal bool CanYield
@@ -240,18 +242,12 @@ internal sealed partial class DialogueWorkSession : IDisposable
         lock (_gate)
         {
             SyncCancellation();
-            return new { role = "system", content = "[程序临时表达回执] 正文已经在实际工具转录中，不重复抄写。"
-                + "可选：若已有对玩家有意义的局部回答，可以在必要工具调用旁用公开content先表达；无适合的话就保持空，不必报幕或承诺。"
-                + "无需取材但确需继续思考时可用express_and_continue主动交接一段公开表达；会消耗一次原有调用预算。够回答就直接完成。"
-                + "后续接着补充已有表达，避免照抄；需要修正时明确说明。只能公开准备说的话，不能公开私密推理或尚未取得的工具结果。"
-                + "displayed仅表示程序显示，player_read未知；尚未整合为长期记忆。待显示段不当作玩家已经看到。\n"
-                + "accepted_pending_bubbles reserves native output, never means appeared. shown_bubbles counts whole bubbles only after observed UI appearance; player_read stays unknown.\n"
-                + JsonSerializer.Serialize(new { kind = "temporary_expression_receipt", operation_id = OperationId,
-                    work_outcome = _outcome, memory = "pending", player_read = "unknown",
+            if (_segments.Count == 0 && _outcome is "" or "idle" or "running") return null;
+            return new { role = "system", content = "[程序临时表达状态] 如已有局部回复可按需通过正文延续；不必重复已有分段，待显示分段尚未确认玩家看到。\n"
+                + JsonSerializer.Serialize(new { operation_id = OperationId, work_outcome = _outcome,
                     segments = _segments.Select(s => new { id = s.Id, attempt = s.Attempt,
-                        shown_bubbles = s.Shown.Count, accepted_pending_bubbles = s.Accepted.Count, uncertain_bubbles = s.Uncertain.Count,
-                        queued_bubbles = s.Chunks.Length - s.Next, superseded_by = s.SupersededBy,
-                        source_current = Allowed(s) }) }, DialogueMaterialEnvelope.DataJson) };
+                        shown = s.Shown.Count, pending = s.Accepted.Count, queued = s.Chunks.Length - s.Next,
+                        superseded_by = s.SupersededBy, valid = Allowed(s) }) }, DialogueMaterialEnvelope.DataJson) };
         }
     }
     internal string ContinuityForNextTurn(IReadOnlyList<string>? excludedSegments=null)
@@ -283,6 +279,31 @@ internal sealed partial class DialogueWorkSession : IDisposable
             // Returning candidates is not a memory write. A future host may
             // choose, revise or exclude them without losing current continuity.
             return true;
+        }
+    }
+    internal CarryLeafCheck[] SnapshotSourceLeaves()
+    {
+        lock (_gate)
+        {
+            if (_evictedSourceLeaves != null) return _evictedSourceLeaves;
+            var leaves = new List<CarryLeafCheck>(1 + _segments.Count) { new(_scopePermitted, _scopePermitted) };
+            foreach (var s in _segments)
+            {
+                if (string.IsNullOrEmpty(s.SupersededBy))
+                    leaves.Add(new CarryLeafCheck(s.Permitted, s.Permitted));
+            }
+            return leaves.ToArray();
+        }
+    }
+    internal void DisposeFromRetainEviction()
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _evictedSourceLeaves = SnapshotSourceLeaves();
+            _disposed = true;
+            _active = null;
+            _segments.Clear();
         }
     }
     public void Dispose() { lock (_gate) { _disposed = true; _active = null; _segments.Clear(); } }

@@ -31,52 +31,63 @@ internal sealed partial class DeepSeekClient
 
     // Only the explicit supplied range is serialized. Full records remain
     // private, request-local revalidation evidence and never enter write pools.
-    private static string ChatHistoryJson(ChatHistoryPacket packet,DialogueRequest request)=>ThoughtOperationHistory.Append(ReviewContext.Serialize(new {
-        status=packet.Status,reason=packet.Reason,mode="history",history_scope=packet.Options?.Scope??"focus",
-        requested_body_chars=packet.Options?.BodyChars??700,
-        body_selection=packet.Options?.Find.Length>0?"first_literal_match_with_bounded_context; not semantic completeness":"prefix_or_identity_bound_continuation",
-        unread_prefix_present=packet.Items.Any(i=>i.Offset>0),
-        page_candidates_complete=packet.ScopeComplete,
-        older_catalog_range_exhausted=packet.Options?.Scope=="versions"?packet.FamilyExhausted:(bool?)null,
-        catalog_before_revision=packet.Options?.BeforeRevision??0,
-        catalogue_domain="currently qualified versions only; unavailable or unknown members are not enumerated",
-        family_coverage="not_asserted_by_this_page",
-        returned_record_bodies_complete=packet.Items.Count>0&&packet.Items.All(i=>i.BodyIncluded&&i.Offset==0&&i.NextOffset==null),
-        comparison_version_bodies=packet.Items.Count(i=>i.Material.Ref.Kind=="reading"&&i.BodyIncluded),
-        comparison_context=packet.Options?.Scope=="focus"&&packet.Items.Count(i=>i.Material.Ref.Kind=="reading"&&i.BodyIncluded)<2
-            ?"single_or_no_qualified_comparison_endpoint; a full comparison is not supplied":"not_a_claim_of_sufficient_context",
-        root_version=ChatHistorySafeRoot(packet),family_id=packet.Items.Count>0?packet.FamilyId:null,
-        next_before_revision=packet.NextBeforeRevision,next_cursor=packet.NextCursor,
-        next_locator=ChatHistoryNextLocator(packet),continuation_note="Use next_locator as locating arguments and keep the original self-contained question. Cursor and before_revision are alternatives, not a pair. has_more_locators describes unexpanded locating paths, not guaranteed readable bodies or sufficient context.",
-        records=packet.Items.Select(item=>new {
-            history_ref=item.Material.Ref.Key,kind=item.Material.Ref.Kind,event_id=item.Turn.EventId,
-            recall_id=item.Turn.RecallId,revision=item.Turn.Revision,role=item.Turn.Role,origin=item.Turn.Origin,
-            time=item.Turn.Timestamp.ToString("O"),delivery=item.Turn.DeliveryState,
-            lifecycle=item.Turn.LifecycleState,validity=item.Turn.Validity,reading_state=item.Material.State,
-            text_sha256=item.Material.Ref.Sha256,version_fingerprint=item.Material.VersionFingerprint,
-            record_kind=item.Turn.Kind,source_context=item.Material.Scope,
-            body_included=item.BodyIncluded,offset=item.Offset,total_chars=item.Turn.Text.Length,
-            text=item.Text,next_offset=item.NextOffset,next_cursor=item.NextCursor,
-            lineage_status_at_read=item.LineageStatus,
-            revises=item.Turn.SourceEventId,source_note_ids=item.Turn.SourceNoteIds.Take(12),
-            source_event_ids=item.Turn.SourceEventIds.Take(12),source_day_ids=item.Turn.SourceDayIds.Take(12),
-            declared_source_count=item.Turn.SourceNoteIds.Length+item.Turn.SourceEventIds.Length+item.Turn.SourceDayIds.Length,
-            source_links_truncated=item.Turn.SourceNoteIds.Length>12||item.Turn.SourceEventIds.Length>12||item.Turn.SourceDayIds.Length>12
-        }).ToArray(),
-        omissions=packet.Omissions,
-        locators=packet.Locators?.Take(packet.Reason=="request_budget"?4:24),
-        not_expanded=packet.NotExpanded?.Take(packet.Reason=="request_budget"?4:24),
-        omission_notice_count=packet.OmissionCount,locator_count=packet.LocatorCount,deferred_notice_count=packet.NotExpandedCount,
-        gap_count_semantics="Distinct returned locating/gap notices; redacted notices may aggregate. These are not exact counts of all missing or unavailable materials.",
-        locator_list_truncated=packet.LocatorCount>Math.Min(packet.Locators?.Count??0,packet.Reason=="request_budget"?4:24),
-        not_expanded_list_truncated=packet.NotExpandedCount>Math.Min(packet.NotExpanded?.Count??0,packet.Reason=="request_budget"?4:24),
-        coverage_note="Page completion only means the selected candidates were examined. It does not mean bodies, declared provenance, the whole family or the question are complete. older_catalog_range_exhausted applies below catalog_before_revision only. Missing, denied, not expanded and budget-omitted differ. Expression/interpretation is not proof that its content happened. Links do not prove causation. Other dependencies are checked for permission, not automatically expanded. Cursor binds source identity and range; it is not a secret token or permission.",
-        used_calls=request.ReviewCalls,remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-request.ReviewCalls),
-        remaining_reconsider=Math.Max(0,ReviewContext.MaxReconsiderPerTurn-request.ReconsiderCalls),
-        can_rephrase=packet.Status=="not_found",
-        has_more_locators=packet.NotExpanded?.Count>0||packet.NextBeforeRevision!=null||packet.NextCursor.Length>0,
-        can_continue=request.CanStartReviewRead&&(packet.NotExpanded?.Count>0||packet.NextBeforeRevision!=null||packet.NextCursor.Length>0)
-    }),packet.Items);
+    private static string ChatHistoryJson(ChatHistoryPacket packet,DialogueRequest request)
+    {
+        string? safeRoot = ChatHistorySafeRoot(packet);
+        string? rootAlias = safeRoot != null ? request.RegisterReviewHandle("history", "reading:" + safeRoot, rootVersion: safeRoot) : null;
+        string ResolveKind(string kind, string id) => request.RegisterReviewHandle("history", kind + ":" + id, rootVersion: safeRoot ?? "");
+        return ThoughtOperationHistory.Append(ReviewContext.Serialize(new {
+            status=packet.Status,reason=packet.Reason,mode="history",history_scope=packet.Options?.Scope??"focus",
+            requested_body_chars=packet.Options?.BodyChars??700,
+            body_selection=packet.Options?.Find.Length>0?"first_literal_match_with_bounded_context; not semantic completeness":"prefix_or_identity_bound_continuation",
+            unread_prefix_present=packet.Items.Any(i=>i.Offset>0),
+            page_candidates_complete=packet.ScopeComplete,
+            older_catalog_range_exhausted=packet.Options?.Scope=="versions"?packet.FamilyExhausted:(bool?)null,
+            catalog_before_revision=packet.Options?.BeforeRevision??0,
+            catalogue_domain="currently qualified versions only; unavailable or unknown members are not enumerated",
+            family_coverage="not_asserted_by_this_page",
+            returned_record_bodies_complete=packet.Items.Count>0&&packet.Items.All(i=>i.BodyIncluded&&i.Offset==0&&i.NextOffset==null),
+            comparison_version_bodies=packet.Items.Count(i=>i.Material.Ref.Kind=="reading"&&i.BodyIncluded),
+            comparison_context=packet.Options?.Scope=="focus"&&packet.Items.Count(i=>i.Material.Ref.Kind=="reading"&&i.BodyIncluded)<2
+                ?"single_or_no_qualified_comparison_endpoint; a full comparison is not supplied":"not_a_claim_of_sufficient_context",
+            root_version=rootAlias,family_id=packet.Items.Count>0?packet.FamilyId:null,
+            next_before_revision=packet.NextBeforeRevision,next_cursor=packet.NextCursor,
+            next_locator=ChatHistoryNextLocator(packet,request),continuation_note="Use next_locator as locating arguments and keep the original self-contained question. Cursor and before_revision are alternatives, not a pair. has_more_locators describes unexpanded locating paths, not guaranteed readable bodies or sufficient context.",
+            records=packet.Items.Select(item=>{
+                string itemRoot = item.Material.Ref.Kind=="reading" ? item.Turn.EventId : (safeRoot ?? "");
+                string h = request.RegisterReviewHandle("history", item.Material.Ref.Key, rootVersion: itemRoot);
+                return new {
+                    history_ref=h,kind=item.Material.Ref.Kind,
+                    recall_id=item.Turn.RecallId,revision=item.Turn.Revision,role=item.Turn.Role,origin=item.Turn.Origin,
+                    time=item.Turn.Timestamp.ToString("O"),delivery=item.Turn.DeliveryState,
+                    lifecycle=item.Turn.LifecycleState,validity=item.Turn.Validity,reading_state=item.Material.State,
+                    record_kind=item.Turn.Kind,source_context=item.Material.Scope,
+                    body_included=item.BodyIncluded,offset=item.Offset,total_chars=item.Turn.Text.Length,
+                    text=item.Text,next_offset=item.NextOffset,next_cursor=item.NextCursor,
+                    lineage_status_at_read=item.LineageStatus,
+                    revises=item.Turn.SourceEventId.Length>0?ResolveKind(item.Material.Ref.Kind=="reading"?"reading":"note",item.Turn.SourceEventId):"",
+                    source_note_ids=item.Turn.SourceNoteIds.Take(12).Select(id=>ResolveKind("note",id)),
+                    source_event_ids=item.Turn.SourceEventIds.Take(12).Select(id=>ResolveKind("utterance",id)),
+                    source_day_ids=item.Turn.SourceDayIds.Take(12).Select(id=>ResolveKind("day",id)),
+                    declared_source_count=item.Turn.SourceNoteIds.Length+item.Turn.SourceEventIds.Length+item.Turn.SourceDayIds.Length,
+                    source_links_truncated=item.Turn.SourceNoteIds.Length>12||item.Turn.SourceEventIds.Length>12||item.Turn.SourceDayIds.Length>12
+                };
+            }).ToArray(),
+            omissions=packet.Omissions,
+            locators=packet.Locators?.Take(packet.Reason=="request_budget"?4:24),
+            not_expanded=packet.NotExpanded?.Take(packet.Reason=="request_budget"?4:24),
+            omission_notice_count=packet.OmissionCount,locator_count=packet.LocatorCount,deferred_notice_count=packet.NotExpandedCount,
+            gap_count_semantics="Distinct returned locating/gap notices; redacted notices may aggregate. These are not exact counts of all missing or unavailable materials.",
+            locator_list_truncated=packet.LocatorCount>Math.Min(packet.Locators?.Count??0,packet.Reason=="request_budget"?4:24),
+            not_expanded_list_truncated=packet.NotExpandedCount>Math.Min(packet.NotExpanded?.Count??0,packet.Reason=="request_budget"?4:24),
+            coverage_note="Page completion only means the selected candidates were examined. It does not mean bodies, declared provenance, the whole family or the question are complete. older_catalog_range_exhausted applies below catalog_before_revision only. Missing, denied, not expanded and budget-omitted differ. Expression/interpretation is not proof that its content happened. Links do not prove causation. Other dependencies are checked for permission, not automatically expanded. Cursor binds source identity and range; it is not a secret token or permission.",
+            used_calls=request.ReviewCalls,remaining_calls=Math.Max(0,ReviewContext.MaxCallsPerTurn-request.ReviewCalls),
+            remaining_reconsider=Math.Max(0,ReviewContext.MaxReconsiderPerTurn-request.ReconsiderCalls),
+            can_rephrase=packet.Status=="not_found",
+            has_more_locators=packet.NotExpanded?.Count>0||packet.NextBeforeRevision!=null||packet.NextCursor.Length>0,
+            can_continue=request.CanStartReviewRead&&(packet.NotExpanded?.Count>0||packet.NextBeforeRevision!=null||packet.NextCursor.Length>0)
+        }),packet.Items);
+    }
 
     private static ChatHistoryContinuation ChatHistoryContinuationOf(ChatHistoryPacket packet)
         =>new(ChatHistorySafeRoot(packet)??"",packet.Options??new(),packet.NextBeforeRevision,packet.NextCursor,
@@ -86,26 +97,32 @@ internal sealed partial class DeepSeekClient
         ||packet.Items.Any(i=>i.Material.Ref.Kind=="reading"&&i.Turn.EventId==packet.RootVersion)
         ?packet.RootVersion:packet.Items.FirstOrDefault(i=>i.Material.Ref.Kind=="reading")?.Turn.EventId;
 
-    private static object? ChatHistoryNextLocator(ChatHistoryPacket packet)
+    private static object? ChatHistoryNextLocator(ChatHistoryPacket packet,DialogueRequest request)
     {
         string? root=ChatHistorySafeRoot(packet);
         if(root==null)return null;
+        string rootAlias=request.RegisterReviewHandle("history","reading:"+root,rootVersion:root);
         if(packet.Options?.Scope=="record"&&packet.Items.FirstOrDefault(i=>i.NextOffset!=null) is { } item)
-            return new {mode="history",root_version=root,history_scope="record",history_ref=item.Material.Ref.Key,
+            return new {mode="history",root_version=rootAlias,history_scope="record",
+                history_ref=request.RegisterReviewHandle("history",item.Material.Ref.Key,rootVersion:root),
                 offset=item.NextOffset,history_cursor=item.NextCursor,history_body_chars=packet.Options?.BodyChars??700};
         if(packet.Options?.Scope=="versions"&&packet.NextBeforeRevision is { } boundary)
-            return new {mode="history",root_version=root,history_scope="versions",before_revision=boundary};
+            return new {mode="history",root_version=rootAlias,history_scope="versions",before_revision=boundary};
         if(packet.NextCursor.Length>0)
         {
             string scope=packet.NextCursor.StartsWith("sources:",StringComparison.Ordinal)?"sources":packet.Options?.Scope??"versions";
-            if(scope=="sources")return new {mode="history",root_version=root,history_scope="sources",
-                history_ref=packet.Options?.Reference.Length>0?packet.Options.Reference:"reading:"+root,
-                history_cursor=packet.NextCursor};
-            if(scope=="versions")return new {mode="history",root_version=root,history_scope="versions",history_cursor=packet.NextCursor};
+            if(scope=="sources")
+            {
+                string rawRef=packet.Options?.Reference.Length>0?packet.Options.Reference:"reading:"+root;
+                return new {mode="history",root_version=rootAlias,history_scope="sources",
+                    history_ref=request.RegisterReviewHandle("history",rawRef,rootVersion:root),
+                    history_cursor=packet.NextCursor};
+            }
+            if(scope=="versions")return new {mode="history",root_version=rootAlias,history_scope="versions",history_cursor=packet.NextCursor};
             return null;
         }
         if(packet.NextBeforeRevision is { } before)
-            return new {mode="history",root_version=root,history_scope="versions",before_revision=before};
+            return new {mode="history",root_version=rootAlias,history_scope="versions",before_revision=before};
         return null;
     }
 

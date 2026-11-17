@@ -70,6 +70,7 @@ internal sealed class GeneratedReplyMetadata
 internal sealed class GeneratedReplySnapshot
 {
     private readonly GeneratedReplyMetadata _metadata;
+    private string? _logicalOwnerKey;
     internal GeneratedReplySnapshot(GeneratedReplyMetadata metadata, string body,GeneratedReplySnapshot? finalProgress=null)
     {
         _metadata = metadata.Copy(); Body = body;
@@ -78,6 +79,7 @@ internal sealed class GeneratedReplySnapshot
             MemoryStore.SemanticTextHash(JsonSerializer.Serialize(new{metadata=_metadata,linked_progress_version=finalProgress.VersionFingerprint}));
     }
     internal GeneratedReplySnapshot? FinalProgress {get;}
+    internal GeneratedReplyMetadata ReadMetadata => _metadata;
     public GeneratedReplyMetadata Metadata => _metadata.Copy();
     public string Key => _metadata.Key;
     public string Body { get; }
@@ -90,7 +92,7 @@ internal sealed class GeneratedReplySnapshot
     public string SourceUserId => _metadata.SourceUserEventId;
     public string SourceUserEventId => _metadata.SourceUserEventId;
     public string Origin => _metadata.Origin;
-    public string LogicalOwnerKey => "message/" + MemoryStore.SemanticTextHash(JsonSerializer.Serialize(
+    public string LogicalOwnerKey => _logicalOwnerKey ??= "message/" + MemoryStore.SemanticTextHash(JsonSerializer.Serialize(
         _metadata.PublicExpression == null||_metadata.PublicExpression.FinalProgress is {} progress&&progress.State!="deferred_item_closed" ? new[] { SessionId, RequestId, Origin, SourceUserId }
             : new[] { SessionId, RequestId, Origin, SourceUserId, _metadata.PublicExpression.SegmentId }));
     public string Completeness => _metadata.PublicTextExtent + ";network_body_complete=" + _metadata.NetworkBodyComplete.ToString().ToLowerInvariant();

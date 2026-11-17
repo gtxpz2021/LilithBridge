@@ -19,6 +19,107 @@ internal sealed partial class MemoryStore
     private static bool IsNativeHistoryRecord(MemoryTurn turn) => turn.Role is "user" or "assistant"
         && turn.Origin == "game" && turn.Kind == "native";
 
+    private sealed class NativeDialogueUpperBoundBasis
+    {
+        internal long MutationStamp;
+        internal NativeDialoguePolicy Policy = null!;
+        internal readonly Dictionary<string, B1Resolution> ResolutionMemo = new(StringComparer.Ordinal);
+    }
+
+    private static IReadOnlyList<MemoryTurn> ProjectHistoryTurns(
+        IReadOnlyList<MemoryTurn> history, BridgeConfig? contextConfig, int budget)
+        => contextConfig == null ? Array.Empty<MemoryTurn>()
+            : HistoryProjection.Build(history, budget, contextConfig.HistoryGroupReplies, contextConfig.HistoryWindowInMessages)
+                .Turns.SelectMany(t => t.Records).ToArray();
+
+    private static void ExpandNativeArtifactClosure(IReadOnlyList<MemoryTurn> artifacts, HashSet<string> ids)
+    {
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (MemoryTurn artifact in artifacts.Where(t => ReferencesMentionSources(t, ids,
+                includeContextDependencies: t.Kind is not (DayConsolidationKind or DayDreamKind))))
+                if (artifact.EventId.Length > 0) changed |= ids.Add(artifact.EventId);
+        } while (changed);
+    }
+
+    private HashSet<string> BuildRecentNativeUtteranceIds(IReadOnlyList<MemoryTurn> window) =>
+        window.Where(t => IsNativeUtterance(t) && t.SessionId == _sessionId && t.SchemaVersion == 1
+                && t.DeliveryState == "delivered" && !IsExperienceSuppressed(t.EventId) && IsMentionAllowed(t))
+            .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+
+    private (IReadOnlyList<MemoryTurn> History, HashSet<string> CurrentSources, List<MemoryTurn> Raw,
+        List<MemoryTurn> Native, List<MemoryTurn> Artifacts, HashSet<string> CurrentClosure)
+        BuildNativeDialoguePools(bool playerDirected, BridgeConfig? contextConfig, NativeDialogueAuthorization? authorization)
+    {
+        bool currentAuthorized = playerDirected || authorization?.Permits(this) == true;
+        // The retained store is bounded in logical messages. A second raw
+        // 160-record slice would cut a long reply before projection sees it.
+        var history = GetRecentHistory(int.MaxValue);
+        var currentSources = contextConfig == null || !currentAuthorized
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : ProjectHistoryTurns(history, contextConfig, contextConfig.ConversationMaxMessages)
+                .Where(t => t.SessionId == _sessionId && _currentNativeSources.Contains(t.EventId))
+                .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+        if (contextConfig != null && currentAuthorized) currentSources.UnionWith(_currentNativeSceneOnlySources);
+        if (!playerDirected && authorization != null) currentSources.IntersectWith(authorization.Sources);
+        // The archive owns identity precedence, even when its first record is
+        // non-native. Suppressed archive ids are absent from the old read view,
+        // so only those ids (or missing ids) may fall back to recent history.
+        var archive = GetExperienceValidationView();
+        var denied = SuppressedExperienceIds();
+        var raw = archive.NativeHistoryTurns.Where(t => !denied.Contains(t.EventId))
+            .Concat(_history.GroupBy(t => t.EventId).Select(g => g.First())
+                .Where(t => (!archive.ContainsId(t.EventId) || denied.Contains(t.EventId)) && IsNativeHistoryRecord(t)))
+            .OrderBy(t => t.Timestamp).ThenBy(t => t.Sequence).ToList();
+        var native = raw.Where(t => IsNativeUtterance(t) && t.DeliveryState == "delivered"
+            && !IsExperienceSuppressed(t.EventId) && IsMentionAllowed(t)).ToList();
+        var artifacts = _autonomous.Concat(_reflectionNotes).Concat(_reflectionLessons)
+            .Concat(_relationshipReadings).Concat(_dreams).Concat(_summaries).Concat(_profile).ToList();
+        var currentClosure = new HashSet<string>(currentSources, StringComparer.Ordinal);
+        ExpandNativeArtifactClosure(artifacts, currentClosure);
+        return (history, currentSources, raw, native, artifacts, currentClosure);
+    }
+
+    private IDisposable? TryBeginNativeDialogueUpperBound(BridgeConfig config, out Dictionary<string, B1Resolution>? sharedResolutionMemo)
+    {
+        sharedResolutionMemo = null;
+        if (_nativeDialoguePolicy.Value != null) return null;
+        var scope = SourcePermissionScope.Current;
+        if (scope == null) return null;
+        NativeDialoguePolicy? previous = _nativeDialoguePolicy.Value;
+        lock (_experienceLock)
+        {
+            long stamp = Volatile.Read(ref _sourceMutationStamp);
+            if (!scope.NativeDialogueUpperBounds.TryGetValue((this, config), out var cachedObj)
+                || cachedObj is not NativeDialogueUpperBoundBasis basis || basis.MutationStamp != stamp)
+            {
+                var (history, currentSources, raw, _, artifacts, currentClosure) = BuildNativeDialoguePools(true, config, null);
+                int budget = Math.Max(1, config.ConversationMaxMessages);
+                int maxReserved = Math.Min(3, Math.Max(0, budget - 1));
+                var recentSourcesMin = BuildRecentNativeUtteranceIds(ProjectHistoryTurns(history, config, budget));
+                for (int r = 1; r <= maxReserved; r++)
+                    recentSourcesMin.IntersectWith(BuildRecentNativeUtteranceIds(ProjectHistoryTurns(history, config, Math.Max(1, budget - r))));
+                var withheldUpper = raw.Where(IsNativeUtterance).Select(t => t.EventId)
+                    .Where(id => !currentSources.Contains(id) && !recentSourcesMin.Contains(id))
+                    .ToHashSet(StringComparer.Ordinal);
+                ExpandNativeArtifactClosure(artifacts, withheldUpper);
+                basis = new NativeDialogueUpperBoundBasis
+                {
+                    MutationStamp = stamp,
+                    Policy = new NativeDialoguePolicy("", true, Array.Empty<MemoryTurn>(), withheldUpper,
+                        currentSources, recentSourcesMin, currentClosure, null, true)
+                };
+                scope.NativeDialogueUpperBounds[(this, config)] = basis;
+            }
+            if (_mentionReadPolicy.Value?.Rules.Count == 0)
+                sharedResolutionMemo = basis.ResolutionMemo;
+            _nativeDialoguePolicy.Value = basis.Policy;
+        }
+        return new MentionScope(() => _nativeDialoguePolicy.Value = previous);
+    }
+
     internal IDisposable BeginNativeDialogueRequest(string? playerText, bool playerDirected = true, BridgeConfig? contextConfig = null,
         NativeDialogueAuthorization? authorization = null)
     {
@@ -27,28 +128,8 @@ internal sealed partial class MemoryStore
         string query = Clean(playerText);
         lock (_experienceLock)
         {
-            bool currentAuthorized = playerDirected || authorization?.Permits(this) == true;
-            // The retained store is bounded in logical messages. A second raw
-            // 160-record slice would cut a long reply before projection sees it.
-            var history=GetRecentHistory(int.MaxValue);
-            IReadOnlyList<MemoryTurn> Project(int budget)=>contextConfig==null?Array.Empty<MemoryTurn>():HistoryProjection.Build(history,budget,
-                contextConfig.HistoryGroupReplies,contextConfig.HistoryWindowInMessages).Turns.SelectMany(t=>t.Records).ToArray();
-            var currentSources = contextConfig == null || !currentAuthorized ? new HashSet<string>(StringComparer.Ordinal)
-                : Project(contextConfig.ConversationMaxMessages).Where(t=>t.SessionId==_sessionId&&_currentNativeSources.Contains(t.EventId))
-                    .Select(t=>t.EventId).ToHashSet(StringComparer.Ordinal);
-            if (contextConfig != null && currentAuthorized) currentSources.UnionWith(_currentNativeSceneOnlySources);
-            if (!playerDirected && authorization != null) currentSources.IntersectWith(authorization.Sources);
-            // The archive owns identity precedence, even when its first record is
-            // non-native. Suppressed archive ids are absent from the old read view,
-            // so only those ids (or missing ids) may fall back to recent history.
-            var archive = GetExperienceValidationView();
-            var denied = SuppressedExperienceIds();
-            var raw = archive.NativeHistoryTurns.Where(t => !denied.Contains(t.EventId))
-                .Concat(_history.GroupBy(t => t.EventId).Select(g => g.First())
-                    .Where(t => (!archive.ContainsId(t.EventId) || denied.Contains(t.EventId)) && IsNativeHistoryRecord(t)))
-                .OrderBy(t => t.Timestamp).ThenBy(t => t.Sequence).ToList();
-            var native = raw.Where(t => IsNativeUtterance(t) && t.DeliveryState == "delivered"
-                && !IsExperienceSuppressed(t.EventId) && IsMentionAllowed(t)).ToList();
+            var (history, currentSources, raw, native, artifacts, currentClosure)
+                = BuildNativeDialoguePools(playerDirected, contextConfig, authorization);
             var selected = new List<MemoryTurn>();
             bool mayRecall = playerDirected && query.Length > 0
                 && MemorySemantics.RequestedHistorySpeaker(query) != "user"
@@ -72,10 +153,14 @@ internal sealed partial class MemoryStore
                 bool namesNative = NamesNativeSpeech(query), refersLatest = RefersToLatestSpeech(query);
                 // Reuse the existing relevance/ranking and archive, without changing
                 // their threshold. A bare shared topic is not enough to replay idle lines.
-                selected.AddRange(GetExperienceCandidates(query, 9, requestedRole: "assistant")
+                var archiveNative = GetExperienceValidationView().HasAmbiguousEventIds
+                    ? GetExperienceCandidates(query, 9, requestedRole: "assistant")
+                        .Where(IsNativeUtterance)
+                        .Where(t => Match(t.Text).Relevant)
+                    : raw.Where(t => IsNativeUtterance(t) && t.DeliveryState == "received"
+                        && !IsExperienceSuppressed(t.EventId) && IsMentionAllowed(t) && Match(t.Text).Relevant);
+                selected.AddRange(archiveNative
                     .Concat(native.Where(t => Match(t.Text).Relevant))
-                    .Where(IsNativeUtterance)
-                    .Where(t => Match(t.Text).Relevant)
                     .Where(t => !refersLatest || namesNative)
                     .Where(t => namesNative
                         || Match(t.Text).Overlap >= 3 && Match(t.Text).Similarity >= 0.3)
@@ -109,10 +194,8 @@ internal sealed partial class MemoryStore
                 int budget=Math.Max(1,contextConfig.ConversationMaxMessages),reserved=0;
                 for(int pass=0;pass<4;pass++)
                 {
-                    var window=Project(budget-reserved);
-                    recentSources=window.Where(t=>IsNativeUtterance(t)&&t.SessionId==_sessionId&&t.SchemaVersion==1
-                            &&t.DeliveryState=="delivered"&&!IsExperienceSuppressed(t.EventId)&&IsMentionAllowed(t))
-                        .Select(t=>t.EventId).ToHashSet(StringComparer.Ordinal);
+                    var window=ProjectHistoryTurns(history, contextConfig, budget-reserved);
+                    recentSources=BuildRecentNativeUtteranceIds(window);
                     selected=ranked.Where(t=>!currentSources.Contains(t.EventId)&&!recentSources.Contains(t.EventId))
                         .Take(Math.Min(3,budget-1)).ToList();
                     if(selected.Count==reserved)break;
@@ -127,22 +210,7 @@ internal sealed partial class MemoryStore
                 .Where(t => !selectedIds.Contains(t.EventId))
                 .Select(t => t.EventId).Where(id => !currentSources.Contains(id)&&!recentSources.Contains(id)).ToHashSet(StringComparer.Ordinal);
             if (!playerDirected) withheld.UnionWith(_currentNativeSceneOnlySources.Where(id => !currentSources.Contains(id)));
-            var artifacts = _autonomous.Concat(_reflectionNotes).Concat(_reflectionLessons)
-                .Concat(_relationshipReadings).Concat(_dreams).Concat(_summaries).Concat(_profile).ToList();
-            bool changed;
-            do
-            {
-                changed = false;
-                foreach (MemoryTurn artifact in artifacts.Where(t => ReferencesMentionSources(t, withheld)))
-                    if (artifact.EventId.Length > 0) changed |= withheld.Add(artifact.EventId);
-            } while (changed);
-            var currentClosure = new HashSet<string>(currentSources, StringComparer.Ordinal);
-            do
-            {
-                changed = false;
-                foreach (MemoryTurn artifact in artifacts.Where(t => ReferencesMentionSources(t, currentClosure)))
-                    if (artifact.EventId.Length > 0) changed |= currentClosure.Add(artifact.EventId);
-            } while (changed);
+            ExpandNativeArtifactClosure(artifacts, withheld);
             // A policy can outlive this lock. Detach only the bounded native selection;
             // no borrowed archive record escapes to request-history readers.
             _nativeDialoguePolicy.Value = new(query, playerDirected, selected.Select(t => t.Copy()).ToArray(), withheld, currentSources, recentSources,
@@ -183,8 +251,9 @@ internal sealed partial class MemoryStore
         if (IsNativeUtterance(turn)) return policy.PlayerDirected&&policy.RecentSources.Contains(turn.EventId)&&turn.SessionId==_sessionId
             || currentAuthorized && policy.CurrentSources.Contains(turn.EventId)
             && turn.SessionId == _sessionId || policy.Selected.Any(t => t.EventId == turn.EventId);
-        return !ReferencesMentionSources(turn, policy.WithheldSources)
-            && (currentAuthorized || !ReferencesMentionSources(turn, policy.CurrentClosure));
+        bool checkContextDeps = turn.Kind is not (DayConsolidationKind or DayDreamKind);
+        return !ReferencesMentionSources(turn, policy.WithheldSources, includeContextDependencies: checkContextDeps)
+            && (currentAuthorized || !ReferencesMentionSources(turn, policy.CurrentClosure, includeContextDependencies: checkContextDeps));
     }
 
     internal bool IsRequestSceneAllowed(LilithSceneEvent sceneEvent)
@@ -203,14 +272,57 @@ internal sealed partial class MemoryStore
                     && MemorySemantics.IsRelevantRecall(policy.Query, sceneEvent.Details));
     }
 
+    private readonly object _historyAnchorLock = new();
+    private string _historyAnchorEventId = "";
+
+    private HistoryProjectionResult ProjectWithCacheAnchor(
+        IReadOnlyList<MemoryTurn> records, int budget, BridgeConfig config)
+    {
+        int stride = config.PromptCacheHistoryStride;
+        if (budget < 24 || stride <= 1)
+            return HistoryProjection.Build(records, budget, config.HistoryGroupReplies, config.HistoryWindowInMessages);
+        var full = HistoryProjection.Build(records, int.MaxValue, config.HistoryGroupReplies, config.HistoryWindowInMessages);
+        int totalTurns = full.Turns.Count;
+        if (totalTurns <= budget)
+            return full;
+        int minWindow = Math.Max(24, budget - stride);
+        lock (_historyAnchorLock)
+        {
+            int anchorIndex = -1;
+            if (_historyAnchorEventId.Length > 0)
+            {
+                for (int i = 0; i < totalTurns; i++)
+                {
+                    if (full.Turns[i].Records.Count > 0 && full.Turns[i].Records[0].EventId == _historyAnchorEventId)
+                    {
+                        anchorIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (anchorIndex < 0 || totalTurns - anchorIndex > budget || totalTurns - anchorIndex < minWindow)
+            {
+                anchorIndex = Math.Max(0, totalTurns - minWindow);
+                // Anchor onto a user turn when possible so keepAdjacentUserRoot never shifts start backward.
+                if (anchorIndex > 0 && full.Turns[anchorIndex].Role != "user"
+                    && full.Turns[anchorIndex - 1].Role == "user"
+                    && totalTurns - (anchorIndex - 1) <= budget)
+                    anchorIndex--;
+                _historyAnchorEventId = full.Turns[anchorIndex].Records.Count > 0
+                    ? full.Turns[anchorIndex].Records[0].EventId : "";
+            }
+            int pinnedBudget = Math.Clamp(totalTurns - anchorIndex, 1, budget);
+            return HistoryProjection.Build(records, pinnedBudget, config.HistoryGroupReplies, config.HistoryWindowInMessages);
+        }
+    }
+
     private IReadOnlyList<MemoryTurn> GetNativeAwareRequestHistory(BridgeConfig config)
     {
         NativeDialoguePolicy? policy = _nativeDialoguePolicy.Value;
         var recent = GetRecentHistory(int.MaxValue);
         if (policy == null)
         {
-            var plain = HistoryProjection.Build(recent, config.ConversationMaxMessages,
-                config.HistoryGroupReplies, config.HistoryWindowInMessages);
+            var plain = ProjectWithCacheAnchor(recent, config.ConversationMaxMessages, config);
             var records = plain.Turns.SelectMany(t => t.Records).Select(t => t.Copy()).ToList();
             return new HistoryWindowRecords(records, new(recent.Count, recent.Count,
                 Math.Max(1, config.ConversationMaxMessages), 0, records.Count,
@@ -225,8 +337,7 @@ internal sealed partial class MemoryStore
             && IsNativeSupplyAllowed(t)).ToList();
         // Reserve space before projecting, so an explicitly recalled older line
         // cannot silently fall out of the message window. Keep the player's turn.
-        var projection = HistoryProjection.Build(ordinary, budget - selected.Count,
-            config.HistoryGroupReplies, config.HistoryWindowInMessages);
+        var projection = ProjectWithCacheAnchor(ordinary, Math.Max(1, budget - selected.Count), config);
         var result = projection.Turns.SelectMany(t => t.Records).Concat(selected).GroupBy(t=>t.EventId).Select(g=>g.First())
             .OrderBy(t => t.Timestamp).ThenBy(t => t.Sequence).Select(t => t.Copy()).ToList();
         string reasons = string.Join(";", new[] {

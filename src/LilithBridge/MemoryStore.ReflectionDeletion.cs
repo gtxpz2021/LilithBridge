@@ -33,7 +33,7 @@ internal sealed partial class MemoryStore
         var result = work.Result;
         return result?.Note is { } note && (note.SourceEventIds.Concat(note.SourceDayIds).Any(ids.Contains)
                 || ids.Contains(note.Revises) || ids.Contains(note.Settles))
-            || result?.Lesson is { } lesson && (lesson.SourceNoteIds.Any(ids.Contains) || ids.Contains(lesson.Revises))
+            || result?.Lesson is { } lesson && (lesson.SourceNoteIds.Any(ids.Contains) || ids.Contains(lesson.Revises) || ids.Contains(lesson.Settles))
             || result?.Relationship is { } reading && (reading.SourceNoteIds.Any(ids.Contains) || ids.Contains(reading.Revises));
     }
 

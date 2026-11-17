@@ -37,6 +37,7 @@ internal sealed partial class DeepSeekClient
         // remains attached to the response source-use checks.
         if(kind=="main")
         {
+            using var _preSendTiming = PreparationTiming.Measure("send.pre_send_validate");
             var request=envelope.DialogueRequest; var readable=request?.ReadableB1;
             // Generated presentation proof is a pre-send check only. Its live
             // source/permission guard remains the existing generated supply guard;
@@ -58,7 +59,8 @@ internal sealed partial class DeepSeekClient
                 envelope.ReadableB1SentView=readable;
             }
         }
-        CaptureSelection(config, envelope);
+        using (PreparationTiming.Measure("send.capture_selection"))
+            CaptureSelection(config, envelope);
         try { json = IncludeSelectionNotice(json, envelope); }
         catch (Exception) { return RejectCompletion(envelope, "selection_changed", "Creator selection snapshot unavailable or changed; request was not sent"); }
         string url = config.ChatCompletionsUrl, apiKey = config.ApiKey;

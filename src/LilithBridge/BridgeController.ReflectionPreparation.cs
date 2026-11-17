@@ -27,7 +27,8 @@ internal sealed partial class BridgeController
     private bool ReflectionMayApply(ReflectionResult? response)
     {
         bool changesExisting = response?.Note is { } note && (note.Revises.Length > 0 || note.Settles.Length > 0)
-            || response?.Lesson?.Revises.Length > 0 || response?.Relationship?.Revises.Length > 0;
+            || response?.Lesson is { } lesson && (lesson.Revises.Length > 0 || lesson.Settles.Length > 0)
+            || response?.Relationship?.Revises.Length > 0;
         return !changesExisting || !(_requestPending || _queuedReply != null || _aiSpeechActive
             || NativeBubblePresenter.HasPendingReply);
     }
@@ -185,7 +186,7 @@ internal sealed partial class BridgeController
                                 _reflectionProgressiveCadence.Started(snapshot.RequestId, progressiveService);
                                 _reflectionDialogueMayBypassCooldown = false;
                                 _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
-                                ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Dispatch(snapshot, owner.IntentTrace));
+                                ReflectionIntentTrace.EmitDispatch(snapshot, owner.IntentTrace);
                                 sent = send(); return true;
                             }, recovering: recovery != null);
                             if (!allowed && recovery != null) memory.CancelReflectionWork(_reflectionWindow);

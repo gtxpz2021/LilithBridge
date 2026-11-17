@@ -31,10 +31,11 @@ internal sealed partial class MemoryStore
             return new("", Array.Empty<GeneratedReplySnapshot>(), Array.Empty<RequestSourceBody>());
         var available = GetQualifiedGeneratedReplies(query, config);
         var ids = history.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
-        var owners = LogicalDialogueCatalog.Build(history).Units.Where(u => u.IsMessage)
-            .Select(u => u.Key).ToHashSet(StringComparer.Ordinal);
+        var historyUnits = LogicalDialogueCatalog.Build(history).Units;
+        var owners = historyUnits.Where(u => u.IsMessage).Select(u => u.Key).ToHashSet(StringComparer.Ordinal);
         var selected = available.Where(s => owners.Contains(s.LogicalOwnerKey)
             || s.SourceUserId.Length > 0 && ids.Contains(s.SourceUserId)).ToList();
+        var explicitSelectedKeys = new HashSet<string>(StringComparer.Ordinal);
         if (relevanceActive)
         {
             var plan=semantic?.RelevancePlan;
@@ -46,20 +47,78 @@ internal sealed partial class MemoryStore
                 return units.Any(owner.Covers);
             }
             foreach(var source in available.Where(s=>plan?.Admits("generated/"+s.Key)==true||CarriesAdmittedMessage(s)))
+            {
+                explicitSelectedKeys.Add(source.Key);
                 if(selected.All(s=>s.Key!=source.Key))selected.Add(source);
+            }
         }
         else if (SemanticResultMatches(query, semantic, SemanticDomain.Events))
-            foreach (var candidate in semantic!.Candidates.Where(c => c.Kind == "generated_reply").OrderByDescending(c => c.Score))
+        {
+            int semanticAdded = 0;
+            foreach (var candidate in semantic!.Candidates.Where(c => c.Kind == "generated_reply" && c.Score >= 0.48).OrderByDescending(c => c.Score))
             {
                 var source = available.FirstOrDefault(s => "generated/" + s.Key == candidate.EventId
                     && SemanticTextHash(s.BodyText) == candidate.TextHash && s.VersionFingerprint == candidate.Version);
-                if (source != null && selected.All(s => s.Key != source.Key)) selected.Add(source);
+                if (source != null)
+                {
+                    explicitSelectedKeys.Add(source.Key);
+                    if (selected.All(s => s.Key != source.Key))
+                    {
+                        selected.Add(source);
+                        if (++semanticAdded >= 4) break;
+                    }
+                }
                 if (selected.Count >= Math.Max(config.ConversationMaxMessages,24)) break;
             }
+        }
         if (selected.Count == 0) return new("", Array.Empty<GeneratedReplySnapshot>(), Array.Empty<RequestSourceBody>());
+        var originals = selected.SelectMany(GeneratedMappedOriginals).DistinctBy(t=>t.EventId).ToArray();
         var references = new List<RequestSourceBody>();
-        var projected = HistoryProjection.Build(history, config.ConversationMaxMessages,
+        var projected = HistoryProjection.BuildForRequest(history, config.ConversationMaxMessages,
             config.HistoryGroupReplies, config.HistoryWindowInMessages);
+        static bool IsFullyDisplayedArchive(GeneratedReplySnapshot s)
+        {
+            var meta = s.ReadMetadata;
+            if (s.DisplayRanges.Count == 0 || meta.ShownRanges.Length == 0
+                || meta.UnknownChars > 0 || meta.AbandonedChars > 0
+                || !string.Equals(meta.DeliveryOutcome, "completed", StringComparison.Ordinal))
+                return false;
+            var confirmed = new List<GeneratedReplyProjection.ConfirmedRange>();
+            foreach (var range in meta.ShownRanges)
+            {
+                if (!GeneratedReplyProjection.TryConfirmedRanges(s, meta, range, out var pieces))
+                    return false;
+                confirmed.AddRange(pieces);
+            }
+            string body = s.BodyText;
+            int covered = 0;
+            foreach (var seg in confirmed.OrderBy(r => r.Start))
+            {
+                if (seg.Start > covered && !body.AsSpan(covered, seg.Start - covered).IsWhiteSpace())
+                    return false;
+                covered = Math.Max(covered, seg.Start + seg.Chars);
+            }
+            return covered >= body.Length || body.AsSpan(covered).IsWhiteSpace();
+        }
+        static string StripWs(string v) => string.IsNullOrWhiteSpace(v) ? "" : string.Concat(v.Where(c => !char.IsWhiteSpace(c)));
+        var recentOwnerKeys = historyUnits.Where(u => u.Role == "assistant" && u.IsMessage)
+            .Select(u => u.Key).TakeLast(3).ToHashSet(StringComparer.Ordinal);
+        var recentUserIds = history.Where(t => t.Role == "user" && t.EventId.Length > 0)
+            .Select(t => t.EventId).TakeLast(3).ToHashSet(StringComparer.Ordinal);
+        selected = selected.Where(s =>
+        {
+            if (!relevanceActive && IsFullyDisplayedArchive(s))
+                return false;
+            if (s.DisplayRanges.Count > 0 && s.ReadMetadata.UnknownChars == 0 && s.ReadMetadata.AbandonedChars == 0
+                && projected.Turns.Any(t => t.Role == "assistant"
+                    && (t.Text == s.BodyText || StripWs(t.Text) == StripWs(s.BodyText))))
+                return false;
+            return explicitSelectedKeys.Contains(s.Key)
+                || recentOwnerKeys.Contains(s.LogicalOwnerKey)
+                || recentUserIds.Contains(s.SourceUserId);
+        }).ToList();
+        if (selected.Count == 0)
+            return new("", Array.Empty<GeneratedReplySnapshot>(), Array.Empty<RequestSourceBody>(), null, originals);
         MemoryTurn? current = history.FirstOrDefault(t => t.EventId == currentUserId && t.Role == "user");
         var host = allowHistoryReferences ? DeepSeekClient.SourceEnvelopeBodies(projected.Turns, current,
             currentUserText, true) : Array.Empty<RequestSourceBody>();
@@ -68,7 +127,6 @@ internal sealed partial class MemoryStore
         var records = selected.Select((source,index) => relevanceActive
             ? GeneratedReplyProjection.RecordWithIdentity(source,identities![index],host,references)
             : GeneratedReplyProjection.Record(source,host,references)).ToArray();
-        var originals = selected.SelectMany(GeneratedMappedOriginals).DistinctBy(t=>t.EventId).ToArray();
         var bodySources = new List<RequestSourceBody>();
         foreach(var source in selected)
             foreach(var raw in originals)
@@ -83,7 +141,7 @@ internal sealed partial class MemoryStore
             + JsonSerializer.Serialize(new { source_kind = "generated_public_answer", projection_version = 2,
                 source_contract = GeneratedReplyProjection.Contract, records }, DialogueMaterialEnvelope.DataJson);
         GeneratedReadableView? readable=null;string readableReason="";
-        if(config.B1ContinuityEnabled&&config.B1MaterialPresentation=="natural"&&allowHistoryReferences)
+        if(config.B1MaterialPresentation=="natural"&&allowHistoryReferences)
         {
             // Only the already-selected MAIN carrier changes presentation.
             // Preserve selector identity; unsupported appearance schemas keep JSON.
@@ -92,7 +150,10 @@ internal sealed partial class MemoryStore
                 : GeneratedReadableView.TryCreate(selected,bodySources,out readable,out readableReason);
             if(rendered)block=readable!.Text;
             NativeEventLog.Trace("generated_reply.readable_projection","mod","system","Generated answer presentation",
-                JsonSerializer.Serialize(new {stage="prepared_not_sent",mode=readable==null?"json":"natural",reason=readableReason,source_records=selected.Count,binding=readable?.Audit()}));
+                JsonSerializer.Serialize(new {stage="prepared_not_sent",mode=readable==null?"json":"natural",reason=readableReason,source_records=selected.Count,slice_count=readable?.Slices.Count??0}));
+            if (config.VerboseTelemetryEnabled && readable != null)
+                NativeEventLog.TraceVerbose("generated_reply.readable_projection","mod","system","Generated answer presentation",
+                    JsonSerializer.Serialize(new {stage="prepared_not_sent",mode="natural",reason=readableReason,source_records=selected.Count,binding=readable.Audit()}));
         }
         return new(block, Array.AsReadOnly(selected.ToArray()),readable==null?references.Distinct().ToArray():Array.Empty<RequestSourceBody>(),bodySources,originals,readable,readableReason);
     }
@@ -119,18 +180,23 @@ internal sealed partial class MemoryStore
     // receipt or local rewrite does not turn generated language into speech.
     internal IReadOnlyList<MemoryTurn> GeneratedMappedOriginals(GeneratedReplySnapshot source)
     {
-        var raw=ReadExperiences();var result=new List<MemoryTurn>();
-        foreach(var range in source.DisplayRanges.Where(r=>r.EventId.Length>0&&r.GeneratedStartChar.HasValue))
+        lock (_experienceLock)
         {
-            var row=raw.FirstOrDefault(t=>t.EventId==range.EventId);
-            int at=range.GeneratedStartChar!.Value;
-            if(row==null||at<0||at>source.BodyText.Length||row.Text.Length>source.BodyText.Length-at
-                ||source.BodyText.Substring(at,row.Text.Length)!=row.Text
-                ||!RequestSourceBody.Hash(row.Text).Equals(range.ActualTextHash,StringComparison.OrdinalIgnoreCase)
-                ||LogicalDialogueCatalog.RawFingerprint(row)!=range.RawFingerprint)continue;
-            result.Add(row.Copy());
+            var raw = GetExperienceValidationView();
+            var denied = SuppressedExperienceIds();
+            var result = new List<MemoryTurn>();
+            foreach (var range in source.DisplayRanges.Where(r => r.EventId.Length > 0 && r.GeneratedStartChar.HasValue))
+            {
+                if (denied.Contains(range.EventId) || !raw.TryGetUnique(range.EventId, out var row)) continue;
+                int at = range.GeneratedStartChar!.Value;
+                if (at < 0 || at > source.BodyText.Length || row.Text.Length > source.BodyText.Length - at
+                    || source.BodyText.Substring(at, row.Text.Length) != row.Text
+                    || !RequestSourceBody.Hash(row.Text).Equals(range.ActualTextHash, StringComparison.OrdinalIgnoreCase)
+                    || raw.GetRawFingerprint(row) != range.RawFingerprint) continue;
+                result.Add(row.Copy());
+            }
+            return result;
         }
-        return result;
     }
 }
 
@@ -182,7 +248,7 @@ internal static class GeneratedReplyProjection
 
     private static object DisplayEvidence(GeneratedReplySnapshot source)
     {
-        var metadata = source.Metadata;
+        var metadata = source.ReadMetadata;
         var confirmed = new List<ConfirmedRange>();
         var other = new List<object>(); int confirmedRecords = 0;
         foreach (var range in metadata.ShownRanges)
@@ -234,7 +300,7 @@ internal static class GeneratedReplyProjection
             used?.Add(match[0]); at = start + shown.Chars;
         }
         if (at < end) parts.Add(new { generated_offset = at, chars = end-at, text = body[at..end] });
-        var metadata = source.Metadata;
+        var metadata = source.ReadMetadata;
         var record = new {
             message_ref = "generated/" + source.Key, source_kind = "generated_public_answer",
             original_message_ref = source.LogicalOwnerKey,
@@ -249,7 +315,7 @@ internal static class GeneratedReplyProjection
         {
             var projected=JsonSerializer.SerializeToElement(record,DialogueMaterialEnvelope.DataJson).EnumerateObject()
                 .ToDictionary(p=>p.Name,p=>p.Value.Clone(),StringComparer.Ordinal);
-            var state=progress.Metadata.PublicExpression!;
+            var state=progress.ReadMetadata.PublicExpression!;
             projected["public_final_continuation"]=JsonSerializer.SerializeToElement(new {
                 generation_id=state.FinalProgress!.GenerationId,checkpoint_key=progress.Key,checkpoint_revision=state.FinalProgress.Revision,
                 state=state.FinalProgress.State,appearance_ranges=state.Ranges,observed_appearance=state.StreamAppearances,

@@ -73,10 +73,11 @@ internal sealed partial class MemoryStore
         return Regex.IsMatch(query, @"[？?]|(?:吗|么)[。！!]*$|怎么|怎样|如何|哪里|哪儿|什么|还记得|回顾|讲讲|说说|告诉我|聊聊");
     }
 
-    private static bool ReferencesMentionSources(MemoryTurn t, HashSet<string> ids) =>
+    private static bool ReferencesMentionSources(MemoryTurn t, HashSet<string> ids, bool includeContextDependencies = true) =>
         ids.Contains(t.EventId) || ids.Contains(t.SourceEventId) || t.SourceEventIds.Any(ids.Contains)
         || t.SourceNoteIds.Any(ids.Contains) || t.SourceDayIds.Any(ids.Contains)
-        || t.SourceDependencies.Concat(t.ContextDependencies).Any(d => ids.Contains(d.EventId));
+        || (includeContextDependencies ? t.SourceDependencies.Concat(t.ContextDependencies) : t.SourceDependencies)
+            .Any(d => ids.Contains(d.EventId));
 
     internal bool IsMentionAllowed(MemoryTurn turn)
     {

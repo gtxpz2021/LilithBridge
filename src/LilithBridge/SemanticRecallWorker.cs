@@ -8,6 +8,11 @@ namespace LilithBridge;
 internal sealed record SemanticIndexRecord(string EventId, string Text, string Role, string Origin, string Delivery,
     string Kind="utterance",string Version="")
 {
+    private string? _textHash;
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal string? KnownTextHash { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal string TextHash => _textHash ??= KnownTextHash ?? MemoryStore.SemanticTextHash(Text);
     internal string WireId=>Kind=="utterance"?EventId:"derived/"+Kind+"/"+EventId;
     internal SemanticDomain Domain=>Kind switch {"b1"=>SemanticDomain.B1,"note" or "lesson"=>SemanticDomain.Thoughts,_=>SemanticDomain.Events};
 }
@@ -180,7 +185,7 @@ internal sealed class SemanticRecallWorker : IDisposable
         {
             if(reset){_hashes.Clear();_needFullPrune=true;IndexMirrorKnown=false;}
             _lastSnapshot=snapshot;
-            var hashes=snapshot.ToDictionary(r=>r.WireId,r=>MemoryStore.SemanticTextHash(r.Text),StringComparer.Ordinal);
+            var hashes=snapshot.ToDictionary(r=>r.WireId,r=>r.TextHash,StringComparer.Ordinal);
             var changes=snapshot.Where(r=>!_hashes.TryGetValue(r.WireId,out var hash)||hash!=hashes[r.WireId]).ToArray();
             for(int at=0;at<changes.Length;at+=16)
             {
@@ -279,7 +284,7 @@ internal sealed class SemanticRecallWorker : IDisposable
             phase="index";
             using(PreparationTiming.Measure("semantic.index_wait"))
             {
-                _syncTask=SynchronizeAsync(request.Snapshot,linked.Token,true);
+                _syncTask=SynchronizeAsync(request.Snapshot,linked.Token,false);
                 await _syncTask.ConfigureAwait(false);
                 Interlocked.Exchange(ref _indexedVersion,target);
             }
@@ -305,7 +310,7 @@ internal sealed class SemanticRecallWorker : IDisposable
             foreach(var c in r.GetProperty("candidates").EnumerateArray())
             {
                 if(!byWire.TryGetValue(c.GetProperty("event_id").GetString()!,out var source)
-                    ||(source.Domain&request.Domains)==0||c.GetProperty("text_hash").GetString()!=MemoryStore.SemanticTextHash(source.Text))continue;
+                    ||(source.Domain&request.Domains)==0||c.GetProperty("text_hash").GetString()!=source.TextHash)continue;
                 candidates.Add(new(source.EventId,c.GetProperty("text_hash").GetString()!,c.GetProperty("score").GetDouble(),
                     c.GetProperty("chunk_start").GetInt32(),c.GetProperty("chunk_end").GetInt32(),source.Kind,source.Version,++rank,
                     c.TryGetProperty("char_start",out var a)?MemoryStore.SemanticCodePointOffset(source.Text,a.GetInt32()):null,
@@ -315,6 +320,7 @@ internal sealed class SemanticRecallWorker : IDisposable
             PreparationTiming.Current?.Value("semantic_message_candidates",candidates.Count(c=>c.Kind=="message"));
             PreparationTiming.Current?.Value("semantic_b1_hits",candidates.Count(c=>c.Kind=="b1"));
             PreparationTiming.Current?.Value("semantic_thought_hits",candidates.Count(c=>c.Kind is "note" or "lesson"));
+            if (_indexDirty) ScheduleBackgroundCommit();
             return new(request.OwnerId,queryHash,ModelRevision,epoch+":"+r.GetProperty("index_generation").GetInt64(),
                 candidates,DataRoot:request.DataRoot,SessionId:request.SessionId,Domains:request.Domains,
                 TargetWatermark:target,CompletedWatermark:target,Generation:request.Generation);
@@ -331,6 +337,31 @@ internal sealed class SemanticRecallWorker : IDisposable
         }
         finally{if(held)_discovery.Release();}
     }
+    private int _backgroundCommitQueued;
+    private void ScheduleBackgroundCommit()
+    {
+        if (_disposed || !Ready || Interlocked.CompareExchange(ref _backgroundCommitQueued, 1, 0) != 0)
+            return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _synchronization.WaitAsync(_lifetime.Token).ConfigureAwait(false);
+                try
+                {
+                    if (!_disposed && Ready && _indexDirty)
+                    {
+                        var result = await CommandAsync("commit", new(), _lifetime.Token).ConfigureAwait(false);
+                        if (result.GetProperty("status").GetString() == "ok")
+                            _indexDirty = false;
+                    }
+                }
+                finally { _synchronization.Release(); }
+            }
+            catch { /* Best-effort background persistence; Shutdown or next sync persists cleanly. */ }
+            finally { Interlocked.Exchange(ref _backgroundCommitQueued, 0); }
+        });
+    }
     internal Task<JsonElement> InspectAsync()=>CommandAsync("status",new(),_lifetime.Token);
     internal Task<JsonElement> ExitForTestAsync()=>CommandAsync("test_exit",new(),_lifetime.Token);
     private void StopOwnedProcess()
@@ -340,7 +371,30 @@ internal sealed class SemanticRecallWorker : IDisposable
     }
     public void Dispose()
     {
-        if(_disposed)return;_disposed=true;Ready=false;Status="stopped";_lifetime.Cancel();
+        if(_disposed)return;
+        // Flush any deferred on-disk vector index persistence briefly before stopping child.
+        if (Ready && _indexDirty && _process is { HasExited: false })
+        {
+            try
+            {
+                using var flushCts = new CancellationTokenSource(1200);
+                using var reg = _lifetime.Token.Register(() => flushCts.Cancel());
+                if (_synchronization.Wait(400, flushCts.Token))
+                {
+                    try
+                    {
+                        if (_indexDirty && Ready)
+                        {
+                            var res = CommandAsync("commit", new(), flushCts.Token).GetAwaiter().GetResult();
+                            if (res.GetProperty("status").GetString() == "ok") _indexDirty = false;
+                        }
+                    }
+                    finally { _synchronization.Release(); }
+                }
+            }
+            catch { }
+        }
+        _disposed=true;Ready=false;Status="stopped";_lifetime.Cancel();
         var process=_process;
         try{process?.StandardInput.Close();}catch{ }
         Shutdown=Task.Run(async()=>{if(process==null)return;try{using var wait=new CancellationTokenSource(2000);await process.WaitForExitAsync(wait.Token).ConfigureAwait(false);}catch{StopOwnedProcess();}finally{process.Dispose();}});

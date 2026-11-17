@@ -120,7 +120,7 @@ internal static class SelfPositionViewAssembler
         var sources = new List<string> { "reading:" + reading.EventId };
         sources.AddRange(reading.SourceNoteIds.Select(id => "note:" + id));
         return new SelfPositionField("shared_authorship", SelfPositionStatus.Interpretation,
-            "你与玩家的共同经历以经历档与她自己的关系理解为限；最近那条理解："
+            "你与玩家的共同经历以经历档与你自己的关系理解为限；最近那条理解："
             + Flatten(reading.Text),
             sources);
     }
@@ -134,10 +134,10 @@ internal static class SelfPositionViewAssembler
     {
         if (inputs.VersionChain.Count == 0)
             return Absent("continuity");
-        string chain = string.Join("；", inputs.VersionChain.Select(t =>
-            "note=" + t.EventId + " state=" + State(t) + " revision=" + t.Revision));
+        string chain = string.Join(" -> ", inputs.VersionChain.Select(t =>
+            $"v{t.Revision}({State(t)})"));
         return new SelfPositionField("continuity", SelfPositionStatus.Recorded,
-            "记录版本的沿革以链路为准：" + chain + "；这些状态说明记录生命周期，仅凭旧记录不能判断现在是否认同其内容。",
+            "记录版本沿革：" + chain + "；旧版本仅代表记录轨迹，不代表现在仍然认同。",
             inputs.VersionChain.Select(t => "note:" + t.EventId).ToList());
     }
 
@@ -178,8 +178,6 @@ internal static class SelfPositionViewFormatter
         {
             builder.Append("- ").Append(field.Name)
                 .Append("（status=").Append(field.Status)
-                .Append("；sources=")
-                .Append(field.Sources.Count == 0 ? "-" : string.Join(",", field.Sources))
                 .Append("）");
             if (field.Text.Length > 0)
                 builder.Append("：").Append(field.Text);

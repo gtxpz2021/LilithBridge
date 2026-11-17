@@ -32,7 +32,7 @@ internal sealed partial class MemoryStore
     // bound to the selected window's existing delivery owners are resolved.
     // Legacy receipts without a key remain unavailable, never guessed.
     private ReflectionGeneratedCapture CaptureReflectionGeneratedPublic(IReadOnlyList<MemoryTurn> window,
-        IReadOnlyList<MemoryTurn> evidence)
+        IReadOnlyList<MemoryTurn> evidence, ShortAliasTable? aliases = null)
     {
         lock (_experienceLock)
         {
@@ -58,17 +58,18 @@ internal sealed partial class MemoryStore
             // window. Do not expand it with identities from the entire archive.
             foreach (string owner in owners.Take(ReflectionGeneratedOwnerLimit))
             {
+                string ownerRef = aliases?.AliasOrId(owner) ?? owner;
                 if (!ReflectionDeliveries().TryGetValue(owner, out var receipt)
                     || string.IsNullOrEmpty(receipt.GeneratedPublicKey))
-                { omitted.Add(new { source_user_event_id = owner, reason = "no_verified_generated_locator" }); continue; }
+                { omitted.Add(new { source_user_event_id = ownerRef, reason = "no_verified_generated_locator" }); continue; }
                 var source = GetExactGeneratedReply(receipt.GeneratedPublicKey);
                 if (source == null || source.SourceUserId != owner || source.SessionId != receipt.SessionId)
-                { omitted.Add(new { source_user_event_id = owner, reason = "generated_body_or_permission_unavailable" }); continue; }
-                records.Add(ReflectionGeneratedRecord(source, evidence));
+                { omitted.Add(new { source_user_event_id = ownerRef, reason = "generated_body_or_permission_unavailable" }); continue; }
+                records.Add(ReflectionGeneratedRecord(source, evidence, aliases));
                 if (Bytes() > ReflectionGeneratedByteLimit)
                 {
                     records.RemoveAt(records.Count - 1); budgetLimited = true;
-                    omitted.Add(new { source_user_event_id = owner, reason = "whole_public_answer_byte_budget" });
+                    omitted.Add(new { source_user_event_id = ownerRef, reason = "whole_public_answer_byte_budget" });
                     continue;
                 }
                 var m = source.Metadata;
@@ -88,7 +89,8 @@ internal sealed partial class MemoryStore
         }
     }
 
-    private static object ReflectionGeneratedRecord(GeneratedReplySnapshot source, IReadOnlyList<MemoryTurn> evidence)
+    private static object ReflectionGeneratedRecord(GeneratedReplySnapshot source, IReadOnlyList<MemoryTurn> evidence,
+        ShortAliasTable? aliases = null, bool allowRegisterAliases = true)
     {
         var parts = new List<object>(); int at = 0;
         var exact = new List<object[]>();
@@ -101,7 +103,10 @@ internal sealed partial class MemoryStore
             int suppliedIndex = -1;
             if (rows.Length == 1) for (int i = 0; i < evidence.Count; i++)
                 if (ReferenceEquals(evidence[i], rows[0])) { suppliedIndex = i; break; }
-            object sourceRef = suppliedIndex >= 0 ? (object)suppliedIndex : range.EventId;
+            object sourceRef = suppliedIndex >= 0
+                ? (object)suppliedIndex
+                : (allowRegisterAliases ? aliases?.AliasOrRegister("h", range.EventId) : aliases?.AliasOrId(range.EventId))
+                  ?? range.EventId;
             // The safe generated reader already checked all archived raw
             // fingerprints, even if this reflection did not supply their bodies.
             // When a host is supplied, check it too before reusing its text.
@@ -123,7 +128,7 @@ internal sealed partial class MemoryStore
             if (start < at || chars != rows[0].Text.Length) continue;
             if (start > at) parts.Add(new { generated_offset = at, text = source.Body[at..start] });
             parts.Add(new { generated_offset = start, chars,
-                text_ref = new { event_id = range.EventId, field = "utterances.text" } });
+                text_ref = new { event_id = aliases?.AliasOrId(range.EventId) ?? range.EventId, field = "utterances.text" } });
             at = start + chars;
         }
         if (at < source.Body.Length) parts.Add(new { generated_offset = at, text = source.Body[at..] });
@@ -135,8 +140,9 @@ internal sealed partial class MemoryStore
             < JsonSerializer.SerializeToUtf8Bytes(inline, DialogueMaterialEnvelope.DataJson).Length ? parts : inline;
         var m = source.Metadata;
         return new {
-            generated_ref = source.Key, source.SessionId, source.RequestId, source.AttemptId, source.SourceUserId,
-            at = m.CapturedAtUtc, source.BodyHash, source.VersionFingerprint, total_chars = source.Body.Length,
+            generated_ref = source.Key, source.SessionId, source.RequestId, source.AttemptId,
+            SourceUserId = aliases?.AliasOrId(source.SourceUserId) ?? source.SourceUserId,
+            at = m.CapturedAtUtc, total_chars = source.Body.Length,
             public_extent = m.PublicTextExtent, network_body_complete = m.NetworkBodyComplete,
             body_parts = body,
             display = new { terminal = m.DeliveryTerminal, outcome = m.DeliveryOutcome,
@@ -183,6 +189,7 @@ internal sealed partial class MemoryStore
         if (sources == null) return false;
         bool hasBodies = request.Source.Contains("\"generated_ref\":", StringComparison.Ordinal);
         if (sources.Count == 0 && !hasBodies) return true; // unchanged legacy snapshots
+        if (!ShortAliasTable.TryFromAliasToId(request.ShortAliases, out var aliases)) return false;
         try
         {
             using var document = JsonDocument.Parse(request.Source);
@@ -195,8 +202,11 @@ internal sealed partial class MemoryStore
             var utterances = document.RootElement.GetProperty("utterances").EnumerateArray().ToArray();
             if (utterances.Length != request.Evidence.Count) return false;
             for (int i = 0; i < utterances.Length; i++)
-                if (utterances[i].GetProperty("event_id").GetString() != request.Evidence[i].EventId
+            {
+                string expectedUtteranceId = aliases?.AliasOrId(request.Evidence[i].EventId) ?? request.Evidence[i].EventId;
+                if (utterances[i].GetProperty("event_id").GetString() != expectedUtteranceId
                     || utterances[i].GetProperty("text").GetString() != request.Evidence[i].Text) return false;
+            }
             foreach (var prior in sources)
             {
                 var current = GetExactGeneratedReply(prior.Key);
@@ -206,7 +216,9 @@ internal sealed partial class MemoryStore
                 var supplied = records.EnumerateArray().Single(r => r.GetProperty("generated_ref").GetString() == prior.Key);
                 // Bind the persisted body/refs/state/times to the exact qualified
                 // snapshot, not merely to a separately stored dependency list.
-                var expected = JsonSerializer.SerializeToElement(ReflectionGeneratedRecord(current, request.Evidence), DialogueMaterialEnvelope.DataJson);
+                var expected = JsonSerializer.SerializeToElement(
+                    ReflectionGeneratedRecord(current, request.Evidence, aliases, allowRegisterAliases: false),
+                    DialogueMaterialEnvelope.DataJson);
                 if (supplied.GetRawText() != expected.GetRawText()) return false;
             }
             return true;

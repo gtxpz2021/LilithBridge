@@ -26,7 +26,7 @@ internal static partial class NativeBubblePresenter
     private static PendingAppearance? _appearance;
     internal static Func<(double Time, int Frame)>? AppearanceClockForTests { get; set; }
     private static (double Time, int Frame) AppearanceClock() => AppearanceClockForTests?.Invoke()
-        ?? (Time.unscaledTime, Time.frameCount);
+        ?? (NativeAppearanceClock.MonotonicSeconds(), Time.frameCount);
     private const float RetryIntervalSeconds = 0.5f;
     private const float RetryWindowSeconds = 3f;
     // The delivery record lives on the result itself: the generated full text

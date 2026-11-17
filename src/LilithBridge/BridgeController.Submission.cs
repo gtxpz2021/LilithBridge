@@ -30,7 +30,7 @@ internal sealed partial class BridgeController
         PersonaDecisionHint decision = PersonaStateEngine.Evaluate(_sessionState, _config);
         PersonaStateEngine.ApplyMoment(_sessionState, decision);
         _sessionState.TickRelationshipEvolution();
-        _sessionState.PendingIntent = _proactiveRequest ? "主动留意玩家" : "回应玩家";
+        _sessionState.PendingIntent = "";
         if (PrivacySafety.IsCrisis(text))
         {
             _sessionState.Mood = MoodKind.Caring;
@@ -184,6 +184,7 @@ internal sealed partial class BridgeController
         PaperSourceSnapshot paperSources = _memory.CapturePaperSources(
             methodRuntime.Sources.Concat(_memory.GetRequestHistorySelection(requestConfig, finalRequestHistory)).Concat(claimBoundary.Sources),
             _sessionState.RecentEvents, text, !_proactiveRequest);
+        dialogueRequest?.ReplaceSuppliedReflections(recallUsed);
         dialogueRequest?.PrepareRecalledInitialExperience(_memory,text,recallQuery,context,finalRequestHistory,
             recallUsed??Array.Empty<MemoryTurn>(),semanticTrace);
         context+=dialogueRequest?.InitialExperiencePreparationNote??"";

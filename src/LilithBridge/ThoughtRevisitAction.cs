@@ -62,9 +62,27 @@ internal sealed partial class DialogueRequest
         }
         return prefix.End == item.Turn.Text.Length ? prefix.Location : null;
     }
+    private readonly Dictionary<string, ReviewCandidateHandle> _reviewHandlesByAlias = new(StringComparer.Ordinal);
+    private readonly Dictionary<ReviewCandidateHandle, string> _reviewAliasesByHandle = new();
+    internal string RegisterReviewHandle(string mode, string historyRef, string rootVersion = "", string versionFingerprint = "")
+    {
+        var key = new ReviewCandidateHandle(mode, historyRef, rootVersion, versionFingerprint);
+        if (_reviewAliasesByHandle.TryGetValue(key, out string? existing)) return existing;
+        string alias = "#" + (_reviewAliasesByHandle.Count + 1);
+        _reviewAliasesByHandle[key] = alias;
+        _reviewHandlesByAlias[alias] = key;
+        return alias;
+    }
+    internal bool TryResolveReviewHandle(string? alias, out ReviewCandidateHandle? handle)
+    {
+        handle = null;
+        return !string.IsNullOrWhiteSpace(alias)
+            && _reviewHandlesByAlias.TryGetValue(alias.Trim(), out handle);
+    }
     internal void ResetRevisitToolContext()
     {
         RevisitToolTargets.Clear(); RevisitToolBasis = null; _revisitThoughtPrefixes.Clear();
+        _reviewHandlesByAlias.Clear(); _reviewAliasesByHandle.Clear();
     }
     internal ReflectionReasonBasis? RevisitActionBasis() => MergeReflectionBases(ReflectionReasonBasis, RevisitToolBasis);
     internal void WithRevisitAdmission(Action admission) { lock (_b1Ownership) admission(); }

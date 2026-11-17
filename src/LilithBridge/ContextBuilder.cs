@@ -131,8 +131,9 @@ internal static class ContextBuilder
             // actually rendered by this request. Both branches call
             // AppendSelfPositionView with this same query and this same previous
             // user line, so the gate decision recorded here is the one that runs.
-            selection = ContextMaterialSelection.Select(memory, config, retrievalQuery, querySource,
-                materialBranch, PreviousUserLine(state, retrievalQuery), playerDirected);
+            using (PreparationTiming.Measure("ctx.material_selection"))
+                selection = ContextMaterialSelection.Select(memory, config, retrievalQuery, querySource,
+                    materialBranch, PreviousUserLine(state, retrievalQuery), playerDirected);
         }
         catch
         {
@@ -382,7 +383,7 @@ internal static class ContextBuilder
             if (belief.Length > 0)
             {
                 builder.AppendLine();
-                builder.AppendLine("[世界信念（程序实际观察，不是莉莉丝的记忆）] " + belief);
+                builder.AppendLine("[眼前环境（程序观察，非你的记忆）] " + belief);
             }
         }
 
@@ -462,8 +463,11 @@ internal static class ContextBuilder
             memory.GetRequestHistorySelection(config, requestHistory), UtteranceAttribution.Describe("user", scene.UserText),
             reuseHostBodies, config.HistoryGroupReplies, reuseHostBodies ? references.Add : null);
         if (references.Count > 0) onSceneBodyReferences!(block, references.ToArray());
-        builder.AppendLine();
-        builder.Append(block);
+        if (block.Length > 0)
+        {
+            builder.AppendLine();
+            builder.Append(block);
+        }
     }
 
     private static string BuildCleanContext(
@@ -514,19 +518,9 @@ internal static class ContextBuilder
 
         var builder = new StringBuilder();
         var suppliedMemories = new List<MemoryTurn>();
-        AppendRealTimeLine(builder, requestTime);
+        // Stability-descending layout (static -> retrieved -> instantaneous present)
+        // improves prefix KV cache hits across turns without omitting any material.
         builder.AppendLine("[身份] 你就是玩家桌面上的那个莉莉丝；下面出现的莉莉丝、截图里的角色和原生状态里的 Lilith 都是你本人。");
-        AppendSelfPositionView(builder, memory, state, config, retrievalQuery, selection);
-        AppendLastScene(builder, memory, state, suppliedMemories, config, requestHistory,
-            sourceEnvelopeForRequest, onSceneBodyReferences);
-
-        string nativeState = state.Native.Describe();
-        if (nativeState.Length == 0)
-            nativeState = "idle";
-        builder.AppendLine("[当前莉莉丝状态] " + nativeState + " | " + state.DescribeState());
-        builder.AppendLine("[原生状态] dialogue=" + state.NativeDialogueActive
-            + ";options=" + state.PlayerOptionsShowing
-            + ";busy=" + state.BusyOrAwaitingResponse);
 
         if (config.ActionCapabilityEnabled)
         {
@@ -543,31 +537,51 @@ internal static class ContextBuilder
             builder.AppendLine("[当前可用动作] " + capability);
         }
 
-        // The capability contract is emitted once by DeepSeekClient in system.
-
-        if (config.PersonaDecisionEnabled)
-        {
-            PersonaDecisionHint decision = PersonaStateEngine.Evaluate(state, config);
-            string decisionText = PersonaStateEngine.DescribeForPrompt(decision, state);
-            if (decisionText.Length > 0)
-            {
-                builder.AppendLine();
-                builder.AppendLine(decisionText.TrimEnd());
-            }
-        }
-
-
+        string personaStatic = "";
+        string personaDynamic = "";
         if (config.PerspectiveProjectionEnabled)
         {
-            string personaContext = BuildPersonaContextWithReading(memory, state, config, t => suppliedMemories.Add(t), selection?.Relationship.Turn, playerDirected);
+            string personaContext;
+            using (PreparationTiming.Measure("ctx.persona"))
+                personaContext = BuildPersonaContextWithReading(memory, state, config, t => suppliedMemories.Add(t), selection?.Relationship.Turn, playerDirected);
             if (personaContext.Length > 0)
             {
-                builder.AppendLine();
-                builder.AppendLine(personaContext.TrimEnd());
+                const string sessionLayerMarker = "[莉莉丝会话层]";
+                int splitAt = personaContext.IndexOf(sessionLayerMarker, StringComparison.Ordinal);
+                if (splitAt > 0)
+                {
+                    personaStatic = personaContext[..splitAt].TrimEnd();
+                    personaDynamic = personaContext[splitAt..].TrimStart();
+                }
+                else
+                {
+                    personaStatic = personaContext.TrimEnd();
+                }
+                if (personaStatic.Length > 0)
+                {
+                    builder.AppendLine();
+                    builder.AppendLine(personaStatic);
+                }
             }
         }
 
-        string timeline = BuildRecentSceneContext(state, memory);
+        if (personaDynamic.Length > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine(personaDynamic.TrimEnd());
+        }
+
+        using (PreparationTiming.Measure("ctx.self_position"))
+            AppendSelfPositionView(builder, memory, state, config, retrievalQuery, selection);
+        using (PreparationTiming.Measure("ctx.last_scene"))
+            AppendLastScene(builder, memory, state, suppliedMemories, config, requestHistory,
+                sourceEnvelopeForRequest, onSceneBodyReferences);
+
+        // The capability contract is emitted once by DeepSeekClient in system.
+
+        string timeline;
+        using (PreparationTiming.Measure("ctx.recent_scene"))
+            timeline = BuildRecentSceneContext(state, memory);
         if (timeline.Length > 0)
         {
             builder.AppendLine();
@@ -584,23 +598,23 @@ internal static class ContextBuilder
 
         if (config.MemoryDreamsEnabled)
         {
-            var dayArtifacts = memory.FilterMentionSupply(memory.GetDayArtifacts(6));
-            MemoryTurn? consolidation = dayArtifacts
-                .LastOrDefault(t => t.Kind == MemoryStore.DayConsolidationKind);
-            MemoryTurn? dream = dayArtifacts
-                .LastOrDefault(t => t.Kind == MemoryStore.DayDreamKind);
+            using var _dayTiming = PreparationTiming.Measure("ctx.day_artifacts");
+            var dayArtifacts = memory.FilterMentionSupply(memory.GetDayArtifacts(16));
+            var (consolidation, dream) = memory.SelectDayArtifactsForChat(dayArtifacts, retrievalQuery);
             if (consolidation != null)
             {
-                builder.AppendLine("[她离线时对这段日子的整理：归拢，不是新事实]");
+                builder.AppendLine("[你离线时对这段日子的整理：归拢，不是新事实]");
                 builder.AppendLine(consolidation.Text);
-                builder.AppendLine(memory.DescribeSourceAttribution(consolidation));
+                string attr = memory.DescribeSourceAttribution(consolidation);
+                if (attr.Length > 0) builder.AppendLine(attr);
                 suppliedMemories.Add(consolidation);
             }
             if (dream != null)
             {
-                builder.AppendLine("[她的梦与想象：不是真实发生过的事]");
-                builder.AppendLine(dream.Text);
-                builder.AppendLine(memory.DescribeSourceAttribution(dream));
+                builder.AppendLine("[你的梦境与零碎遐想]");
+                builder.AppendLine(MemoryStore.CleanDreamDisplayText(dream.Text));
+                string attr = memory.DescribeSourceAttribution(dream);
+                if (attr.Length > 0) builder.AppendLine(attr);
                 suppliedMemories.Add(dream);
             }
         }
@@ -610,7 +624,9 @@ internal static class ContextBuilder
         // ordinary recall list, where it used to be printed as "text=..." under
         // the user's-own-words heading. Keep the record available, but give it its
         // own explicit summary identity so it cannot read as a new verbatim fact.
-        IReadOnlyList<MemoryTurn> summaryRecalls = HistoryAuxiliaries(memory, config);
+        IReadOnlyList<MemoryTurn> summaryRecalls;
+        using (PreparationTiming.Measure("ctx.summaries"))
+            summaryRecalls = HistoryAuxiliaries(memory, config);
 
         if (profile.Count + recalled.Count > 0)
         {
@@ -623,8 +639,9 @@ internal static class ContextBuilder
                 {
                     MethodRuntimeEvidence.Observe(new[]{turn});
                     if (turn.NaturalMemoryReadContext.Length > 0) builder.AppendLine(turn.NaturalMemoryReadContext);
-                    builder.AppendLine("- text=" + turn.Text + "; validity=" + turn.Validity + "; source_event_id=" + turn.SourceEventId
-                        + (turn.Evidence.Length > 0 ? "; evidence=" + turn.Evidence : ""));
+                    string v = turn.Validity == "corrected" ? "（玩家纠正过）" : turn.Validity == "inferred" ? "（推断）" : "";
+                    string ev = turn.Evidence.Length > 0 && turn.Evidence != turn.Text ? "（依据：" + turn.Evidence + "）" : "";
+                    builder.AppendLine("- " + turn.Text + v + ev);
                 }
             }
             foreach (MemoryTurn turn in recalled)
@@ -632,8 +649,10 @@ internal static class ContextBuilder
                 if (factTexts.Add(FactIdentity(turn)))
                 {
                     if (turn.NaturalMemoryReadContext.Length > 0) builder.AppendLine(turn.NaturalMemoryReadContext);
-                    builder.AppendLine("- text=" + turn.Text + "; validity=" + turn.Validity + "; source_event_id=" + turn.SourceEventId
-                        + (turn.Evidence.Length > 0 ? "; evidence=" + turn.Evidence : ""));
+                    string v = turn.Validity == "corrected" ? "（玩家纠正过）" : turn.Validity == "inferred" ? "（推断）" : "";
+                    string time = turn.Timestamp == default ? "" : "（" + turn.Timestamp.LocalDateTime.ToString("yyyy-MM-dd") + "）";
+                    string ev = turn.Evidence.Length > 0 && turn.Evidence != turn.Text ? "（依据：" + turn.Evidence + "）" : "";
+                    builder.AppendLine("- " + turn.Text + v + time + ev);
                 }
             }
         }
@@ -650,6 +669,29 @@ internal static class ContextBuilder
         suppliedMemories.AddRange(summaryRecalls);
         AppendStoryMaterial(builder, selection);
 
+        // Instantaneous time, live posture and desktop state sit near the end
+        // (closest to the current user turn) so volatile fields do not bust KV prefixes.
+        builder.AppendLine();
+        AppendRealTimeLine(builder, requestTime);
+        string nativeState = state.Native.Describe();
+        if (nativeState.Length == 0)
+            nativeState = "idle";
+        builder.AppendLine("[当前莉莉丝状态] " + nativeState + " | " + state.DescribeState());
+        builder.AppendLine("[原生状态] dialogue=" + state.NativeDialogueActive
+            + ";options=" + state.PlayerOptionsShowing
+            + ";busy=" + state.BusyOrAwaitingResponse);
+
+        if (config.PersonaDecisionEnabled)
+        {
+            PersonaDecisionHint decision = PersonaStateEngine.Evaluate(state, config);
+            string decisionText = PersonaStateEngine.DescribeForPrompt(decision, state);
+            if (decisionText.Length > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine(decisionText.TrimEnd());
+            }
+        }
+
         if (state.ForegroundApp != null)
         {
             builder.AppendLine();
@@ -663,7 +705,7 @@ internal static class ContextBuilder
             if (belief.Length > 0)
             {
                 builder.AppendLine();
-                builder.AppendLine("[世界信念（程序实际观察，不是莉莉丝的记忆）] " + belief);
+                builder.AppendLine("[眼前环境（程序观察，非你的记忆）] " + belief);
             }
         }
 
@@ -769,6 +811,7 @@ internal static class ContextBuilder
         GeneratedReplyMaterial? generatedForRationales=null;
         if (onGeneratedReplyMaterial != null)
         {
+            using var _genTiming = PreparationTiming.Measure("ctx.generated_reply");
             var generated = memory.BuildGeneratedReplyMaterial(retrievalQuery,config,suppliedHistory,
                 playerDirected ? state.LastUserEventId : "", playerDirected ? state.LastUserText : "",
                 semanticRecall,sourceEnvelopeForRequest && playerDirected && onSceneBodyReferences != null,relevanceActive);
@@ -799,42 +842,47 @@ internal static class ContextBuilder
             var excludedIds = new List<string>(generatedCoveredIds);
             foreach (MemoryTurn turn in suppliedHistory)
                 excludedIds.Add(turn.EventId);
-            experiences = queryRetrieval && !relevanceActive
-                ? experienceSelection ?? memory.GetExperienceCandidates(
-                    retrievalQuery, 9, excludedIds, state.AsksAboutPreviousSession(), onAnchorSelection: anchors=>lexicalAnchorIds.UnionWith(anchors.Select(t=>t.EventId)), onDirectSelection: direct =>
-                    {
-                        var ids=MemorySemantics.RecallIdentifiers(retrievalQuery);
-                        var quotes=UtteranceAttribution.LiteralQuotes(retrievalQuery);
-                        var scope=MemorySemantics.ParseExperienceRecallQuery(retrievalQuery);
-                        var directUnits = LogicalDialogueCatalog.Build(direct).Units;
-                        for (int i=0; i<directUnits.Count; i++)
+            using (PreparationTiming.Measure("ctx.exp_candidates"))
+                experiences = queryRetrieval && !relevanceActive
+                    ? experienceSelection ?? memory.GetExperienceCandidates(
+                        retrievalQuery, 9, excludedIds, state.AsksAboutPreviousSession(), onAnchorSelection: anchors=>lexicalAnchorIds.UnionWith(anchors.Select(t=>t.EventId)), onDirectSelection: direct =>
                         {
-                            var unit = directUnits[i];
-                            bool exact=(ids.Length>0||quotes.Length>0||scope?.From!=null)
-                                && ids.All(id=>unit.Runs.Any(run=>MemorySemantics.ContainsRecallIdentifier(run.Text,id)))
-                                && (quotes.Length==0||quotes.Any(unit.ContainsExact))
-                                && (scope==null||unit.Members.All(scope.AllowsSourceScope));
-                            foreach (var member in unit.Members)
-                                directRanks[member.EventId] = new(exact ? 0 : 1, i+1);
-                        }
-                    })
-                : Array.Empty<MemoryTurn>();
+                            var ids=MemorySemantics.RecallIdentifiers(retrievalQuery);
+                            var quotes=UtteranceAttribution.LiteralQuotes(retrievalQuery);
+                            var scope=MemorySemantics.ParseExperienceRecallQuery(retrievalQuery);
+                            var directUnits = LogicalDialogueCatalog.Build(direct).Units;
+                            for (int i=0; i<directUnits.Count; i++)
+                            {
+                                var unit = directUnits[i];
+                                bool exact=(ids.Length>0||quotes.Length>0||scope?.From!=null)
+                                    && ids.All(id=>unit.Runs.Any(run=>MemorySemantics.ContainsRecallIdentifier(run.Text,id)))
+                                    && (quotes.Length==0||quotes.Any(unit.ContainsExact))
+                                    && (scope==null||unit.Members.All(scope.AllowsSourceScope));
+                                foreach (var member in unit.Members)
+                                    directRanks[member.EventId] = new(exact ? 0 : 1, i+1);
+                            }
+                        })
+                    : Array.Empty<MemoryTurn>();
             experiences = memory.FilterMentionSupply(experiences);
             if (experiences.Count > 0)
             {
                 suppliedExperienceIds.UnionWith(experiences.Select(t => t.EventId));
                 suppliedMemories.AddRange(experiences);
                 builder.AppendLine();
-                var view = MemoryStore.RenderExperienceBodyView(experiences, "lexical", directRanks.Keys, lexicalAnchorIds);
+                builder.AppendLine("[关联召回的过往原话（历史片段，非当前事实）]");
+                var sparkIds = (experiences as LogicalDialogueSelection)?.SparkEventIds;
+                var view = MemoryStore.RenderExperienceBodyView(experiences, "lexical", directRanks.Keys, lexicalAnchorIds, sparkIds, includeHeader: false);
                 onContextBodySources?.Invoke(view);
-                builder.AppendLine(view.Block);
+                builder.AppendLine(view.Block.TrimEnd());
             }
         }
 
         if (semanticRecall != null && config.LongTermMemoryEnabled && config.ExperienceArchiveEnabled)
         {
             // Build's public entry requires the caller to retain this same trace.
-            var semantic = memory.SelectSemanticExperiences(retrievalQuery, semanticRecall,
+            IReadOnlyList<MemoryTurn> semantic;
+            using (PreparationTiming.Measure("ctx.sem_experiences"))
+                semantic = memory.SelectSemanticExperiences(retrievalQuery, semanticRecall,
                 suppliedExperienceIds.Concat(generatedCoveredIds).Concat(suppliedMemories.Select(t => t.EventId))
                     .Concat(profile.Concat(recalled).Where(t => t.SourceEventId.Length > 0 && t.Evidence == t.Text).Select(t => t.SourceEventId)),
                 state.AsksAboutPreviousSession(), semanticTrace!);
@@ -845,10 +893,12 @@ internal static class ContextBuilder
                 experiences = experiences.Concat(semantic).ToList();
                 suppliedExperienceIds.UnionWith(semantic.Select(t => t.EventId));
                 suppliedMemories.AddRange(semantic);
-                var view = MemoryStore.RenderExperienceBodyView(semantic, "semantic", semanticTrace!.DirectRanks.Keys);
+                var sparkIds = (semantic as LogicalDialogueSelection)?.SparkEventIds;
+                var view = MemoryStore.RenderExperienceBodyView(semantic, "semantic", semanticTrace!.DirectRanks.Keys, sparkEventIds: sparkIds, includeHeader: false);
                 onContextBodySources?.Invoke(view);
-                builder.AppendLine("[Semantic supplementary experience: retrieved source material, not endorsement or current events]");
-                builder.AppendLine(view.Block);
+                builder.AppendLine();
+                builder.AppendLine("[语义与联想参考（过往片段，可自由决定是否提及）]");
+                builder.AppendLine(view.Block.TrimEnd());
             }
             foreach (var rank in semanticTrace!.DirectRanks)
                 if (!directRanks.TryGetValue(rank.Key, out var old) || old.Priority > rank.Value.Priority
@@ -895,7 +945,9 @@ internal static class ContextBuilder
                     });
                 };
             }
-            string thoughts = memory.BuildReflectionRecallContext(retrievalQuery, suppliedExperienceIds,
+            string thoughts;
+            using (PreparationTiming.Measure("ctx.reflection_recall"))
+                thoughts = memory.BuildReflectionRecallContext(retrievalQuery, suppliedExperienceIds,
                 list => { suppliedMemories.AddRange(list); if (semanticTrace != null) semanticTrace.Dependents.AddRange(list.Select(t => t.Copy())); },
                 config.ReflectionRecallInChat && allowReflectionChatProjection && queryRetrieval
                     && !MemorySemantics.DeclinesArchiveRecall(retrievalQuery),
@@ -938,7 +990,7 @@ internal static class ContextBuilder
         string sourceContext = memory.DescribeSourceAttribution(reading);
         return persona
             + Environment.NewLine
-            + "[她最近对这段关系的理解（她自己写的，可以随时改变，不是事实）]"
+            + "[你最近对这段关系的理解（你自己写的，可以随时改变，不是事实）]"
             + Environment.NewLine + "- " + reading.Text
             + (sourceContext.Length > 0 ? Environment.NewLine + sourceContext : "");
     }
@@ -1105,8 +1157,7 @@ internal static class ContextBuilder
                 && inputs.RelationshipReading is { } selfReading && selfReading.EventId == reading.EventId
                 && selfReading.Text == reading.Text)
                 view = view with { Fields = view.Fields.Select(field => field.Name == "shared_authorship"
-                    ? field with { Text = "共同经历以本轮实际供给为限；关系理解正文见[她最近对这段关系的理解]；来源=reading:"
-                        + reading.EventId + ";sha256=" + RequestSourceBody.Hash(reading.Text) }
+                    ? field with { Text = "共同经历以本轮实际供给为限；关系理解正文见[你最近对这段关系的理解]" }
                     : field).ToArray() };
             string block = SelfPositionViewFormatter.Render(view).TrimEnd();
             if (block.Length == 0)
