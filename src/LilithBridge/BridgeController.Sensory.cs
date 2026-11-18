@@ -14,8 +14,21 @@ internal sealed partial class BridgeController
     private IntPtr _cachedMainHwnd;
     private long _lastHwndLookupTicks;
     private long _lastSensoryActionTicks;
+    private long _lastSensoryBeatTicks;
+    private int _sensoryBeatStep;
+    private IntPtr _activeBeatTrackPtr;
     private string _pendingSilentNoticeAction = "";
     private string _pendingSilentNoticeReason = "";
+
+    internal bool HasRecentSensoryAction(double seconds)
+    {
+        long nowTicks = Stopwatch.GetTimestamp();
+        if (_lastSensoryActionTicks > 0 && (double)(nowTicks - _lastSensoryActionTicks) / Stopwatch.Frequency < seconds)
+            return true;
+        if (_lastSensoryBeatTicks > 0 && (double)(nowTicks - _lastSensoryBeatTicks) / Stopwatch.Frequency < seconds)
+            return true;
+        return false;
+    }
 
     private void TickSensoryRuntime()
     {
@@ -63,8 +76,9 @@ internal sealed partial class BridgeController
         _sensoryClient.Tick(_config, report);
 
         SensorySnapshot snap = _sensoryClient.Latest;
+        SyncBeatTimeScale(snap);
         if (snap.Available && snap.PendingAction is { } pendingAction)
-            TryExecuteSensorySilentAction(pendingAction);
+            TryExecuteSensorySilentAction(pendingAction, snap);
         if (snap.Available && snap.PendingFocusNote is { } focusNote)
             TryHandleSensoryFocusNote(focusNote);
     }
@@ -80,17 +94,56 @@ internal sealed partial class BridgeController
         }
     }
 
-    private void TryExecuteSensorySilentAction(SensoryPendingAction pending)
+    private void SyncBeatTimeScale(SensorySnapshot snap)
+    {
+        if (_activeBeatTrackPtr == IntPtr.Zero)
+            return;
+        try
+        {
+            LilithStateManager? state = UnityEngine.Object.FindObjectOfType<LilithStateManager>(true);
+            Spine.TrackEntry? current = state?.SkeletonAnimation?.AnimationState?.GetCurrent(0);
+            if (current == null || current.Pointer != _activeBeatTrackPtr)
+            {
+                _activeBeatTrackPtr = IntPtr.Zero;
+                return;
+            }
+            bool keepScaled = snap.Available
+                && snap.BeatSyncEnabled
+                && _config.SensoryBeatGrooveEnabled
+                && snap.BeatBpm >= 60.0
+                && !NativeStateInspector.IsSleeping
+                && !IsNativeBusyForActions();
+            if (!keepScaled)
+            {
+                current.TimeScale = 1f;
+                _activeBeatTrackPtr = IntPtr.Zero;
+                return;
+            }
+            current.TimeScale = SensoryActionPacing.ComputeBeatTimeScale(snap.BeatBpm);
+        }
+        catch
+        {
+            _activeBeatTrackPtr = IntPtr.Zero;
+        }
+    }
+
+    private void TryExecuteSensorySilentAction(SensoryPendingAction pending, SensorySnapshot snap)
     {
         if (!_config.SensorySilentActingEnabled) return;
         if (_requestPending || _aiSpeechActive || NativeBubblePresenter.HasPendingReply) return;
         if (IsNativeBusyForActions() || NativePoseGate.IsPoseBlocked) return;
         if (NativeWindowPeekDirector.IsActive) return;
 
-        if (!ActionCatalog.TryParseAllowedAction(pending.Action, out LilithActionType action))
+        if (!ActionCatalog.TryParseAllowedAction(pending.Action, out LilithActionType requested))
             return;
-        bool sleepWake = action is LilithActionType.HalfAwake or LilithActionType.SmallYawn;
-        if (sleepWake && NativeStateInspector.IsSleeping)
+
+        bool isBeatCue = string.Equals(pending.Reason, "music_beat_pulse", StringComparison.OrdinalIgnoreCase);
+        if (isBeatCue && (!snap.BeatSyncEnabled || !_config.SensoryBeatGrooveEnabled))
+            return;
+
+        bool isSleeping = NativeStateInspector.IsSleeping;
+        bool sleepWake = isSleeping || requested is LilithActionType.HalfAwake or LilithActionType.SmallYawn;
+        if (sleepWake && isSleeping)
         {
             if (NativeStateInspector.IsGamingHidden || NativeStateInspector.IsDisappearPending
                 || NativeStateInspector.IsDissipatePending || NativeStateInspector.IsNeglectHidden
@@ -103,12 +156,35 @@ internal sealed partial class BridgeController
         }
 
         long nowTicks = Stopwatch.GetTimestamp();
-        if (_lastSensoryActionTicks > 0 && (double)(nowTicks - _lastSensoryActionTicks) / Stopwatch.Frequency < 10.0)
+        if (isBeatCue)
+        {
+            if (_lastSensoryBeatTicks > 0 && (double)(nowTicks - _lastSensoryBeatTicks) / Stopwatch.Frequency < 7.0)
+                return;
+            if (_lastSensoryActionTicks > 0 && (double)(nowTicks - _lastSensoryActionTicks) / Stopwatch.Frequency < 4.5)
+                return;
+        }
+        else if (_lastSensoryActionTicks > 0 && (double)(nowTicks - _lastSensoryActionTicks) / Stopwatch.Frequency < 4.5)
+        {
             return;
+        }
 
-        if (!ActionCapability.IsPoseSafe(action, _sessionState))
+        bool beatAccent = isBeatCue && ((_sensoryBeatStep % 4) == 3);
+        LilithActionType? resolved = SensoryActionPacing.ResolveAction(
+            requested,
+            pending.Reason,
+            isSleeping,
+            beatAccent,
+            a => ActionCapability.IsPoseSafe(a, _sessionState),
+            ActionExecutor.HasNativeAnimation,
+            !NativeWindowPeekDirector.IsSuppressed);
+
+        if (!resolved.HasValue)
+        {
+            _sensoryClient.AcknowledgeConsumed(_config, 0, consumedAction: pending.Action);
             return;
+        }
 
+        LilithActionType action = resolved.Value;
         CharacterController? controller = UnityEngine.Object.FindObjectOfType<CharacterController>(true);
         if (controller == null)
             return;
@@ -127,12 +203,36 @@ internal sealed partial class BridgeController
                 ActionExecutor.RecordNativeAction(action);
             }
 
-            _lastSensoryActionTicks = nowTicks;
-            _pendingSilentNoticeAction = pending.Action;
-            _pendingSilentNoticeReason = pending.Reason;
+            if (isBeatCue)
+            {
+                _lastSensoryBeatTicks = nowTicks;
+                _sensoryBeatStep++;
+                try
+                {
+                    Spine.TrackEntry? entry = UnityEngine.Object.FindObjectOfType<LilithStateManager>(true)
+                        ?.SkeletonAnimation?.AnimationState?.GetCurrent(0);
+                    if (entry != null && snap.BeatBpm >= 60.0)
+                    {
+                        _activeBeatTrackPtr = entry.Pointer;
+                        entry.TimeScale = SensoryActionPacing.ComputeBeatTimeScale(snap.BeatBpm);
+                    }
+                }
+                catch
+                {
+                    _activeBeatTrackPtr = IntPtr.Zero;
+                }
+            }
+            else
+            {
+                _lastSensoryActionTicks = nowTicks;
+                _pendingSilentNoticeAction = pending.Action;
+                _pendingSilentNoticeReason = pending.Reason;
+            }
+
+            // Always acknowledge with the exact original sidecar string so PendingAction clears cleanly.
             _sensoryClient.AcknowledgeConsumed(_config, 0, consumedAction: pending.Action);
             NativeEventLog.Trace("sensory.silent_action", "mod", "lilith",
-                action.ToString(), "reason=" + pending.Reason);
+                action.ToString(), "requested=" + requested + ";reason=" + pending.Reason);
         }
         catch (Exception error)
         {
@@ -218,5 +318,91 @@ internal sealed partial class BridgeController
         {
             return default;
         }
+    }
+}
+
+internal static class SensoryActionPacing
+{
+    public static float ComputeBeatTimeScale(double beatBpm)
+    {
+        if (beatBpm < 60.0 || double.IsNaN(beatBpm) || double.IsInfinity(beatBpm))
+            return 1.0f;
+        return (float)Math.Clamp(beatBpm / 108.0, 0.80, 1.40);
+    }
+
+    public static LilithActionType? ResolveAction(
+        LilithActionType requested,
+        string? reason,
+        bool isSleeping,
+        bool beatAccentStep,
+        Func<LilithActionType, bool> isPoseSafe,
+        Func<LilithActionType, bool> hasNativeAnimation,
+        bool allowWindowPeek)
+    {
+        if (requested == LilithActionType.ScreenPeek)
+        {
+            if (allowWindowPeek && isPoseSafe(LilithActionType.ScreenPeek))
+                return LilithActionType.ScreenPeek;
+            return PickFirstSafe(
+                new[] { LilithActionType.RubHead, LilithActionType.Tsundere, LilithActionType.Snap, LilithActionType.Blink },
+                isPoseSafe,
+                hasNativeAnimation);
+        }
+
+        if (isSleeping)
+        {
+            return PickFirstSafe(
+                new[] { requested, LilithActionType.Mumble, LilithActionType.RubEyes, LilithActionType.TwitchBare, LilithActionType.Blink },
+                isPoseSafe,
+                hasNativeAnimation);
+        }
+
+        bool isBeatCue = string.Equals(reason, "music_beat_pulse", StringComparison.OrdinalIgnoreCase)
+            || requested is LilithActionType.Music or LilithActionType.ShakeLeg;
+        if (isBeatCue)
+        {
+            LilithActionType[] beatPool = beatAccentStep
+                ? new[] { LilithActionType.Snap, LilithActionType.Music, LilithActionType.ShakeLeg, LilithActionType.RubHead }
+                : new[] { LilithActionType.Music, LilithActionType.ShakeLeg, LilithActionType.Snap, LilithActionType.RubHead };
+            return PickFirstSafe(beatPool, isPoseSafe, hasNativeAnimation);
+        }
+
+        LilithActionType[] pool = requested switch
+        {
+            LilithActionType.Hide or LilithActionType.TwitchBare => new[]
+            {
+                requested, LilithActionType.TwitchBare, LilithActionType.DrowsySlump, LilithActionType.Tsundere, LilithActionType.RubHead
+            },
+            LilithActionType.Squint => new[]
+            {
+                LilithActionType.Squint, LilithActionType.DrowsySlump, LilithActionType.Tsundere, LilithActionType.Blink
+            },
+            LilithActionType.Turnhead or LilithActionType.TiltHead => new[]
+            {
+                requested, LilithActionType.RubHead, LilithActionType.MagicCast, LilithActionType.Tsundere, LilithActionType.Snap
+            },
+            LilithActionType.Yawn => new[]
+            {
+                LilithActionType.Yawn, LilithActionType.DrowsySlump, LilithActionType.Stretch, LilithActionType.RubHead
+            },
+            _ => new[]
+            {
+                requested, LilithActionType.Snap, LilithActionType.RubHead, LilithActionType.Tsundere, LilithActionType.Blink
+            }
+        };
+        return PickFirstSafe(pool, isPoseSafe, hasNativeAnimation);
+    }
+
+    private static LilithActionType? PickFirstSafe(
+        LilithActionType[] candidates,
+        Func<LilithActionType, bool> isPoseSafe,
+        Func<LilithActionType, bool> hasNativeAnimation)
+    {
+        foreach (LilithActionType candidate in candidates)
+        {
+            if (isPoseSafe(candidate) && hasNativeAnimation(candidate))
+                return candidate;
+        }
+        return null;
     }
 }

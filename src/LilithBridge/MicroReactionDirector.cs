@@ -20,7 +20,8 @@ internal static class MicroReactionDirector
             }
             if (!config.MicroGesturesEnabled)
                 return;
-            if (BridgeController.Instance?.IsNativeBusyForActions() == true)
+            if (BridgeController.Instance?.IsNativeBusyForActions() == true
+                || BridgeController.Instance?.HasRecentSensoryAction(6.0) == true)
                 return;
             if (state.MomentListening
                 || state.MomentAboutToSpeak

@@ -32,10 +32,13 @@ internal sealed record SensorySnapshot(
     int MaxBufferSeq,
     SensoryPendingAction? PendingAction,
     SensoryPendingProactive? PendingProactive,
-    SensoryPendingFocusNote? PendingFocusNote = null)
+    SensoryPendingFocusNote? PendingFocusNote = null,
+    double BeatBpm = 0.0,
+    double BeatConfidence = 0.0,
+    bool BeatSyncEnabled = true)
 {
     internal static readonly SensorySnapshot Empty = new(
-        0, false, false, "relaxed", "offline", "off", "offline", false, "", 0, null, null, null);
+        0, false, false, "relaxed", "offline", "off", "offline", false, "", 0, null, null, null, 0.0, 0.0, true);
 }
 
 internal sealed record SensoryHostReport(
@@ -278,9 +281,22 @@ internal sealed class SensorySidecarClient : IDisposable
                 pendingFocusNote = new SensoryPendingFocusNote(fnKind, mins, fSeq);
         }
 
+        double beatBpm = 0.0;
+        double beatConf = 0.0;
+        bool beatEnabled = true;
+        if (arb.TryGetProperty("beat", out var beatEl) && beatEl.ValueKind == JsonValueKind.Object)
+        {
+            if (beatEl.TryGetProperty("bpm", out var bpmEl) && bpmEl.TryGetDouble(out double bv))
+                beatBpm = bv;
+            if (beatEl.TryGetProperty("confidence", out var bcEl) && bcEl.TryGetDouble(out double cv))
+                beatConf = cv;
+            if (beatEl.TryGetProperty("enabled", out var beEl) && beEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                beatEnabled = beEl.GetBoolean();
+        }
+
         return new SensorySnapshot(
             seq, true, hostConnected, icost, ireason, eff, effReason, fishing, tailText,
-            maxBufSeq, pendingAction, pendingProactive, pendingFocusNote);
+            maxBufSeq, pendingAction, pendingProactive, pendingFocusNote, beatBpm, beatConf, beatEnabled);
     }
 
     private async Task PostJsonAsync(string url, object body, int timeoutMs)

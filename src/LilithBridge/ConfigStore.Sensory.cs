@@ -14,6 +14,7 @@ internal sealed partial class BridgeConfig
     public string SensoryScriptPath { get; set; } = "";
     public int SensoryTimeoutMs { get; set; } = 25;
     public bool SensorySilentActingEnabled { get; set; } = true;
+    public bool SensoryBeatGrooveEnabled { get; set; } = true;
     public bool SensoryProactiveGateEnabled { get; set; } = true;
     public bool SensoryProactiveReleaseEnabled { get; set; } = true;
     public bool SensoryAutoThinkingNudgeEnabled { get; set; } = true;
@@ -66,6 +67,7 @@ internal static partial class ConfigStore
             if (sensory.TryGetProperty("timeout_ms", out JsonElement timeoutEl) && timeoutEl.TryGetInt32(out int ms))
                 config.SensoryTimeoutMs = Math.Clamp(ms, 5, 250);
             config.SensorySilentActingEnabled = ReadBoolean(sensory, "silent_acting_first", config.SensorySilentActingEnabled);
+            config.SensoryBeatGrooveEnabled = ReadBoolean(sensory, "beat_groove_enabled", config.SensoryBeatGrooveEnabled);
             config.SensoryProactiveGateEnabled = ReadBoolean(sensory, "proactive_interruption_gate", config.SensoryProactiveGateEnabled);
             config.SensoryProactiveReleaseEnabled = ReadBoolean(sensory, "proactive_release_trigger", config.SensoryProactiveReleaseEnabled);
             config.SensoryAutoThinkingNudgeEnabled = ReadBoolean(sensory, "auto_v2_nudge", config.SensoryAutoThinkingNudgeEnabled);
