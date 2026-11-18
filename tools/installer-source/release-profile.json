@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "assembly_version": "0.1.4.21",
-  "build": "0.1.4.21-posture-reflection-cache.release.1",
-  "caption": "LilithBridge · 产品 .105/4de072f7 · 安装器 .21",
-  "launcher_caption": "LilithBridge 安装 · .105 / 4de072f7",
-  "manifest_id": "lilithbridge-105-4de072f7",
-  "installer_schema": 15,
+  "assembly_version": "0.1.4.22",
+  "build": "0.1.4.22-hybrid-live-tail.release.1",
+  "caption": "LilithBridge · 产品 .106/2576304b · 安装器 .22",
+  "launcher_caption": "LilithBridge 安装 · .106 / 2576304b",
+  "manifest_id": "lilithbridge-106-2576304b",
+  "installer_schema": 16,
   "config_schema": 1,
   "handoff_protocol": 1,
-  "product_sha256": "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492",
+  "product_sha256": "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3",
   "model_revision": "7999e1d3359715c523056ef9478215996d62a620",
   "model_manifest_sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17",
   "wheel_manifest_sha256": "17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891",
@@ -57,7 +57,7 @@
       "us.aws.cdn.hf.co"
     ]
   },
-  "product_version": "0.3.150.105-posture-reflection-cache.1",
-  "min_installer_schema": 15,
-  "artifact_suffix": "cn21-4de072f7"
+  "product_version": "0.3.150.106-hybrid-live-tail.1",
+  "min_installer_schema": 16,
+  "artifact_suffix": "cn22-2576304b"
 }
