@@ -143,6 +143,21 @@ internal sealed partial class BridgeController
             TryGenerateNoteSupplement(false);
     }
 
+    internal bool TryTriggerSensoryFocusNote()
+    {
+        if (!_config.NoteSupplementEnabled || _noteSupplementInProgress
+            || !_systemReady || SharedActivityRunning || SharedActivityUiBusy
+            || NativeStateInspector.IsNativeQuietForMod()
+            || ActionDirector.NativeBusy(_sessionState)
+            || Time.unscaledTime < _nextNoteSupplementAt
+            || _listening || _requestPending || _queuedReply != null)
+        {
+            return false;
+        }
+        TryGenerateNoteSupplement(false);
+        return _noteSupplementInProgress;
+    }
+
     private void TryGenerateNoteSupplement(bool manual)
     {
         if (!_config.NoteSupplementEnabled || _noteSupplementInProgress

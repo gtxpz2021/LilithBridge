@@ -65,6 +65,19 @@ internal sealed partial class BridgeController
         SensorySnapshot snap = _sensoryClient.Latest;
         if (snap.Available && snap.PendingAction is { } pendingAction)
             TryExecuteSensorySilentAction(pendingAction);
+        if (snap.Available && snap.PendingFocusNote is { } focusNote)
+            TryHandleSensoryFocusNote(focusNote);
+    }
+
+    private void TryHandleSensoryFocusNote(SensoryPendingFocusNote focusNote)
+    {
+        if (TryTriggerSensoryFocusNote())
+        {
+            _sensoryClient.AcknowledgeConsumed(_config, 0, null, false, true);
+            NativeEventLog.Trace("sensory.focus_note", "mod", "system",
+                "quiet focus marathon note scheduled",
+                $"kind={focusNote.Kind};mins={focusNote.FocusMinutes:F1}");
+        }
     }
 
     private void TryExecuteSensorySilentAction(SensoryPendingAction pending)
@@ -72,14 +85,27 @@ internal sealed partial class BridgeController
         if (!_config.SensorySilentActingEnabled) return;
         if (_requestPending || _aiSpeechActive || NativeBubblePresenter.HasPendingReply) return;
         if (IsNativeBusyForActions() || NativePoseGate.IsPoseBlocked) return;
-        if (NativeStateInspector.IsNativeQuietForMod() || NativeWindowPeekDirector.IsActive) return;
+        if (NativeWindowPeekDirector.IsActive) return;
+
+        if (!ActionCatalog.TryParseAllowedAction(pending.Action, out LilithActionType action))
+            return;
+        bool sleepWake = action is LilithActionType.HalfAwake or LilithActionType.SmallYawn;
+        if (sleepWake && NativeStateInspector.IsSleeping)
+        {
+            if (NativeStateInspector.IsGamingHidden || NativeStateInspector.IsDisappearPending
+                || NativeStateInspector.IsDissipatePending || NativeStateInspector.IsNeglectHidden
+                || NativeStateInspector.IsForegroundFullscreen || NativeStateInspector.IsPoseBlocked)
+                return;
+        }
+        else if (NativeStateInspector.IsNativeQuietForMod())
+        {
+            return;
+        }
 
         long nowTicks = Stopwatch.GetTimestamp();
         if (_lastSensoryActionTicks > 0 && (double)(nowTicks - _lastSensoryActionTicks) / Stopwatch.Frequency < 10.0)
             return;
 
-        if (!ActionCatalog.TryParseAllowedAction(pending.Action, out LilithActionType action))
-            return;
         if (!ActionCapability.IsPoseSafe(action, _sessionState))
             return;
 

@@ -17,6 +17,8 @@ internal sealed record SensoryPendingAction(string Action, string Reason);
 
 internal sealed record SensoryPendingProactive(string Kind, string Reason, int Seq);
 
+internal sealed record SensoryPendingFocusNote(string Kind, double FocusMinutes, int Seq);
+
 internal sealed record SensorySnapshot(
     int Seq,
     bool Available,
@@ -29,10 +31,11 @@ internal sealed record SensorySnapshot(
     string TailText,
     int MaxBufferSeq,
     SensoryPendingAction? PendingAction,
-    SensoryPendingProactive? PendingProactive)
+    SensoryPendingProactive? PendingProactive,
+    SensoryPendingFocusNote? PendingFocusNote = null)
 {
     internal static readonly SensorySnapshot Empty = new(
-        0, false, false, "relaxed", "offline", "off", "offline", false, "", 0, null, null);
+        0, false, false, "relaxed", "offline", "off", "offline", false, "", 0, null, null, null);
 }
 
 internal sealed record SensoryHostReport(
@@ -178,15 +181,19 @@ internal sealed class SensorySidecarClient : IDisposable
     }
 
     internal void AcknowledgeConsumed(BridgeConfig config, int consumedSeq, string? consumedAction = null, bool consumedProactive = false)
+        => AcknowledgeConsumed(config, consumedSeq, consumedAction, consumedProactive, false);
+
+    internal void AcknowledgeConsumed(BridgeConfig config, int consumedSeq, string? consumedAction, bool consumedProactive, bool consumedFocusNote)
     {
         if (_disposed || !config.SensoryEnabled) return;
-        if (consumedSeq <= 0 && string.IsNullOrEmpty(consumedAction) && !consumedProactive) return;
+        if (consumedSeq <= 0 && string.IsNullOrEmpty(consumedAction) && !consumedProactive && !consumedFocusNote) return;
         string url = NormalizeLoopbackEndpoint(config.SensoryEndpoint) + "/api/snapshot/ack";
         _ = Task.Run(() => PostJsonAsync(url, new
         {
             consumed_seq = consumedSeq,
             consumed_action = consumedAction ?? "",
-            consumed_proactive = consumedProactive
+            consumed_proactive = consumedProactive,
+            consumed_focus_note = consumedFocusNote
         }, 250));
     }
 
@@ -261,9 +268,19 @@ internal sealed class SensorySidecarClient : IDisposable
                 pendingProactive = new SensoryPendingProactive(kind, reason, pSeq);
         }
 
+        SensoryPendingFocusNote? pendingFocusNote = null;
+        if (arb.TryGetProperty("pending_focus_note", out var fnEl) && fnEl.ValueKind == JsonValueKind.Object)
+        {
+            string fnKind = ReadStr(fnEl, "kind", "");
+            double mins = fnEl.TryGetProperty("focus_minutes", out var mEl) && mEl.TryGetDouble(out double mv) ? mv : 0.0;
+            int fSeq = fnEl.TryGetProperty("seq", out var fSeqEl) && fSeqEl.TryGetInt32(out int fv) ? fv : 0;
+            if (fnKind.Length > 0)
+                pendingFocusNote = new SensoryPendingFocusNote(fnKind, mins, fSeq);
+        }
+
         return new SensorySnapshot(
             seq, true, hostConnected, icost, ireason, eff, effReason, fishing, tailText,
-            maxBufSeq, pendingAction, pendingProactive);
+            maxBufSeq, pendingAction, pendingProactive, pendingFocusNote);
     }
 
     private async Task PostJsonAsync(string url, object body, int timeoutMs)
