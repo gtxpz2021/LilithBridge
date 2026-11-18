@@ -224,7 +224,7 @@ internal sealed partial class NativeOpenAISettings
         _model.text=(config.IsOpenAI?ModelLabel(config.OpenAIModel):DeepSeekModels.Label(config.Model))+"  ▾";
         _effort.text=DialogueProviderOptions.Label(DialogueProviderOptions.Effort(config))+" · "+DialogueProviderOptions.Effort(config)+"  ▾";
         _budgetCaption.text=config.IsOpenAI?"输出预算":DialogueGeneration.Normalize(config.DialogueThinkingMode)=="off"?"回复上限":"思考输出上限";
-        _budget.text=!config.IsOpenAI&&config.DialogueAutoThinkingEnabled?"自动模式 · 沿用原回复 / 思考预算":DialogueProviderOptions.Budget(config)+" token  ▾";
+        _budget.text=!config.IsOpenAI&&config.DialogueAutoThinkingEnabled?"自动模式 · 按每句自动切换（无/低/高）":DialogueProviderOptions.Budget(config)+" token  ▾";
         _budget.transform.parent.GetComponent<Button>().interactable=config.IsOpenAI||!config.DialogueAutoThinkingEnabled;
         if(config.UsesChatGPT){_budgetCaption.text="输出上限";_budget.text="由 ChatGPT 计划决定";_budget.transform.parent.GetComponent<Button>().interactable=false;}
         _timeout.text=DialogueProviderOptions.Timeout(config)+" 秒  ▾";

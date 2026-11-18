@@ -92,7 +92,12 @@ internal sealed class B1ReadableView
             string role = prefix.Success ? prefix.Groups[2].Value : "";
             return m.Ref.Kind == "b1" ? "过往保留想法" : m.Ref.Kind == "record" ? "长期记录" : m.Origin switch {
                 "user" when role == "user" => "玩家", "model" when role == "assistant" => "莉莉丝",
-                "game" => "原生记录", "local_fallback" => "本地回退",
+                "game" => role switch {
+                    "user" => "玩家（原生选项）",
+                    "assistant" => "莉莉丝（原生台词）",
+                    _ => "原生记录"
+                },
+                "local_fallback" => "本地回退",
                 _ => m.Origin };
         }
         string TimeOf(B1Material m) => m.At == default ? "" : m.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
@@ -254,8 +259,10 @@ internal sealed class B1ReadableView
                 }
                 else if(host.HistoryIndex<0)
                 {
-                    if(messages.Where(m=>m.GetProperty("role").GetString()=="user")
-                        .SelectMany(m=>ContentTexts(m.GetProperty("content"))).Count(t=>t==host.Material.Text)!=1)return false;
+                    var userMsgs=messages.Where(m=>m.GetProperty("role").GetString()=="user").ToArray();
+                    if(userMsgs.Length==0||!ContentTexts(userMsgs[^1].GetProperty("content")).Any(t=>t==host.Material.Text))return false;
+                    // Reject if any non-tail material carrier repeats the current input text verbatim as an envelope part.
+                    if(userMsgs.Take(userMsgs.Length-1).Any(m=>{var parts=ContentTexts(m.GetProperty("content"));return parts.Any(t=>t.StartsWith("[程序提供的近期对话与背景",StringComparison.Ordinal)||t.Contains("\"lilith_program_material\"",StringComparison.Ordinal))&&parts.Any(t=>t==host.Material.Text);}))return false;
                 }
                 else if (cleanEnvelope != null)
                 {

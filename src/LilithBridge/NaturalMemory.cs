@@ -31,7 +31,7 @@ internal static class NaturalMemory
     internal static string InputJson(NaturalMemoryRequest request) => JsonSerializer.Serialize(new
     {
         current_player_utterance = request.Input.Text,
-        recent_actual_dialogue = request.Recent.Select(t => new { role = t.Role, text = t.Text, at = t.Timestamp }),
+        recent_actual_dialogue = request.Recent.Select(t => new { role = t.Role, origin = t.Origin, kind = t.Kind, text = t.Text, at = t.Timestamp }),
         candidate_pool_complete = request.Targets.Count == request.EligibleTargetCount,
         eligible_target_count = request.EligibleTargetCount,
         targets = request.Targets.Select(t => new { target_id = t.RecallId, expected_revision = t.Revision,

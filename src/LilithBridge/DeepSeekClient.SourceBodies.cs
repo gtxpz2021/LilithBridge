@@ -4,8 +4,126 @@ using System.Linq;
 
 namespace LilithBridge;
 
+internal sealed record LiveTailMessage(string Role, string Content);
+
+internal sealed record HybridTailSplit(
+    IReadOnlyList<ProjectedHistoryTurn> EnvelopeHistory,
+    IReadOnlyList<LiveTailMessage> LiveTailMessages);
+
 internal sealed partial class DeepSeekClient
 {
+    private readonly object _liveTailAnchorLock = new();
+    private string _unboundTailAnchor = "";
+
+    private HybridTailSplit SplitHybridTail(
+        IReadOnlyList<ProjectedHistoryTurn> turns,
+        BridgeConfig config,
+        MemoryStore? historyOwner,
+        bool eligibleContext)
+    {
+        if (!eligibleContext || turns.Count < 2)
+            return new(turns, Array.Empty<LiveTailMessage>());
+
+        int eligibleStart = turns.Count;
+        while (eligibleStart > 0 && IsLiveTailEligibleTurn(turns[eligibleStart - 1]))
+            eligibleStart--;
+
+        if (turns.Count - eligibleStart < 2)
+            return new(turns, Array.Empty<LiveTailMessage>());
+
+        bool IsValidSplit(int idx)
+        {
+            if (idx < eligibleStart || idx >= turns.Count) return false;
+            if (turns[idx].Role != "user") return false;
+            for (int j = idx + 1; j < turns.Count; j++)
+                if (turns[j].Role == "assistant") return true;
+            return false;
+        }
+
+        const int targetTail = 6;
+        const int minTail = 4;
+        int stride = Math.Max(0, config.PromptCacheHistoryStride);
+        int maxTail = stride > 1 ? targetTail + Math.Clamp(stride, 2, 8) : targetTail;
+
+        int PickDefaultSplit()
+        {
+            int eligibleCount = turns.Count - eligibleStart;
+            int best = -1;
+            int bestScore = int.MaxValue;
+            for (int i = eligibleStart; i < turns.Count; i++)
+            {
+                if (!IsValidSplit(i)) continue;
+                int len = turns.Count - i;
+                if (len > maxTail) continue;
+                bool meetsMin = len >= minTail || eligibleCount < minTail;
+                int score = (meetsMin ? 0 : 1000) + Math.Abs(len - targetTail);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = i;
+                }
+            }
+            return best;
+        }
+
+        static string FirstEventId(ProjectedHistoryTurn entry) =>
+            entry.Records.Count > 0 ? entry.Records[0].EventId : entry.Record?.EventId ?? "";
+
+        int splitIdx = -1;
+        lock (_liveTailAnchorLock)
+        {
+            string anchorId = historyOwner != null
+                ? historyOwner.GetLiveTailAnchorEventId()
+                : _unboundTailAnchor;
+
+            if (stride > 1 && anchorId.Length > 0)
+            {
+                for (int i = eligibleStart; i < turns.Count; i++)
+                {
+                    if (FirstEventId(turns[i]) != anchorId) continue;
+                    int len = turns.Count - i;
+                    bool meetsMin = len >= minTail || turns.Count - eligibleStart < minTail;
+                    if (IsValidSplit(i) && len <= maxTail && meetsMin)
+                        splitIdx = i;
+                    break;
+                }
+            }
+
+            if (splitIdx < 0)
+            {
+                splitIdx = PickDefaultSplit();
+                if (splitIdx < 0) return new(turns, Array.Empty<LiveTailMessage>());
+                string nextAnchor = FirstEventId(turns[splitIdx]);
+                if (historyOwner != null)
+                    historyOwner.SetLiveTailAnchorEventId(nextAnchor);
+                else
+                    _unboundTailAnchor = nextAnchor;
+            }
+        }
+
+        var envelope = turns.Take(splitIdx).ToArray();
+        var coalesced = new List<LiveTailMessage>(turns.Count - splitIdx);
+        for (int i = splitIdx; i < turns.Count; i++)
+        {
+            var entry = turns[i];
+            string role = entry.Role == "assistant" ? "assistant" : "user";
+            if (coalesced.Count > 0 && coalesced[^1].Role == role)
+                coalesced[^1] = new(role, coalesced[^1].Content + "\n" + entry.Text);
+            else
+                coalesced.Add(new(role, entry.Text));
+        }
+        return new(envelope, coalesced);
+    }
+
+    private static bool IsLiveTailEligibleTurn(ProjectedHistoryTurn entry) =>
+        entry.Role is "user" or "assistant"
+        && !DialogueMaterialEnvelope.IsNativeTurnRecords(entry.Records)
+        && UtteranceAttribution.Reported(entry.Role, entry.Text) == null
+        && !(entry.Coverage != null && entry.Coverage.Contains("missing", StringComparison.Ordinal))
+        && !string.IsNullOrWhiteSpace(entry.Text)
+        && !entry.Text.StartsWith("[程序提供的近期对话与背景", StringComparison.Ordinal)
+        && !ContainsB1Context(entry.Text);
+
     private static void ValidateSceneBodyReferences(DialogueRequest? request, string context,
         IReadOnlyList<RequestSourceBody> actualBodies)
     {

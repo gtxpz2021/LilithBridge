@@ -159,7 +159,7 @@ internal static class ContextBuilder
                 recallSource,
                 retrievalQuery,
                 requestTime),
-                config, selection.WithoutMaterialSupply(), onMaterialSelection, memory, state, requestHistory);
+                config, selection.WithoutMaterialSupply(), onMaterialSelection, memory, state, requestHistory, sourceEnvelopeForRequest);
         }
 
         if (config.RuntimeContextCleanupEnabled)
@@ -181,7 +181,7 @@ internal static class ContextBuilder
                 requestHistory, includeVisionStatus, selection,
                 playerDirected ? semanticRecall : null, semanticTrace, playerDirected,
                 sourceEnvelopeForRequest, onSceneBodyReferences, onContextBodySources, onGeneratedReplyMaterial),
-                config, selection, onMaterialSelection, memory, state, requestHistory);
+                config, selection, onMaterialSelection, memory, state, requestHistory, sourceEnvelopeForRequest);
         }
 
         // The view belongs to whichever builder this request actually ships: the
@@ -443,7 +443,7 @@ internal static class ContextBuilder
 
         memory.AppendMentionBoundaryContext(builder);
         PublishSupplied(config, suppliedMemories, onRecall);
-        return FinishContext(builder.ToString(), config, selection, onMaterialSelection, memory, state, requestHistory);
+        return FinishContext(builder.ToString(), config, selection, onMaterialSelection, memory, state, requestHistory, sourceEnvelopeForRequest);
     }
 
     private static void AppendLastScene(StringBuilder builder, MemoryStore memory, SessionState state,
@@ -1229,9 +1229,11 @@ internal static class ContextBuilder
     /// </summary>
     private static string FinishContext(string context, BridgeConfig config,
         ContextMaterialSelection selection, Action<string>? onMaterialSelection,
-        MemoryStore memory, SessionState state, IReadOnlyList<MemoryTurn>? requestHistory)
+        MemoryStore memory, SessionState state, IReadOnlyList<MemoryTurn>? requestHistory,
+        bool sourceEnvelopeForRequest = false)
     {
-        context += memory.DescribeCurrentNativeSources(requestHistory ?? memory.GetRequestHistory(config));
+        context += memory.DescribeCurrentNativeSources(requestHistory ?? memory.GetRequestHistory(config),
+            omitDuplicateBodies: sourceEnvelopeForRequest);
         context += memory.DescribeCurrentNativeScenes(state.RecentEvents);
         string json = selection.ToJson();
         try

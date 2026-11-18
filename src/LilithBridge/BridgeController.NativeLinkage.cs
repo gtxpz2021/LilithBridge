@@ -88,15 +88,32 @@ internal sealed partial class MemoryStore
     internal void BeginCurrentNativeBlock() { lock (_experienceLock) { _currentNativeSources.Clear(); _currentNativeSceneOnlySources.Clear(); } }
     internal void RegisterCurrentNativeSource(string id, bool sceneOnly = false)
     { lock (_experienceLock) { _currentNativeSources.Add(id); if (sceneOnly) _currentNativeSceneOnlySources.Add(id); } }
-    internal string DescribeCurrentNativeSources(IReadOnlyList<MemoryTurn> history)
+    internal string DescribeCurrentNativeSources(IReadOnlyList<MemoryTurn> history, bool omitDuplicateBodies = false)
     {
         lock (_experienceLock)
         {
-            var supplied = history.Where(t => _currentNativeSources.Contains(t.EventId)
-                && IsNativeSupplyAllowed(t) && IsMentionAllowed(t) && !IsExperienceSuppressed(t.EventId)).ToList();
+            int lastNonNativeAssistantIndex = -1;
+            for (int i = history.Count - 1; i >= 0; i--)
+            {
+                MemoryTurn turn = history[i];
+                if (turn.Role == "assistant" && turn.Origin != "game" && turn.Kind != "native"
+                    && turn.DeliveryState == "delivered")
+                {
+                    lastNonNativeAssistantIndex = i;
+                    break;
+                }
+            }
+            var supplied = history
+                .Skip(lastNonNativeAssistantIndex + 1)
+                .Where(t => _currentNativeSources.Contains(t.EventId)
+                    && IsNativeSupplyAllowed(t) && IsMentionAllowed(t) && !IsExperienceSuppressed(t.EventId))
+                .ToList();
             if (supplied.Count == 0) return "";
+            if (omitDuplicateBodies)
+                return "\n[当场原生对话提示] 上方[近期对话]中标为“莉莉丝（原生台词）/玩家（原生选项）”的是游戏原版刚发生的最近对话；优先回应玩家当前的话，无需刻意顺着原生台词往下接。";
             return "\n[当场原生对话背景] 以下是游戏原版刚发生的最近对话，优先回应玩家当前的话，无需刻意顺着原生台词往下接。\n"
-                + string.Join("\n", supplied.Select(t => $"- [{t.Timestamp.ToLocalTime():HH:mm:ss} | {(t.Role == "user" ? "玩家" : "莉莉丝·原生")}] {t.Text}"));
+                + string.Join("\n", supplied.Select(t =>
+                    $"- [{t.Timestamp.ToLocalTime():HH:mm:ss} | {DialogueMaterialEnvelope.FormatSpeakerLabel(t.Role, isNative: true)}] {t.Text}"));
         }
     }
     internal bool IsCurrentNativeSceneSource(string id)

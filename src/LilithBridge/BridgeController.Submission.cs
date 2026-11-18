@@ -197,8 +197,12 @@ internal sealed partial class BridgeController
         SharedActivitySupply? sharedSupply = _proactiveRequest ? null
             : CaptureSharedActivitySupply(dialogueRequest?.Id ?? Guid.NewGuid().ToString("N"));
         NativeMemoTarget? memoTarget = memoCapture.Target;
-        // Release pure tokens before the sender captures any async context.
+        // Release request compose scopes before Task.Run captures ExecutionContext
+        // so the sender never carries this turn's read policies into carry-chain
+        // checks or background refreshes.
         experienceMatching.Dispose();
+        nativeDialogueScope.Dispose();
+        mentionScope.Dispose();
         Task.Run(async () =>
         {
             if (submissionGeneration != _conversationGeneration) return;

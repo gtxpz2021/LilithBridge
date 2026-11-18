@@ -117,8 +117,15 @@ internal static class DialogueMaterialEnvelope
         dynamicRest = rest;
     }
 
+    internal static bool IsNativeTurnRecords(IReadOnlyList<MemoryTurn> records) =>
+        records.Count > 0 && records.All(r => r.Origin == "game" || r.Kind == "native");
+
+    internal static string FormatSpeakerLabel(string role, bool isNative) => role == "user"
+        ? (isNative ? "玩家（原生选项）" : "玩家")
+        : (isNative ? "莉莉丝（原生台词）" : "莉莉丝");
+
     public static string Build(string context, IReadOnlyList<ProjectedHistoryTurn> history, string currentInput = "",
-        HistoryProjectionResult? projection = null, bool readableHistory = false)
+        HistoryProjectionResult? projection = null, bool readableHistory = false, bool hasLiveTail = false)
     {
         SplitStablePrefix(context, out string stablePrefix, out string dynamicRest);
         var sb = new System.Text.StringBuilder();
@@ -132,7 +139,7 @@ internal static class DialogueMaterialEnvelope
             for (int i = 0; i < history.Count; i++)
             {
                 var entry = history[i];
-                string who = entry.Role == "user" ? "玩家" : "莉莉丝";
+                string who = FormatSpeakerLabel(entry.Role, IsNativeTurnRecords(entry.Records));
                 DateTimeOffset at = entry.Records.Count > 0 ? entry.Records[^1].Timestamp : default;
                 string time = at == default ? "" : at.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
                 string label = readableHistory ? $"近期原话{i + 1} | " : "";
@@ -143,6 +150,14 @@ internal static class DialogueMaterialEnvelope
                     ? "（片段可能不完整）" : "";
                 sb.AppendLine($"- [{head}]{repNote}{partialNote} {entry.Text}");
             }
+            if (hasLiveTail)
+                sb.AppendLine("[近期对话续接] 更近的几轮真实对话按原本 user/assistant 消息紧跟在本条之后，末尾最后一条 user 消息才是玩家本轮原话。");
+        }
+        else if (hasLiveTail)
+        {
+            if (stablePrefix.Length > 0) sb.AppendLine();
+            sb.AppendLine("[近期对话]");
+            sb.AppendLine("[近期对话续接] 最近的几轮真实对话已按原本 user/assistant 消息紧跟在本条之后，末尾最后一条 user 消息才是玩家本轮原话。");
         }
         // Keep per-turn counters and current-input hints below the history list
         // so changes at the tail never invalidate the append-only conversation prefix.

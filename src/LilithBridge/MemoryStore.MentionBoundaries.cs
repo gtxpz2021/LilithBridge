@@ -14,7 +14,7 @@ internal sealed partial class MemoryStore
     // Nested model recall keeps the original player's authority, not its search words.
     private readonly AsyncLocal<MentionReadPolicy?> _mentionReadPolicy = new();
     private sealed record MentionRule(string Topic, HashSet<string> Sources, bool RecallAllowed);
-    private sealed record MentionReadPolicy(IReadOnlyList<MentionRule> Rules);
+    private sealed record MentionReadPolicy(IReadOnlyList<MentionRule> Rules, bool PlayerDirected = true, string Query = "");
 
     public IDisposable BeginMentionRequest(string? userText, bool playerDirected = true)
     {
@@ -28,7 +28,7 @@ internal sealed partial class MemoryStore
                 && IsActiveLifecycle(t) && t.MentionPolicy == "avoid_unsolicited").ToArray();
             if (boundaries.Length == 0)
             {
-                _mentionReadPolicy.Value = new(Array.Empty<MentionRule>());
+                _mentionReadPolicy.Value = new(Array.Empty<MentionRule>(), playerDirected, "");
                 return new MentionScope(() => _mentionReadPolicy.Value = previous);
             }
             var raw = GetExperienceValidationTurns();
@@ -50,7 +50,7 @@ internal sealed partial class MemoryStore
                 } while (changed);
                 rules.Add(new(boundary.Text, ids, playerDirected && ExplicitTopicQuestion(userText, boundary.Text)));
             }
-            _mentionReadPolicy.Value = new(rules);
+            _mentionReadPolicy.Value = new(rules, playerDirected, Clean(userText));
         }
         return new MentionScope(() => _mentionReadPolicy.Value = previous);
     }

@@ -82,6 +82,32 @@ internal sealed partial class MemoryStore
         return (history, currentSources, raw, native, artifacts, currentClosure);
     }
 
+    private IDisposable? IsolatePlayerDirectedReadPoliciesIfDifferentQuery(string? query, bool requireConfig = false)
+    {
+        NativeDialoguePolicy? priorNative = _nativeDialoguePolicy.Value;
+        MentionReadPolicy? priorMention = _mentionReadPolicy.Value;
+        if (priorNative is { PlayerDirected: false } || priorNative is { Authorization: not null })
+            return null;
+        if (priorMention is { PlayerDirected: false })
+            return null;
+        string cleanQuery = Clean(query);
+        bool nativeDiffers = priorNative != null
+            && (!string.Equals(priorNative.Query, cleanQuery, StringComparison.Ordinal)
+                || requireConfig && !priorNative.HasConfig);
+        bool mentionDiffers = priorMention != null
+            && priorMention.Rules.Count > 0
+            && !string.Equals(priorMention.Query, cleanQuery, StringComparison.Ordinal);
+        if (!nativeDiffers && !mentionDiffers)
+            return null;
+        _nativeDialoguePolicy.Value = null;
+        _mentionReadPolicy.Value = null;
+        return new MentionScope(() =>
+        {
+            _nativeDialoguePolicy.Value = priorNative;
+            _mentionReadPolicy.Value = priorMention;
+        });
+    }
+
     private IDisposable? TryBeginNativeDialogueUpperBound(BridgeConfig config, out Dictionary<string, B1Resolution>? sharedResolutionMemo)
     {
         sharedResolutionMemo = null;
@@ -274,6 +300,18 @@ internal sealed partial class MemoryStore
 
     private readonly object _historyAnchorLock = new();
     private string _historyAnchorEventId = "";
+    private readonly object _liveTailAnchorLock = new();
+    private string _liveTailAnchorEventId = "";
+
+    internal string GetLiveTailAnchorEventId()
+    {
+        lock (_liveTailAnchorLock) return _liveTailAnchorEventId;
+    }
+
+    internal void SetLiveTailAnchorEventId(string eventId)
+    {
+        lock (_liveTailAnchorLock) _liveTailAnchorEventId = eventId ?? "";
+    }
 
     private HistoryProjectionResult ProjectWithCacheAnchor(
         IReadOnlyList<MemoryTurn> records, int budget, BridgeConfig config)

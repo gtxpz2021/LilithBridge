@@ -124,6 +124,7 @@ internal sealed partial class MemoryStore
         lock (_experienceLock)
         lock (_generatedRepliesLock)
         {
+            using var isolated = IsolatePlayerDirectedReadPoliciesIfDifferentQuery(query);
             using var mention = BeginMentionRequest(query);
             using var validation = BeginSourceValidation();
             return sources.All(source => QualifyGeneratedReply(source).Permitted);

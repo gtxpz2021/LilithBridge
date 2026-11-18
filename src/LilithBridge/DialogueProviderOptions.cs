@@ -8,7 +8,7 @@ internal static class DialogueProviderOptions
     internal static string Effort(BridgeConfig c) => c.IsOpenAI ? c.OpenAIReasoningEffort
         : c.DialogueAutoThinkingEnabled ? "auto" : DialogueGeneration.Normalize(c.DialogueThinkingMode);
     internal static string[] Efforts(BridgeConfig c) => c.IsOpenAI ? OpenAIProtocol.Efforts(c.OpenAIModel)
-        : c.DialogueAutoThinkingEnabled ? new[] { "off", "low", "high", "auto" } : new[] { "off", "low", "high" };
+        : new[] { "off", "low", "high", "auto" };
     internal static string Label(string value) => value switch
     {
         "off" or "none" => "关闭", "low" => "低", "medium" => "中", "high" => "高",

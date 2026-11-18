@@ -180,7 +180,8 @@ internal sealed partial class MemoryStore
                         raw.Role, raw.Origin, raw.DeliveryState, span.OffsetInUnit, span.Chars);
                     if (body.Qualified) bodies.Add(body);
                 }
-            string who = unit.Role == "user" ? "玩家" : "莉莉丝";
+            string who = DialogueMaterialEnvelope.FormatSpeakerLabel(unit.Role,
+                DialogueMaterialEnvelope.IsNativeTurnRecords(unit.Members));
             string time = unit.Timestamp == default ? "" : unit.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             string head = time.Length > 0 ? time + " | " + who : who;
             bool isSpark = unit.Members.Any(m => sparkSet.Contains(m.EventId));

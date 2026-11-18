@@ -17,7 +17,7 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
     };
 
     public static DialogueGeneration Capture(BridgeConfig config, string? userText = null,
-        string? modeOverride = null, string purpose = "dialogue")
+        string? modeOverride = null, string purpose = "dialogue", bool hasImages = false)
     {
         if (config.IsOpenAI)
             return new(config.OpenAIReasoningEffort != "none", config.OpenAIReasoningEffort,
@@ -33,18 +33,65 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
         }
         else if (config.DialogueAutoThinkingEnabled && purpose == "dialogue" && !string.IsNullOrWhiteSpace(userText))
         {
-            // Current player text only. No historical material or paid classifier.
-            string compact = userText!.Trim().TrimEnd('。', '！', '!', '.', '～', '~', ' ', '\r', '\n');
-            if (compact is "晚安" or "再见" or "先这样" or "先到这里" or "今天就到这儿"
-                or "明天再聊" or "谢谢" or "好" or "好的" or "嗯")
-            { mode = "off"; selection = "auto_v1_explicit_close_or_ack"; }
-            else if (ExplicitDeepRequest(userText))
-            { mode = "high"; selection = "auto_v1_explicit_deep"; }
-            else
-            { mode = "low"; selection = "auto_v1_default_low"; }
+            (mode, selection) = RouteAutoDialogueThinking(userText!, hasImages);
         }
-        return new(mode != "off", mode,
-            mode == "off" ? config.MaxTokens : config.DialogueThinkingMaxTokens) { Selection = selection };
+
+        int maxTokens = mode switch
+        {
+            "off" => Math.Clamp(config.MaxTokens, 256, 1024),
+            "low" when selection.StartsWith("auto_", StringComparison.Ordinal) =>
+                Math.Clamp(Math.Min(config.DialogueThinkingMaxTokens, 3072), 1024, 3072),
+            _ => config.DialogueThinkingMaxTokens
+        };
+        return new(mode != "off", mode, maxTokens) { Selection = selection };
+    }
+
+    private static (string Mode, string Selection) RouteAutoDialogueThinking(string userText, bool hasImages)
+    {
+        string trimmed = userText.Trim();
+        string compact = trimmed.TrimEnd('。', '！', '!', '.', '～', '~', '？', '?', ' ', '\r', '\n');
+
+        if (compact is "晚安" or "再见" or "先这样" or "先到这里" or "今天就到这儿"
+            or "明天再聊" or "谢谢" or "好" or "好的" or "嗯")
+            return ("off", "auto_v2_close_or_ack");
+
+        if (ExplicitDeepRequest(trimmed))
+            return ("high", "auto_v2_explicit_deep");
+
+        if (hasImages || ContainsAny(trimmed,
+            "看看屏幕", "看下屏幕", "看看桌面", "看下桌面", "帮我看下", "帮我看看", "截屏", "截图"))
+            return ("high", "auto_v2_visual_or_screen");
+
+        if (ContainsAny(trimmed,
+            "什么是真实", "存在的意义", "存在意义", "你会离开吗", "真假", "自由意志", "主体性", "灵魂",
+            "上次我们", "以前说过", "还记得", "前作", "第一作", "原版台词", "反思", "架构", "代码", "报错", "bug",
+            "怎么回事", "为什么会这样", "怎么改", "崩了", "撑不住", "绝望", "自杀", "不想活", "帮我理一理"))
+            return ("high", "auto_v2_deep_topic");
+
+        int qMarks = trimmed.Count(c => c is '?' or '？');
+        if (compact.Length >= 55 || qMarks >= 2
+            || (compact.Length >= 28 && ContainsAny(trimmed, "为什么", "凭什么", "怎么看", "到底", "是不是")))
+            return ("high", "auto_v2_complex_query");
+
+        if (ContainsAny(trimmed,
+            "心情很差", "心情不好", "好难受", "很难受", "委屈", "难过", "焦虑", "失眠", "睡不着",
+            "迷茫", "失落", "压抑", "不想说话", "你是谁", "记忆", "笔记", "日记", "昨天", "前天", "上次", "以前", "那次"))
+            return ("low", "auto_v2_delicate_or_recall");
+
+        if (compact.Length <= 18)
+            return ("off", "auto_v2_casual_off");
+
+        return ("low", "auto_v2_moderate_low");
+    }
+
+    private static bool ContainsAny(string text, params string[] cues)
+    {
+        foreach (string cue in cues)
+        {
+            if (text.Contains(cue, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static bool ExplicitDeepRequest(string text)

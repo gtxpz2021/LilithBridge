@@ -11,6 +11,7 @@ internal sealed partial class MemoryStore
     {
         lock(_experienceLock)
         {
+            using var isolated=IsolatePlayerDirectedReadPoliciesIfDifferentQuery(query,requireConfig:true);
             using var mention=BeginMentionRequest(query);
             if(supplied.Materials.Count==0&&supplied.Footprint.Count==0)
                 return ReadB1Storage(initializeMissing:false)!=null;

@@ -295,6 +295,7 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock)
         {
+            using var isolated = query.Length > 0 ? IsolatePlayerDirectedReadPoliciesIfDifferentQuery(query) : null;
             using var mention = BeginMentionRequest(query);
             using var native = BeginNativeDialogueRequest(query, true);
             BeginB1Read();
@@ -402,6 +403,7 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock)
         {
+            using var isolated = IsolatePlayerDirectedReadPoliciesIfDifferentQuery(query);
             using var mention = BeginMentionRequest(query);
             BeginB1Read();
             var doc = LoadB1();
