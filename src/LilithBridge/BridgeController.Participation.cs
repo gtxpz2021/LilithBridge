@@ -25,9 +25,16 @@ internal sealed partial class BridgeController
         // session-local candidate only after a successful explicit decision.
         NativeEventLog.Trace("meta.vision.deferred", "mod", "system",
             "trial permits model-requested capture only in player dialogue");
+        string proactiveExtra = ParticipationPrompt.BuildContext(reason);
+        if (_config.SensoryEnabled && _sensoryClient.Latest is { Available: true } sensorySnap && sensorySnap.TailText.Length > 0)
+        {
+            proactiveExtra += System.Environment.NewLine + sensorySnap.TailText;
+            if (sensorySnap.MaxBufferSeq > 0)
+                _sensoryClient.AcknowledgeConsumed(_config, sensorySnap.MaxBufferSeq);
+        }
         SubmitRequest(
             _currentUserText,
-            extraContext: ParticipationPrompt.BuildContext(reason), userEventId: "");
+            extraContext: proactiveExtra, userEventId: "");
     }
 
     // Runs before the empty-result fallback and all action / note / memory effects.

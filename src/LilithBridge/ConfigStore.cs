@@ -1151,6 +1151,7 @@ internal static partial class ConfigStore
                         config.PersonaPrompt = custom;
                 }
             }
+            ReadSensoryConfig(config, root);
         }
         catch
         {

@@ -738,12 +738,16 @@ internal sealed partial class DeepSeekClient : IDisposable
                 }
                 if (sharedActivitySupply != null)
                     messages.Add(new { role = "user", content = sharedActivitySupply.Material });
+                if (!programParticipation && !string.IsNullOrWhiteSpace(dialogueRequest?.SensoryTailText))
+                    messages.Add(new { role = "system", content = dialogueRequest!.SensoryTailText });
                 // Keep the player's text byte-for-byte, separate from program data.
                 if (!programParticipation) messages.Add(new { role = "user", content = userText });
             }
             else if (!appendedCurrentUser)
             {
                 AppendRuntimeContextBefore();
+                if (!programParticipation && !string.IsNullOrWhiteSpace(dialogueRequest?.SensoryTailText))
+                    messages.Add(new { role = "system", content = dialogueRequest!.SensoryTailText });
                 messages.Add(new { role = "user", content = currentContent });
                 AppendRuntimeContextAfterPlayer();
             }

@@ -54,8 +54,19 @@ internal sealed partial class BridgeController
             _config.ProactiveWarmContinuationSeconds,
             NativeStateInspector.TimeSinceLastInteractionSeconds);
         BridgeConfig requestConfig = _config;
+        SensorySnapshot sensorySnapshot = !_proactiveRequest && requestConfig.SensoryEnabled
+            ? _sensoryClient.CaptureRequestSnapshot(requestConfig)
+            : SensorySnapshot.Empty;
+        SensoryRoutingHint? sensoryHint = sensorySnapshot.Available && sensorySnapshot.RecommendedEffort != "off"
+            ? new SensoryRoutingHint(sensorySnapshot.RecommendedEffort, sensorySnapshot.RecommendedEffortReason)
+            : null;
         DialogueRequest? dialogueRequest = !_proactiveRequest
-            ? BeginDialogueRequest(requestConfig, userEventId, text, reviewAuthorized: reviewAuthorized) : null;
+            ? BeginDialogueRequest(requestConfig, userEventId, text, reviewAuthorized: reviewAuthorized, sensoryHint: sensoryHint) : null;
+        if (dialogueRequest != null && sensorySnapshot.Available && sensorySnapshot.TailText.Length > 0)
+        {
+            dialogueRequest.SensoryTailText = sensorySnapshot.TailText;
+            dialogueRequest.SensoryConsumedSeq = sensorySnapshot.MaxBufferSeq;
+        }
         BindPreparationObservation(dialogueRequest);
         var temporaryCarry = CaptureTemporaryCarry(dialogueRequest);
         if (temporaryCarry.Context.Length > 0) extraContext += Environment.NewLine + temporaryCarry.Context;
@@ -227,6 +238,8 @@ internal sealed partial class BridgeController
             _mainThread.Enqueue(() =>
             {
                 if (!IsCurrentDialogue(dialogueRequest) || !NativeLinkageAllows(result)) return;
+                if(result.Error.Length==0 && dialogueRequest?.SensoryConsumedSeq > 0)
+                    _sensoryClient.AcknowledgeConsumed(requestConfig, dialogueRequest.SensoryConsumedSeq);
                 if(result.Error.Length==0&&dialogueRequest?.SemanticMaterial is { } materialState)
                 {
                     foreach(var sent in materialState.HttpAudit.Where(a=>a.Outcome.StartsWith("accepted",StringComparison.Ordinal)))

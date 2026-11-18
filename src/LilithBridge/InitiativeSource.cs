@@ -24,8 +24,24 @@ internal static class InitiativeSource
         bool returnEnabled = false,
         bool appChangeEnabled = false,
         bool appChangeAllowed = false)
+        => PickNext(state, lastScene, unfinishedTopicEnabled, afterIntimateEnabled, lateNightEnabled,
+            returnEnabled, appChangeEnabled, appChangeAllowed, null, null, null);
+
+    public static InitiativeCandidate? PickNext(
+        SessionState state,
+        LastSceneSummary? lastScene,
+        bool unfinishedTopicEnabled,
+        bool afterIntimateEnabled,
+        bool lateNightEnabled,
+        bool returnEnabled,
+        bool appChangeEnabled,
+        bool appChangeAllowed,
+        string? sensoryProactiveKind,
+        string? sensoryProactiveReason,
+        string? sensoryInterruptCost)
     {
         var candidates = new List<InitiativeCandidate>();
+        bool suppressAmbientByFocus = string.Equals(sensoryInterruptCost, "high_focus", StringComparison.Ordinal);
 
         // Historical material is a candidate, not evidence of unfinished work.
         if (unfinishedTopicEnabled
@@ -50,7 +66,7 @@ internal static class InitiativeSource
         }
 
         // A recent observable input event is a soft candidate, not a relationship fact.
-        if (afterIntimateEnabled && state.HasRecentTouch(TimeSpan.FromMinutes(4)))
+        if (afterIntimateEnabled && !suppressAmbientByFocus && state.HasRecentTouch(TimeSpan.FromMinutes(4)))
         {
             candidates.Add(new InitiativeCandidate(
                 "after_intimate",
@@ -62,8 +78,17 @@ internal static class InitiativeSource
                 0.60));
         }
 
+        if (!suppressAmbientByFocus && !string.IsNullOrWhiteSpace(sensoryProactiveReason))
+        {
+            candidates.Add(new InitiativeCandidate(
+                string.IsNullOrWhiteSpace(sensoryProactiveKind) ? "activity_settled" : sensoryProactiveKind!,
+                sensoryProactiveReason!,
+                0.55));
+        }
+
         if (appChangeEnabled
             && appChangeAllowed
+            && !suppressAmbientByFocus
             && state.HasRecentAppChange(TimeSpan.FromSeconds(90)))
         {
             string categoryName = AppCategoryName(state.ForegroundApp?.Category ?? "电脑");
@@ -77,7 +102,7 @@ internal static class InitiativeSource
                 0.50));
         }
 
-        if (lateNightEnabled && state.TimePhase == TimePhase.LateNight)
+        if (lateNightEnabled && !suppressAmbientByFocus && state.TimePhase == TimePhase.LateNight)
         {
             string lateReason = "当前时段为深夜（本轮时间 " + state.Now.ToString("O") + "）；这本身不证明玩家醒着或打算睡觉。";
             var utterance = state.RecentEvents.LastOrDefault(e => e.Kind == SceneEventKind.UserInput

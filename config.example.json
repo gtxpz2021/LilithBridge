@@ -17,5 +17,17 @@
   },
   "shared_activity": {
     "enabled": false
+  },
+  "sensory": {
+    "enabled": false,
+    "endpoint": "http://127.0.0.1:6188",
+    "auto_start": false,
+    "python_path": "sensory-sidecar/.venv/Scripts/python.exe",
+    "script_path": "sensory-sidecar/sensory_sidecar.py",
+    "timeout_ms": 25,
+    "silent_acting_first": true,
+    "proactive_interruption_gate": true,
+    "proactive_release_trigger": true,
+    "auto_v2_nudge": true
   }
 }

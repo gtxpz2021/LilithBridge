@@ -18,6 +18,10 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
 
     public static DialogueGeneration Capture(BridgeConfig config, string? userText = null,
         string? modeOverride = null, string purpose = "dialogue", bool hasImages = false)
+        => Capture(config, userText, modeOverride, purpose, hasImages, null);
+
+    public static DialogueGeneration Capture(BridgeConfig config, string? userText,
+        string? modeOverride, string purpose, bool hasImages, SensoryRoutingHint? sensoryHint)
     {
         if (config.IsOpenAI)
             return new(config.OpenAIReasoningEffort != "none", config.OpenAIReasoningEffort,
@@ -34,6 +38,13 @@ internal sealed record DialogueGeneration(bool Thinking, string Effort, int MaxT
         else if (config.DialogueAutoThinkingEnabled && purpose == "dialogue" && !string.IsNullOrWhiteSpace(userText))
         {
             (mode, selection) = RouteAutoDialogueThinking(userText!, hasImages);
+            if (sensoryHint != null && config.SensoryAutoThinkingNudgeEnabled
+                && selection == "auto_v2_casual_off"
+                && sensoryHint.RecommendedEffort is "low" or "high")
+            {
+                mode = "low";
+                selection = "auto_v2_sensory_" + sensoryHint.RecommendedEffort;
+            }
         }
 
         int maxTokens = mode switch
@@ -444,6 +455,8 @@ internal sealed partial class DialogueRequest : IDisposable
     internal bool CanChooseNativeTool => RemainingHttpAttempts>1 && ReviewBudget?.AllowsNewSteps!=false;
     internal bool CanExecuteNativeTool => RemainingHttpAttempts>0 && ReviewBudget?.AllowsNewSteps!=false;
     public bool SourceEnvelope { get; private set; }
+    public string SensoryTailText { get; set; } = "";
+    public int SensoryConsumedSeq { get; set; }
     public CancellationToken Token { get; }
     public bool IsCancelled => Token.IsCancellationRequested;
     public bool ScreenRequested { get; private set; }
@@ -463,6 +476,12 @@ internal sealed partial class DialogueRequest : IDisposable
     public DialogueRequest(BridgeConfig config, string userEventId,
         Func<CancellationToken, Task<VisionImage>>? capture = null, string? userText = null,
         string? modeOverride = null, string purpose = "dialogue", bool reviewAuthorized = false)
+        : this(config, userEventId, capture, userText, modeOverride, purpose, reviewAuthorized, null) { }
+
+    public DialogueRequest(BridgeConfig config, string userEventId,
+        Func<CancellationToken, Task<VisionImage>>? capture, string? userText,
+        string? modeOverride, string purpose, bool reviewAuthorized,
+        SensoryRoutingHint? sensoryHint)
     {
         _b1Config = config;
         MethodCapability = config.MethodCapabilityOwner;
@@ -473,7 +492,7 @@ internal sealed partial class DialogueRequest : IDisposable
         _b1CapabilityGeneration = config.B1CapabilityGeneration;
         _b1InitiallyEnabled = B1CapabilityOwner.Enabled(config);
         Token = _cancellation.Token;
-        Generation = DialogueGeneration.Capture(config, userText, modeOverride, purpose);
+        Generation = DialogueGeneration.Capture(config, userText, modeOverride, purpose, false, sensoryHint);
         ReviewNoteMaxTokens = Generation.Thinking && config.ReviewThinkingMaxTokens > 0
             ? Math.Clamp(config.ReviewThinkingMaxTokens, 256, 8192)
             : Math.Min(config.MaxTokens, 600);

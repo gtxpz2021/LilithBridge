@@ -18,7 +18,8 @@ internal sealed partial class BridgeController
 
     [HideFromIl2Cpp]
     internal DialogueRequest BeginDialogueRequest(BridgeConfig config, string userEventId,
-        string? userText = null, string? modeOverride = null, bool reviewAuthorized = false)
+        string? userText = null, string? modeOverride = null, bool reviewAuthorized = false,
+        SensoryRoutingHint? sensoryHint = null)
     {
         if (_b1ReflectionOwner != null) CancelReflectionPreparation("new_dialogue_request");
         bool requestPending = _requestPending;
@@ -27,7 +28,7 @@ internal sealed partial class BridgeController
         _activeDialogue?.Dispose();
         DialogueRequest? owner = null;
         owner = new DialogueRequest(config, userEventId, token => CaptureForDialogueAsync(owner!, token),
-            userText, modeOverride, reviewAuthorized: reviewAuthorized);
+            userText, modeOverride, "dialogue", reviewAuthorized, sensoryHint);
         _reviewHandoff.Configuration=()=>_config;
         owner.ReviewHandoff=_reviewHandoff;
         owner.MethodOwner=_memory.SyncReadMethods(config);

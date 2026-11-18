@@ -156,6 +156,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         CancelPendingDialogue();
         DestroySharedActivity();
         StopSemanticRuntime();
+        _sensoryClient.Dispose();
         _activeDialogue?.Dispose();
         _inputField.Destroy();
         _requestStatus.Destroy();
@@ -196,6 +197,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
 
         TickSemanticRuntime();
+        TickSensoryRuntime();
         if (!_systemReady)
             TryBecomeReady();
         if (_systemReady && Time.unscaledTime >= _nextInteractionSubscribe)
@@ -1126,6 +1128,11 @@ internal sealed partial class BridgeController : MonoBehaviour
             {
                 // App-change remark gate is best effort.
             }
+            SensorySnapshot sensory = _config.SensoryEnabled ? _sensoryClient.Latest : SensorySnapshot.Empty;
+            string? sensoryProactiveKind = _config.SensoryProactiveReleaseEnabled && sensory.Available ? sensory.PendingProactive?.Kind : null;
+            string? sensoryProactiveReason = _config.SensoryProactiveReleaseEnabled && sensory.Available ? sensory.PendingProactive?.Reason : null;
+            int sensoryProactiveSeq = sensory.Available ? (sensory.PendingProactive?.Seq ?? 0) : 0;
+            string? sensoryInterruptCost = _config.SensoryProactiveGateEnabled && sensory.Available ? sensory.InterruptCost : null;
             InitiativeCandidate? candidate = InitiativeSource.PickNext(
                 _sessionState,
                 _memory.GetLastSceneSummary(),
@@ -1134,11 +1141,16 @@ internal sealed partial class BridgeController : MonoBehaviour
                 _config.ProactiveOnLateNight,
                 _config.ProactiveOnReturn,
                 _config.ProactiveOnAppChange,
-                appChangeAllowed);
+                appChangeAllowed,
+                sensoryProactiveKind,
+                sensoryProactiveReason,
+                sensoryInterruptCost);
             if (candidate != null)
             {
                 _pendingProactiveReason = candidate.Reason;
                 _pendingProactiveRecallQuery = candidate.RecallQuery;
+                if (sensoryProactiveSeq > 0 && candidate.Kind == (sensoryProactiveKind ?? "activity_settled"))
+                    _sensoryClient.AcknowledgeConsumed(_config, sensoryProactiveSeq, consumedProactive: true);
                 NativeEventLog.Trace("meta.proactive.event_candidate", "mod", "system",
                     "event-driven proactive candidate selected",
                     "kind=" + candidate.Kind + ";priority=" + candidate.Priority.ToString("0.00"));
