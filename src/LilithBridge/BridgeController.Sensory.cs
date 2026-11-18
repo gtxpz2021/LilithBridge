@@ -8,6 +8,11 @@ namespace LilithBridge;
 internal sealed partial class BridgeController
 {
     private readonly SensorySidecarClient _sensoryClient = new();
+    private long _lastSensoryTickTicks;
+    private long _lastRectCaptureTicks;
+    private int[]? _cachedLilithRect;
+    private IntPtr _cachedMainHwnd;
+    private long _lastHwndLookupTicks;
     private long _lastSensoryActionTicks;
     private string _pendingSilentNoticeAction = "";
     private string _pendingSilentNoticeReason = "";
@@ -17,9 +22,18 @@ internal sealed partial class BridgeController
         if (!_config.SensoryEnabled)
             return;
 
+        long nowTicks = Stopwatch.GetTimestamp();
+        bool hasNotice = _pendingSilentNoticeAction.Length > 0;
+        if (!hasNotice && _lastSensoryTickTicks > 0
+            && (double)(nowTicks - _lastSensoryTickTicks) / Stopwatch.Frequency < 0.20)
+        {
+            return;
+        }
+        _lastSensoryTickTicks = nowTicks;
+
         string? notifyAction = null;
         string? notifyReason = null;
-        if (_pendingSilentNoticeAction.Length > 0)
+        if (hasNotice)
         {
             notifyAction = _pendingSilentNoticeAction;
             notifyReason = _pendingSilentNoticeReason;
@@ -27,9 +41,16 @@ internal sealed partial class BridgeController
             _pendingSilentNoticeReason = "";
         }
 
+        if (_lastRectCaptureTicks == 0
+            || (double)(nowTicks - _lastRectCaptureTicks) / Stopwatch.Frequency >= 0.40)
+        {
+            _lastRectCaptureTicks = nowTicks;
+            _cachedLilithRect = TryCaptureLilithScreenRect();
+        }
+
         var report = new SensoryHostReport(
             Environment.ProcessId,
-            TryCaptureLilithScreenRect(),
+            _cachedLilithRect,
             NativeStateInspector.IsSleeping,
             NativeStateInspector.IsNativeQuietForMod(),
             _aiSpeechActive || NativeBubblePresenter.HasPendingReply,
@@ -93,7 +114,7 @@ internal sealed partial class BridgeController
         }
     }
 
-    private static int[]? TryCaptureLilithScreenRect()
+    private int[]? TryCaptureLilithScreenRect()
     {
         try
         {
@@ -124,17 +145,48 @@ internal sealed partial class BridgeController
         public int Y;
     }
 
+    private delegate bool EnumThreadWndProc(IntPtr hwnd, IntPtr lParam);
+
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref Win32Point lpPoint);
 
-    private static Win32Point TryGetWindowClientOrigin()
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumThreadWindows(uint dwThreadId, EnumThreadWndProc lpfn, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    private Win32Point TryGetWindowClientOrigin()
     {
         try
         {
-            IntPtr hwnd = Process.GetCurrentProcess().MainWindowHandle;
-            if (hwnd == IntPtr.Zero) return default;
+            long nowTicks = Stopwatch.GetTimestamp();
+            if (_cachedMainHwnd != IntPtr.Zero && !IsWindow(_cachedMainHwnd))
+                _cachedMainHwnd = IntPtr.Zero;
+
+            if (_cachedMainHwnd == IntPtr.Zero
+                && (_lastHwndLookupTicks == 0 || (double)(nowTicks - _lastHwndLookupTicks) / Stopwatch.Frequency >= 5.0))
+            {
+                _lastHwndLookupTicks = nowTicks;
+                IntPtr found = IntPtr.Zero;
+                EnumThreadWindows(GetCurrentThreadId(), (hwnd, _) =>
+                {
+                    if (!IsWindowVisible(hwnd)) return true;
+                    found = hwnd;
+                    return false;
+                }, IntPtr.Zero);
+                _cachedMainHwnd = found;
+            }
+
+            if (_cachedMainHwnd == IntPtr.Zero) return default;
             var pt = default(Win32Point);
-            return ClientToScreen(hwnd, ref pt) ? pt : default;
+            return ClientToScreen(_cachedMainHwnd, ref pt) ? pt : default;
         }
         catch
         {
