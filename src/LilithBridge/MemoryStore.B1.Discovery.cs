@@ -13,7 +13,9 @@ internal sealed partial class MemoryStore
     // conversation as if all of it described the same object.
     private static bool B1ConcreteDiscoveryToken(string t) => t.Length >= 2 && !B1WeakSearchTokens.Contains(t)
         && t is not ("假设" or "玩家" or "现实" or "物品" or "经历" or "仅限" or "涉及" or "不涉"
-            or "前面" or "之前" or "刚才" or "先前" or "原先" or "当时" or "一直" or "之后");
+            or "前面" or "之前" or "刚才" or "先前" or "原先" or "当时" or "一直" or "之后"
+            or "一张" or "一个" or "一下" or "一些" or "一点" or "一种" or "一次" or "一件"
+            or "这回" or "那回" or "这次" or "那次" or "这个" or "那个" or "这些" or "那些");
 
     private List<(B1Ref Ref, HashSet<string> Tokens)> B1DiscoverySources(B1Entry entry)
     {

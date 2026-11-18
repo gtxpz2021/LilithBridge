@@ -50,7 +50,7 @@ internal static class ContextBuilder
         builder.AppendLine(imageAttached switch
         {
             true => "[视觉状态] 本次请求已附带桌面画面；画面里的莉莉丝就是你本人，只描述确实看清的部分。",
-            false => "[视觉状态] 本次请求没有附带画面，也没有摄像头画面；不要说你看到了玩家的样子、表情或穿着，也不要猜。玩家描述的物件和动作只作为文字来源，不表示你亲眼见过或正在看着；旧视觉经历要有对应的旧观察来源，物件被提及和你此前自己的说法不算。可以按玩家描述陪他梳理下一步。",
+            false => "[视觉状态] 本次请求没有附带画面，也没有摄像头画面；没有看到玩家的样子、表情或穿着，也不要凭空臆测或假装看见。玩家描述的物件和动作只作为文字来源，不表示你亲眼见过或正在看着；旧视觉经历要有对应的旧观察来源，物件被提及和你此前自己的说法不算。可以按玩家描述陪他梳理下一步。",
             _ => "[视觉状态] 本次请求可能附带桌面画面；画面里的莉莉丝就是你本人。"
         });
     }
@@ -589,13 +589,10 @@ internal static class ContextBuilder
             builder.AppendLine(timeline);
         }
 
-        AppendExperienceAndReflectionMaterial(builder, memory, state, config,
-            suppliedMemories, profile, recalled, retrievalQuery, requestHistory,
-            allowReflectionChatProjection, onReflectionProjectionObservation,
-            experienceSelection, semanticRecall, semanticTrace, playerDirected,
-            sourceEnvelopeForRequest ? onContextBodySources : null, onGeneratedReplyMaterial,
-            sourceEnvelopeForRequest, onSceneBodyReferences);
-
+        // Append volatile per-turn recall, reflection thoughts, and rotating dreams
+        // after stable session material and live posture/desktop blocks to preserve
+        // KV cache prefixes across topic shifts.
+        MemoryTurn? pendingDream = null;
         if (config.MemoryDreamsEnabled)
         {
             using var _dayTiming = PreparationTiming.Measure("ctx.day_artifacts");
@@ -609,14 +606,7 @@ internal static class ContextBuilder
                 if (attr.Length > 0) builder.AppendLine(attr);
                 suppliedMemories.Add(consolidation);
             }
-            if (dream != null)
-            {
-                builder.AppendLine("[你的梦境与零碎遐想]");
-                builder.AppendLine(MemoryStore.CleanDreamDisplayText(dream.Text));
-                string attr = memory.DescribeSourceAttribution(dream);
-                if (attr.Length > 0) builder.AppendLine(attr);
-                suppliedMemories.Add(dream);
-            }
+            pendingDream = dream;
         }
 
         // A compressed conversation summary is program-made organising text, not
@@ -672,7 +662,6 @@ internal static class ContextBuilder
         // Instantaneous time, live posture and desktop state sit near the end
         // (closest to the current user turn) so volatile fields do not bust KV prefixes.
         builder.AppendLine();
-        AppendRealTimeLine(builder, requestTime);
         string nativeState = state.Native.Describe();
         if (nativeState.Length == 0)
             nativeState = "idle";
@@ -763,6 +752,24 @@ internal static class ContextBuilder
 
         if (includeVisionStatus) AppendVisionLine(builder, config, imageAttached);
 
+        if (pendingDream != null)
+        {
+            builder.AppendLine();
+            builder.AppendLine("[你的梦境与零碎遐想]");
+            builder.AppendLine(MemoryStore.CleanDreamDisplayText(pendingDream.Text));
+            string attr = memory.DescribeSourceAttribution(pendingDream);
+            if (attr.Length > 0) builder.AppendLine(attr);
+            suppliedMemories.Add(pendingDream);
+        }
+
+        AppendExperienceAndReflectionMaterial(builder, memory, state, config,
+            suppliedMemories, profile, recalled, retrievalQuery, requestHistory,
+            allowReflectionChatProjection, onReflectionProjectionObservation,
+            experienceSelection, semanticRecall, semanticTrace, playerDirected,
+            sourceEnvelopeForRequest ? onContextBodySources : null, onGeneratedReplyMaterial,
+            sourceEnvelopeForRequest, onSceneBodyReferences);
+
+        AppendRealTimeLine(builder, requestTime);
         memory.AppendMentionBoundaryContext(builder);
         PublishSupplied(config, suppliedMemories, onRecall);
         return builder.ToString();

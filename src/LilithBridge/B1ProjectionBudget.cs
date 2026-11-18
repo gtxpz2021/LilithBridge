@@ -24,7 +24,10 @@ internal sealed class B1ProjectionBudgetObservation
 
 internal static class B1ProjectionBudget
 {
-    internal static void Select(B1Packet packet, IReadOnlyList<B1Material> plan, bool readOnly)
+    internal static void Select(B1Packet packet, IReadOnlyList<B1Material> plan, bool readOnly,
+        IReadOnlyList<RequestSourceBody>? hostBodies = null,
+        IReadOnlyList<RequestSourceBody>? jsonFallbackHostBodies = null,
+        bool naturalPresentation = false)
     {
         var materials = packet.Materials;
         materials.Clear();
@@ -49,7 +52,10 @@ internal static class B1ProjectionBudget
                 packet.Omissions.Add(new(item.ReplyRoot!, decision.Outcome));
                 continue;
             }
-            if (chars + decision.TextChars > B1Continuity.MaxPacketChars)
+            bool folded = !readOnly && naturalPresentation && hostBodies is { Count: > 0 }
+                && unit.All(m => RequestSourceBody.Match(hostBodies, m) != null);
+            int effectiveChars = folded ? Math.Min(decision.TextChars, 64) : decision.TextChars;
+            if (chars + effectiveChars > B1Continuity.MaxPacketChars)
             {
                 decision.Outcome = "body_char_budget";
                 packet.Omissions.Add(new(item.ReplyRoot ?? item.Ref,
@@ -58,13 +64,15 @@ internal static class B1ProjectionBudget
                 continue;
             }
             materials.AddRange(unit);
-            chars += decision.TextChars;
+            chars += effectiveChars;
         }
         B1Continuity.AssignShortRefs(packet);
-        // The same inline representation as the existing capture budget. Every
-        // original field, reference, omission and budget counter is included.
+        // Keep JSON fallback UTF-8 byte ceiling honest using JSON-compatible host refs.
         int Bytes() => Encoding.UTF8.GetByteCount(readOnly
-            ? B1Continuity.RenderReadOnly(packet) : B1Continuity.Render(packet));
+            ? B1Continuity.RenderReadOnly(packet)
+            : (jsonFallbackHostBodies is { Count: > 0 }
+                ? B1Continuity.Render(packet, jsonFallbackHostBodies)
+                : B1Continuity.Render(packet)));
         int bytes = Bytes();
         while (bytes > B1Continuity.MaxPacketUtf8Bytes && materials.Count > 0)
         {

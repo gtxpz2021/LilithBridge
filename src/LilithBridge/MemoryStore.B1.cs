@@ -304,11 +304,14 @@ internal sealed partial class MemoryStore
         }
     }
 
-    internal B1Packet CaptureB1(DialogueRequest request, string query, IEnumerable<MemoryTurn> footprint)
+    internal B1Packet CaptureB1(DialogueRequest request, string query, IEnumerable<MemoryTurn> footprint,
+        IReadOnlyList<RequestSourceBody>? hostBodies = null,
+        IReadOnlyList<RequestSourceBody>? jsonFallbackHostBodies = null,
+        bool naturalPresentation = false)
     {
         using var timing=PreparationTiming.Measure("b1.capture");
         request.B1CaptureReadContext=NativeReadDiagnostic();
-        return CaptureB1View(request,query,footprint);
+        return CaptureB1View(request, query, footprint, hostBodies, jsonFallbackHostBodies, naturalPresentation);
     }
 
     // An opportunity is never player permission to reopen a limited topic or

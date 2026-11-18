@@ -545,6 +545,19 @@ internal sealed partial class DeepSeekClient : IDisposable
             string b1Context = "";
             ProactiveB1Supply? proactiveSupply = null;
             List<object> messages = null!;
+            IReadOnlyList<RequestSourceBody> CollectActualSourceBodies()
+            {
+                var bodies = SourceEnvelopeBodies(
+                    projection.Turns.Where(WillSendHistoryTurn), currentUserTurn, userText,
+                    programParticipation || dialogueRequest?.SourceEnvelope == true || sharedActivitySupply != null);
+                if ((programParticipation || dialogueRequest?.SourceEnvelope == true || sharedActivitySupply != null)
+                    && dialogueRequest != null)
+                    bodies = bodies.Concat(dialogueRequest.ContextSourceBodiesFor(nativeContext))
+                        .Concat(dialogueRequest.GeneratedBodySourcesFor(nativeContext))
+                        .GroupBy(body => (body.Kind, body.EventId, body.Sha256, body.Role, body.Origin, body.DeliveryState))
+                        .Select(group => group.First()).ToArray();
+                return bodies;
+            }
             string dynamicContext = "";
             HistoryProjectionSummary historySummary = null!;
             void BuildOwnedBaseMessages()
@@ -573,15 +586,7 @@ internal sealed partial class DeepSeekClient : IDisposable
                 IReadOnlyList<RequestSourceBody> actualSourceBodies;
                 using (PreparationTiming.Measure("send.source_bodies"))
                 {
-                    actualSourceBodies = SourceEnvelopeBodies(
-                        projection.Turns.Where(WillSendHistoryTurn), currentUserTurn, userText,
-                        programParticipation || dialogueRequest?.SourceEnvelope == true || sharedActivitySupply != null);
-                    if ((programParticipation || dialogueRequest?.SourceEnvelope == true || sharedActivitySupply != null)
-                        && dialogueRequest != null)
-                        actualSourceBodies = actualSourceBodies.Concat(dialogueRequest.ContextSourceBodiesFor(nativeContext))
-                            .Concat(dialogueRequest.GeneratedBodySourcesFor(nativeContext))
-                            .GroupBy(body => (body.Kind, body.EventId, body.Sha256, body.Role, body.Origin, body.DeliveryState))
-                            .Select(group => group.First()).ToArray();
+                    actualSourceBodies = CollectActualSourceBodies();
                     ValidateSceneBodyReferences(dialogueRequest, nativeContext, actualSourceBodies);
                 }
                 if (dialogueRequest != null && historyOwner != null)
@@ -603,7 +608,7 @@ internal sealed partial class DeepSeekClient : IDisposable
                     {
                         try
                         {
-                            if(B1ReadableView.TryCreateWithGenerated(retainedPacket,actualSourceBodies,hybridTail.EnvelopeHistory,userText,dialogueRequest.GeneratedReadableBodiesFor(nativeContext),out var view,out var reason))
+                            if(B1ReadableView.TryCreateWithGenerated(retainedPacket,actualSourceBodies,hybridTail.EnvelopeHistory,userText,dialogueRequest.GeneratedReadableBodiesFor(nativeContext),out var view,out var reason,nonCurrentHistory))
                             { dialogueRequest.ReadableB1=view; dialogueRequest.ReadableB1SourcePermission=view!.SourcePermission(historyOwner!,userText,config); b1Context=view.Text; }
                             else dialogueRequest.ReadableB1Fallback=reason;
                         }
@@ -784,8 +789,13 @@ internal sealed partial class DeepSeekClient : IDisposable
                 {
                     if (dialogueRequest.B1CanWrite)
                     {
+                        var budgetHostBodies = CollectActualSourceBodies();
+                        var jsonFallbackHostBodies = dialogueRequest.JsonCompatibleBodySources(budgetHostBodies, nativeContext);
+                        bool naturalB1 = config.B1MaterialPresentation == "natural" && !programParticipation
+                            && (dialogueRequest.SourceEnvelope || sharedActivitySupply != null);
                         dialogueRequest.B1Packet ??= historyOwner.CaptureB1(dialogueRequest, userText,
-                            dialogueRequest.B1HostFootprint.Concat(projection.Turns.Where(WillSendHistoryTurn).SelectMany(t => t.Records)));
+                            dialogueRequest.B1HostFootprint.Concat(projection.Turns.Where(WillSendHistoryTurn).SelectMany(t => t.Records)),
+                            budgetHostBodies, jsonFallbackHostBodies, naturalB1);
                         B1Packet packet = dialogueRequest.B1Packet;
                         if (packet.Availability != "ready")
                             dialogueRequest.DisableB1(packet.Diagnostic.Length > 0 ? packet.Diagnostic : "store_" + historyOwner.B1StorageStatus);
@@ -1453,9 +1463,9 @@ internal sealed partial class DeepSeekClient : IDisposable
 
     private const string ReplyRecencyAnchor =
         "[开口之前]\n" +
-        "忘掉上面像说明书的地方，按莉莉丝此刻轻快鲜活的少女口吻直接说：\n" +
-        "1. 极少用或不用破折号；没有真转折就不写“不是……，是……”对比造句；\n" +
-        "2. 态度丢出去就停，不自我解释动机，不在句尾硬加“不躲/不藏着”类小否定尾缀，也不用“是 A 还是 B？”结尾二选一猜对方。";
+        "按莉莉丝此刻轻快鲜活的少女口吻直接接话，不念规则：\n" +
+        "1. 极少用破折号；没真转折不写“不是……，是……”对比句；\n" +
+        "2. 点到就停，不自我解释动机，不在句尾硬加“不躲/不藏着/我不猜”类否定尾缀，也不用“是 A 还是 B？”或“……，还是……？”二选一猜对方。";
 
     // Retain the ordinary prompt entry point used by existing offline probes.
     private static string BuildSystemPrompt(BridgeConfig config, bool allowStoryRecall = true) =>

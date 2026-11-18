@@ -633,9 +633,10 @@ internal sealed class VisualSupplyLedger
     public string Describe(IReadOnlyList<MemoryTurn> supplied)
     {
         var matching = supplied.Where(t => t.Role == "user" && _entries.ContainsKey(t.EventId)).TakeLast(12).ToList();
-        if (!matching.Any(t => _entries[t.EventId].Outcome != "no_image")) return "";
-        var b = new StringBuilder("[历史画面供给回执]\n以下只说明对应发言的请求供给，不证明看懂或记得细节；旧图本身没有在本次重新提供。未列出的轮次情况未知。\n");
-        foreach (var turn in matching)
+        var visualTurns = matching.Where(t => _entries[t.EventId].Outcome != "no_image").TakeLast(6).ToList();
+        if (visualTurns.Count == 0) return "";
+        var b = new StringBuilder("[历史画面供给回执]\n以下只列出近期有取图或附图请求的发言供给，不证明看懂或记得细节，旧图本身没有在本次重新提供；其余已记录近期轮次均未附图，更早或未记录轮次情况未知。\n");
+        foreach (var turn in visualTurns)
         {
             var receipt = _entries[turn.EventId];
             string text = turn.Text.Replace("\r", " ").Replace("\n", " ");
@@ -647,7 +648,7 @@ internal sealed class VisualSupplyLedger
                 "unconfirmed" => "该轮有取图，但附图请求是否被接收未确认",
                 _ => "该轮未附图"
             };
-            b.AppendLine("玩家原话（仅作对应线索）：" + System.Text.Json.JsonSerializer.Serialize(text)
+            b.AppendLine("玩家原话（仅作对应线索）：" + System.Text.Json.JsonSerializer.Serialize(text, DialogueMaterialEnvelope.DataJson)
                 + "；供给：" + outcome + "。");
         }
         return b.ToString();

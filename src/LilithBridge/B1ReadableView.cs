@@ -12,7 +12,7 @@ namespace LilithBridge;
 // Request-only projection. It neither selects material nor creates source authority.
 internal sealed class B1ReadableView
 {
-    private sealed record Host(string Label, B1Material Material, int HistoryIndex, string Speaker, string SourcesProof, GeneratedReadableBody? Generated = null, bool EnvelopeSection = false, string DisplayLabel = "");
+    private sealed record Host(string Label, B1Material Material, int HistoryIndex, string Speaker, string SourcesProof, GeneratedReadableBody? Generated = null, bool EnvelopeSection = false, string DisplayLabel = "", bool LiveTail = false);
     private readonly B1Packet _packet;
     private readonly byte[] _seal;
     private readonly Dictionary<string,string> _refs;
@@ -62,7 +62,7 @@ internal sealed class B1ReadableView
 
     internal static bool TryCreateWithGenerated(B1Packet packet,IReadOnlyList<RequestSourceBody> bodies,
         IReadOnlyList<ProjectedHistoryTurn> history,string currentInput,IReadOnlyList<GeneratedReadableBody> generated,
-        out B1ReadableView? view,out string reason)
+        out B1ReadableView? view,out string reason,IReadOnlyList<ProjectedHistoryTurn>? allHistory=null)
     {
         view=null; reason="invalid_readable_packet";
         var supported=new HashSet<string>(new[]{"Ref","Text","Scope","At","Origin","State","VersionFingerprint",
@@ -127,7 +127,16 @@ internal sealed class B1ReadableView
                         && history[i].Records.Count == 1 && history[i].Records[0].EventId == m.Ref.Version)
                         return new("近期原话" + (i + 1), m, i, body.Role, DialogueMaterialEnvelope.ReadableSourceProof(history[i]), DisplayLabel: "「近期原话" + (i + 1) + "」");
                     if (history[i].Records.Any(r => r.EventId == m.Ref.Version))
-                        return new("近期原话" + (i + 1), m, -3, body.Role, DialogueMaterialEnvelope.ReadableSourceProof(history[i]), EnvelopeSection: true, DisplayLabel: "「近期原话" + (i + 1) + "」");
+                        return new("近期原话" + (i + 1), m, -3, body.Role, DialogueMaterialEnvelope.ReadableSourceProof(history[i]), EnvelopeSection: true, DisplayLabel: "「" + "近期原话" + (i + 1) + "」");
+                }
+            }
+            if (allHistory != null)
+            {
+                for (int i = history.Count; i < allHistory.Count; i++)
+                {
+                    if (body.Location == "history[" + i + "].text"
+                        && allHistory[i].Records.Any(r => r.EventId == m.Ref.Version))
+                        return new("近期对话续接", m, -4, body.Role, "", LiveTail: true, DisplayLabel: "下文「近期对话」");
                 }
             }
             if (body.Location.StartsWith("runtime_context.experience_blocks[lexical]", StringComparison.Ordinal))
@@ -250,6 +259,17 @@ internal sealed class B1ReadableView
                 if(host.Generated is {} generated)
                 {
                     if(!generated.Owner.ContainsExactlyOnce(cleanEnvelope ?? (carrier.GetProperty("runtime_context").GetString()??"")))return false;
+                }
+                else if(host.LiveTail)
+                {
+                    string expectedRole = host.Speaker == "assistant" ? "assistant" : "user";
+                    bool foundTail = messages.Skip(1).Take(Math.Max(0, messages.Length - 2)).Any(msg =>
+                        string.Equals(msg.GetProperty("role").GetString(), expectedRole, StringComparison.Ordinal)
+                        && ContentTexts(msg.GetProperty("content")).Any(t =>
+                            !t.StartsWith("[程序提供的近期对话与背景", StringComparison.Ordinal)
+                            && !t.Contains("\"lilith_program_material\"", StringComparison.Ordinal)
+                            && t.Contains(host.Material.Text, StringComparison.Ordinal)));
+                    if (!foundTail) return false;
                 }
                 else if(host.EnvelopeSection)
                 {

@@ -50,7 +50,7 @@ internal sealed partial class DialogueRequest
                         || unit.Text.Substring(body.TextStart, body.Chars) != body.Text) continue;
                     var spans = unit.SourceSpans.Where(span =>
                         span.EventId == body.EventId
-                        && span.TextHash == body.Sha256
+                        && string.Equals(span.TextHash, body.Sha256, StringComparison.OrdinalIgnoreCase)
                         && span.OffsetInUnit == body.TextStart
                         && span.SourceOffset == 0
                         && span.Chars == body.Chars).ToArray();

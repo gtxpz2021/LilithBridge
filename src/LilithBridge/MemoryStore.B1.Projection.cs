@@ -16,13 +16,18 @@ internal sealed partial class MemoryStore
     { "没有", "不同", "一个", "这个", "那个", "这些", "那些", "本次", "一次", "描述", "观察", "判断", "条件",
       "可能", "需要", "不能", "可以", "已经", "看到", "看见", "如果", "但是", "因为", "所以", "目前", "现在",
       "仍然", "是否", "不是", "并不", "不足", "认为", "说明", "证据", "线索", "情况", "问题", "状态", "记录" };
-    private B1Packet CaptureB1View(DialogueRequest request, string query, IEnumerable<MemoryTurn> footprint)
-        => CaptureB1View(request.Id, request.UserEventId, request.SemanticMaterial?.Result, query, footprint);
+    private B1Packet CaptureB1View(DialogueRequest request, string query, IEnumerable<MemoryTurn> footprint,
+        IReadOnlyList<RequestSourceBody>? hostBodies = null,
+        IReadOnlyList<RequestSourceBody>? jsonFallbackHostBodies = null,
+        bool naturalPresentation = false)
+        => CaptureB1View(request.Id, request.UserEventId, request.SemanticMaterial?.Result, query, footprint,
+            hostBodies: hostBodies, jsonFallbackHostBodies: jsonFallbackHostBodies, naturalPresentation: naturalPresentation);
 
     // The ordinary dialogue wrapper supplies the same three scalar values. The
     // read-only caller has no current input, owner, result slot or write contract.
     private B1Packet CaptureB1View(string requestId, string userEventId, SemanticRecallResult? semantic,
-        string query, IEnumerable<MemoryTurn> footprint, bool proactiveReadOnly = false, BridgeConfig? config = null, bool includeHistoricalProposals = true, B1ReadQueryPurpose readQueryPurpose = B1ReadQueryPurpose.HistoricalQuery)
+        string query, IEnumerable<MemoryTurn> footprint, bool proactiveReadOnly = false, BridgeConfig? config = null, bool includeHistoricalProposals = true, B1ReadQueryPurpose readQueryPurpose = B1ReadQueryPurpose.HistoricalQuery,
+        IReadOnlyList<RequestSourceBody>? hostBodies = null, IReadOnlyList<RequestSourceBody>? jsonFallbackHostBodies = null, bool naturalPresentation = false)
     {
         lock (_experienceLock)
         {
@@ -355,7 +360,7 @@ internal sealed partial class MemoryStore
                     : anyFound ? "view_selected" : "qualification_restricted" };
             if(packet.Diagnostic=="not_found"&&semantic!=null&&(semantic.Unavailable.Length>0||!semantic.IndexComplete))
                 packet.Diagnostic="discovery_incomplete";
-            B1ProjectionBudget.Select(packet, plan, proactiveReadOnly);
+            B1ProjectionBudget.Select(packet, plan, proactiveReadOnly, hostBodies, jsonFallbackHostBodies, naturalPresentation);
             PreparationTiming.Current?.Value("semantic_b1_supplied",materials.Count(m=>m.Ref.Kind=="b1"));
             packet.Footprint.Clear();
             packet.Footprint.AddRange((proactiveReadOnly ? Enumerable.Empty<B1Ref>()
