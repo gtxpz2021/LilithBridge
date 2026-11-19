@@ -313,6 +313,12 @@ internal sealed partial class BridgeController
         CancelQueuedReply(reason);
         if (!_aiSpeechActive && !NativeBubblePresenter.HasPendingReply && !_temporaryNativeEntry)
             return;
+        if (_config.SensoryEnabled && (_aiSpeechActive || NativeBubblePresenter.HasPendingReply)
+            && !string.Equals(reason, "sleep", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(reason, "input_submit", StringComparison.OrdinalIgnoreCase))
+        {
+            NotifySensoryHostEvent("speech_interrupted", reason);
+        }
         _aiSpeechActive = false;
         NativeBubblePresenter.ClearPending("cancelled", reason);
         try { DialogueManager.instance?.ForceEndDialogue(); }
@@ -426,7 +432,10 @@ internal sealed partial class BridgeController
             _lastAiSpeechEndAt = Time.unscaledTime;
         }
         if (outcome == "completed" && reply.DialogueRequest != null)
+        {
             reply.DialogueRequest.DeliveryCompleted = true;
+            ObserveSemanticTelemetry(reply);
+        }
         FinishNativeLinkage(reply, reply.DeliveredText.Length > 0 ? "shown_" + outcome : "unshown_" + outcome);
         SettleAiDelivery(reply);
         // Only a fully delivered completed turn may become a past-thought source.

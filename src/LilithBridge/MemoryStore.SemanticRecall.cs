@@ -13,10 +13,36 @@ internal sealed record SemanticRecallCandidate(string EventId, string TextHash, 
     internal SemanticRecallCandidate(string eventId,string textHash,double score,int chunkStart,int chunkEnd,string kind,string version,int rank)
         :this(eventId,textHash,score,chunkStart,chunkEnd,kind,version,rank,null,null){}
 }
+internal sealed record SemanticGeometryMetrics(double NoveltyEta, double Tortuosity, double NetDisplacementRad,
+    double ArcLengthRad, double StepJumpRatio, int WhiteningD, IReadOnlyList<string> DppSelectedIds,
+    IReadOnlyDictionary<string,double> OrthSins)
+{
+    internal static readonly SemanticGeometryMetrics Empty = new(0,0,0,0,0,0,Array.Empty<string>(),
+        new Dictionary<string,double>());
+}
+// Geometry sparks are retrieval candidates only. Scores never establish truth,
+// permission or current status, and no trajectory/regime label is carried here.
+internal sealed record SemanticGeometrySpark(string EventId,string TextHash,double Score,double ZScore,
+    string BridgeVia="",double BridgeScore=0,string BridgeViaHash="")
+{
+    internal static readonly IReadOnlyList<SemanticGeometrySpark> Empty=Array.Empty<SemanticGeometrySpark>();
+}
 internal sealed record SemanticRecallResult(string QueryId, string QueryHash, string ModelRevision,
     string IndexVersion, IReadOnlyList<SemanticRecallCandidate> Candidates, string Unavailable = "", bool IndexComplete = true,
     string DataRoot="",string SessionId="",SemanticDomain Domains=SemanticDomain.All,long TargetWatermark=0,long CompletedWatermark=0,long Generation=0)
-{ internal ContextRelevancePlan? RelevancePlan {get;init;} internal bool RelevanceBypassed {get;init;} }
+{
+    internal ContextRelevancePlan? RelevancePlan {get;init;} internal bool RelevanceBypassed {get;init;}
+    internal SemanticGeometryMetrics? Geometry {get;init;}
+    internal bool SalienceGated {get;init;}
+    internal double SalienceZ {get;init;}
+    internal IReadOnlyList<SemanticGeometrySpark> OrthogonalSparks {get;init;}=SemanticGeometrySpark.Empty;
+    internal IReadOnlyList<SemanticGeometrySpark> WormholeSparks {get;init;}=SemanticGeometrySpark.Empty;
+    internal IReadOnlyList<SemanticGeometrySpark> BridgeSparks {get;init;}=SemanticGeometrySpark.Empty;
+    internal IReadOnlyList<SemanticGeometrySpark> SceneSparks {get;init;}=SemanticGeometrySpark.Empty;
+    internal IReadOnlyDictionary<string,double> DocSims {get;init;}=new Dictionary<string,double>();
+    internal IReadOnlyDictionary<string,double> DocQuantiles {get;init;}=new Dictionary<string,double>();
+    internal IReadOnlyList<string> ProbeWireIds {get;init;}=Array.Empty<string>();
+}
 internal sealed class SemanticRecallTrace
 {
     internal void BindQuery(string query)
@@ -32,8 +58,15 @@ internal sealed class SemanticRecallTrace
     public List<string> Top24 { get; } = new();
     public List<string> Anchors { get; } = new();
     public List<string> Supplied { get; } = new();
+    public List<string> SparkEventIds { get; } = new();
+    public List<string> ProbeEventIds { get; } = new();
     public int BodyChars { get; set; }
     internal string QueryHash { get; set; } = "";
+    internal string LensShiftB1Version { get; set; } = "";
+    internal int SparkCandidateCount { get; set; }
+    // Tokens are retained request-locally for a read-only word-overlap telemetry
+    // count. No spark body, event id or token is written to that telemetry line.
+    internal HashSet<string> SparkTokens { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal IReadOnlyList<MemoryTurn> Snapshots { get; set; } = Array.Empty<MemoryTurn>();
     internal List<MemoryTurn> Dependents { get; } = new();
     internal Dictionary<string, DirectRecallRank> DirectRanks { get; } = new(StringComparer.Ordinal);
@@ -44,6 +77,12 @@ internal sealed record DirectRecallRank(int Priority, int Rank);
 internal sealed partial class MemoryStore
 {
     internal string SemanticDataRoot => _root;
+    // Spark exposure is a pure anti-repetition scheduling fact. It never feeds
+    // persona state, affection, mood or any generation-side diagnostic label.
+    private readonly object _sparkExposureLock = new();
+    private readonly Dictionary<string,long> _recentSparkExposure = new(StringComparer.Ordinal);
+    private long _semanticSelectionTurns;
+    internal int SemanticExposureCooldownTurns { get; set; } = 12;
     // Capture immutable raw copies under the store lock. Unit encoding happens
     // after that lock; vector chunks, model work and index I/O belong to worker.
     internal IReadOnlyList<SemanticIndexRecord> CaptureSemanticIndexSnapshot()
@@ -111,6 +150,98 @@ internal sealed partial class MemoryStore
             return records.Concat(generatedRows).Concat(retained).GroupBy(r=>r.WireId,StringComparer.Ordinal).Select(g=>g.First()).ToArray();
         }
     }
+    private static string SemanticWireIdForUnit(LogicalDialogueUnit unit) =>
+        unit.IsMessage ? unit.Key : unit.AnchorEventId;
+
+    // Request-local lexical prefilter. It uses the same token index and document
+    // frequency accounting as the ordinary experience candidate pass, and sends
+    // only wire identities to the private Python child.
+    internal IReadOnlyList<string> SelectSemanticProbeWireIds(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<string>();
+        var catalog = GetExperienceLogicalCatalog(scoped:false, dialogueOnly:false);
+        var available = catalog.Units;
+        if (available.Count == 0) return Array.Empty<string>();
+        bool[] availableMask = Enumerable.Repeat(true, available.Count).ToArray();
+        var documentFrequency = new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
+        var tokenIndex = catalog.TokenIndex;
+        void EnsureDocumentFrequencies(IEnumerable<string> tokensToMeasure)
+        {
+            foreach (string token in tokensToMeasure)
+            {
+                if (!documentFrequency.TryAdd(token, 0)) continue;
+                if (!tokenIndex.TryGetValue(token, out int[]? indices)) continue;
+                int count = 0;
+                foreach (int index in indices)
+                    if (availableMask[index]) count++;
+                documentFrequency[token] = count;
+            }
+        }
+        double TokenIdf(string word) => Math.Log((available.Count + 1d) / (documentFrequency.GetValueOrDefault(word) + 1d));
+        var queryTokens = MemorySemantics.MatchingTokens(query);
+        EnsureDocumentFrequencies(queryTokens);
+        int maxDf = Math.Max(4, available.Count / 15);
+        var ageCut = DateTimeOffset.UtcNow.AddDays(-7);
+        var probes = new List<(LogicalDialogueUnit Unit, double Weight)>();
+        foreach (var unit in available)
+        {
+            if (unit.Timestamp > ageCut) continue;
+            double weight = 0;
+            foreach (string token in queryTokens)
+            {
+                if (token.Length < 2 || !unit.MatchingTokens.Contains(token)) continue;
+                int df = documentFrequency.GetValueOrDefault(token);
+                if (df < 1 || df > maxDf) continue;
+                weight += TokenIdf(token);
+            }
+            if (weight > 0) probes.Add((unit, weight));
+        }
+        return probes.OrderByDescending(p => p.Weight).ThenBy(p => p.Unit.Timestamp)
+            .ThenBy(p => p.Unit.Key, StringComparer.Ordinal)
+            .Take(16).Select(p => SemanticWireIdForUnit(p.Unit)).ToArray();
+    }
+
+    private static SemanticRecallCandidate SemanticHitForSpark(SemanticGeometrySpark spark, LogicalDialogueUnit unit)
+    {
+        // The original eight-argument internal constructor remains the boundary
+        // for harnesses; geometry never needs character offsets for selection.
+        string kind = unit.IsMessage ? "message" : "utterance";
+        return new SemanticRecallCandidate(spark.EventId, spark.TextHash, spark.Score, 0, 0, kind, "", 0);
+    }
+
+    // M-2: the middle node of a two-hop bridge lives in the whitened, unprefixed
+    // q_doc space and often never enters the q_query direct Top-K. Validating it
+    // against result.Candidates therefore vetoed valuable bridges. Validate the
+    // active local derived record directly instead.
+    private bool SemanticBridgeViaPermitted(SemanticRecallResult result, SemanticGeometrySpark spark)
+    {
+        if (spark.BridgeVia.Length == 0) return true;
+        // generated_reply is never an acceptable bridge node.
+        if (spark.BridgeVia.StartsWith("derived/generated_reply/", StringComparison.Ordinal)) return false;
+        string expectedHash = spark.BridgeViaHash;
+        if (expectedHash.Length == 0)
+        {
+            // Legacy payload without bridge_via_hash: fall back to the candidate
+            // copy only for identity, never as the source of permission.
+            var legacy = result.Candidates.FirstOrDefault(c => c.EventId == spark.BridgeVia);
+            if (legacy == null || legacy.Kind is not ("b1" or "note" or "lesson")) return false;
+            expectedHash = legacy.TextHash;
+        }
+        MemoryTurn? source = null;
+        foreach (string kind in new[] { "b1", "note", "lesson" })
+        {
+            var candidate = B1Turn(kind, spark.BridgeVia);
+            if (candidate != null && SemanticTextHash(candidate.Text) == expectedHash)
+            {
+                source = candidate;
+                break;
+            }
+        }
+        if (source == null) return false;
+        return !IsExperienceSuppressed(source.EventId)
+            && IsMentionAllowed(source) && IsNativeSupplyAllowed(source);
+    }
+
     internal static string SemanticTextHash(string text) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 
@@ -124,6 +255,8 @@ internal sealed partial class MemoryStore
         // reflection dependents collected elsewhere remain separately owned.
         trace.Status = "not_requested"; trace.Rejections.Clear(); trace.Top24.Clear(); trace.Top24Units.Clear();
         trace.Anchors.Clear(); trace.Supplied.Clear(); trace.DirectRanks.Clear(); trace.UnitFingerprints.Clear();
+        trace.SparkEventIds.Clear(); trace.ProbeEventIds.Clear(); trace.SparkTokens.Clear();
+        trace.LensShiftB1Version=""; trace.SparkCandidateCount=0;
         trace.Snapshots = Array.Empty<MemoryTurn>(); trace.BodyChars = 0;
         if (result == null) return Array.Empty<MemoryTurn>();
         if (result.Unavailable.Length > 0) { trace.Status = "unavailable:" + result.Unavailable; return Array.Empty<MemoryTurn>(); }
@@ -154,6 +287,16 @@ internal sealed partial class MemoryStore
         var seen = new HashSet<string>(StringComparer.Ordinal);
         bool explicitLookup = identifiers.Length > 0 || quotes.Length > 0 || scope != null || speaker.Length > 0;
         bool pureFillerQuery = !explicitLookup && MemorySemantics.IsLowInfoGreetingOrFiller(query);
+        bool geometryActive = result.Geometry != null && result.RelevancePlan == null;
+        bool geometryHighOrderEmpty = result.OrthogonalSparks.Count == 0 && result.WormholeSparks.Count == 0
+            && result.BridgeSparks.Count == 0 && result.SceneSparks.Count == 0;
+        if (geometryActive && !explicitLookup && result.SalienceGated && geometryHighOrderEmpty)
+        {
+            trace.Status = "available_salience_gated";
+            trace.Snapshots = Array.Empty<MemoryTurn>();
+            return Array.Empty<MemoryTurn>();
+        }
+        long selectionTurn = System.Threading.Interlocked.Increment(ref _semanticSelectionTurns);
         var excludedUnits = new List<LogicalDialogueUnit>();
         var excludedUnitKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (string id in excluded)
@@ -161,11 +304,59 @@ internal sealed partial class MemoryStore
             if (catalog.FindByEvent(id) is { } exUnit && !string.IsNullOrWhiteSpace(exUnit.Text) && excludedUnitKeys.Add(exUnit.Key))
                 excludedUnits.Add(exUnit);
         }
+        // RRF fuses the direct semantic rank with lexical evidence. DPP remains
+        // the primary order for its selected subset so collinear paraphrase
+        // clones cannot crowd out an orthogonal memory; RRF orders the remainder.
+        var queryTokenSet = MemorySemantics.MatchingTokens(query);
+        var lexicalRows = new List<(SemanticRecallCandidate Hit, LogicalDialogueUnit Unit, int Overlap)>();
+        foreach (var hit in result.Candidates.Where(c => c.Kind is "utterance" or "message"))
+        {
+            var lexicalUnit = catalog.ResolveCandidate(hit);
+            if (lexicalUnit == null) continue;
+            int overlap = 0;
+            foreach (string token in queryTokenSet)
+                if (lexicalUnit.MatchingTokens.Contains(token)) overlap++;
+            lexicalRows.Add((hit, lexicalUnit, overlap));
+        }
+        var lexicalRank = lexicalRows
+            .OrderByDescending(r => r.Overlap).ThenByDescending(r => r.Hit.Score)
+            .ThenBy(r => r.Hit.EventId, StringComparer.Ordinal)
+            .Select((r, index) => (r.Hit.EventId, Rank: index + 1))
+            .GroupBy(r => r.EventId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Rank, StringComparer.Ordinal);
+        var fusedRank = result.Candidates.ToDictionary(c => c.EventId, c =>
+        {
+            double semantic = 1d / (60 + Math.Max(1, c.Rank));
+            double lexical = lexicalRank.TryGetValue(c.EventId, out int rank) && rank < int.MaxValue
+                ? 1d / (60 + rank) : 0d;
+            int lexicalAt=lexicalRows.FindIndex(r=>r.Hit.EventId==c.EventId);
+            int overlap=lexicalAt>=0?lexicalRows[lexicalAt].Overlap:0;
+            if (overlap == 0 && geometryActive && c.Rank is > 0 and <= 15) lexical += 0.0005d;
+            return semantic + lexical;
+        }, StringComparer.Ordinal);
+        var dppRank = (result.Geometry?.DppSelectedIds ?? Array.Empty<string>())
+            .Select((id, index) => (id, index)).ToDictionary(p => p.id, p => p.index, StringComparer.Ordinal);
+        // M-1: explicit lookup needs BOTH lexical and semantic evidence, so it
+        // must consume the RRF fused rank too instead of falling back to the raw
+        // semantic score. Three explicit branches keep the ordering auditable.
+        IEnumerable<SemanticRecallCandidate> orderedCandidates;
+        if (geometryActive && explicitLookup)
+            orderedCandidates = result.Candidates
+                .OrderByDescending(c => fusedRank.GetValueOrDefault(c.EventId))
+                .ThenByDescending(c => c.Score);
+        else if (geometryActive && !explicitLookup && dppRank.Count > 0)
+            orderedCandidates = result.Candidates
+                .Select(c => (Hit:c, InDpp:dppRank.ContainsKey(c.EventId), Rank:dppRank.GetValueOrDefault(c.EventId, int.MaxValue)))
+                .OrderByDescending(r => r.InDpp).ThenBy(r => r.Rank)
+                .ThenByDescending(r => fusedRank.GetValueOrDefault(r.Hit.EventId))
+                .Select(r => r.Hit);
+        else
+            orderedCandidates = result.Candidates.OrderByDescending(c => c.Score);
         var perSessionDirect = new Dictionary<string, int>(StringComparer.Ordinal);
         var extraDirectPool = new List<(SemanticRecallCandidate Hit, LogicalDialogueUnit Unit)>();
         var midBandPool = new List<(SemanticRecallCandidate Hit, LogicalDialogueUnit Unit)>();
         bool mentionRecallPolicyActive = _mentionReadPolicy.Value?.Rules.Any(r => r.RecallAllowed) == true;
-        foreach (var candidate in result.Candidates.OrderByDescending(c => c.Score))
+        foreach (var candidate in orderedCandidates)
         {
             if (candidate.Kind is not ("utterance" or "message")) continue;
             if (result.RelevancePlan == null && candidate.Score < 0.33)
@@ -231,7 +422,56 @@ internal sealed partial class MemoryStore
                 candidates.Add((extra.Hit, extra.Unit, false));
         }
         var sparkEventIds = new HashSet<string>(StringComparer.Ordinal);
-        if (result.RelevancePlan == null && !explicitLookup && !pureFillerQuery && candidates.Count < 8 && midBandPool.Count > 0)
+        var geometrySparkChoices = new List<(SemanticGeometrySpark Spark, LogicalDialogueUnit Unit, double Weight)>();
+        if (geometryActive && !explicitLookup && !pureFillerQuery && candidates.Count < 8)
+        {
+            var recentCut = DateTimeOffset.UtcNow.AddHours(-12);
+            foreach (var spark in result.OrthogonalSparks.Concat(result.WormholeSparks)
+                .Concat(result.BridgeSparks).Concat(result.SceneSparks))
+            {
+                var probe = new SemanticRecallCandidate(spark.EventId, spark.TextHash, spark.Score, 0, 0,
+                    "utterance", "", 0);
+                var unit = catalog.ResolveCandidate(probe);
+                if (unit == null || SemanticWireIdForUnit(unit) != spark.EventId || unit.TextHash != spark.TextHash)
+                    continue;
+                if (unit.Timestamp >= recentCut || !Eligible(unit)
+                    || unit.Members.All(t => excluded.Contains(t.EventId))
+                    || candidates.Any(c => MemorySemantics.AreNearDuplicateUnits(c.Unit, unit))
+                    || !SemanticBridgeViaPermitted(result, spark)) continue;
+                double weight = Math.Max(Math.Abs(spark.ZScore), Math.Abs(spark.Score));
+                lock (_sparkExposureLock)
+                {
+                    if (_recentSparkExposure.TryGetValue(unit.Key, out long exposedAt)
+                        && selectionTurn - exposedAt < Math.Max(1, SemanticExposureCooldownTurns))
+                        weight *= 0.35d;
+                }
+                bool sessionTail = catalog.Units.Where(u => u.SessionId == unit.SessionId)
+                    .OrderBy(u => u.Timestamp).TakeLast(2).Any(u => u.Key == unit.Key);
+                if (sessionTail && (unit.Text.Contains('？') || unit.Text.Contains('?')
+                    || unit.Text.Contains("以后再说", StringComparison.Ordinal)
+                    || unit.Text.Contains("下次再", StringComparison.Ordinal)))
+                    weight *= 1.10d;
+                geometrySparkChoices.Add((spark, unit, weight));
+            }
+            trace.SparkCandidateCount = geometrySparkChoices.Count;
+            var chosen = geometrySparkChoices.OrderByDescending(c => c.Weight).FirstOrDefault();
+            if (chosen.Unit != null)
+            {
+                var hit = SemanticHitForSpark(chosen.Spark, chosen.Unit);
+                candidates.Add((hit, chosen.Unit, true));
+                foreach (var member in chosen.Unit.Members)
+                {
+                    sparkEventIds.Add(member.EventId);
+                    trace.SparkEventIds.Add(member.EventId);
+                }
+                foreach (string token in chosen.Unit.MatchingTokens) trace.SparkTokens.Add(token);
+                lock (_sparkExposureLock) _recentSparkExposure[chosen.Unit.Key] = selectionTurn;
+                var via = result.Candidates.FirstOrDefault(c => c.EventId == chosen.Spark.BridgeVia);
+                if (via?.Kind == "b1") trace.LensShiftB1Version = via.EventId;
+            }
+        }
+        if (result.RelevancePlan == null && !explicitLookup && !pureFillerQuery
+            && candidates.Count < 8 && (!geometryActive || geometrySparkChoices.Count == 0) && midBandPool.Count > 0)
         {
             var directSessions = candidates.Select(c => c.Unit.SessionId).ToHashSet(StringComparer.Ordinal);
             var sparkPick = midBandPool
@@ -243,7 +483,12 @@ internal sealed partial class MemoryStore
             {
                 candidates.Add((sparkPick.Hit, sparkPick.Unit, true));
                 foreach (var member in sparkPick.Unit.Members)
+                {
                     sparkEventIds.Add(member.EventId);
+                    trace.SparkEventIds.Add(member.EventId);
+                }
+                foreach (string token in sparkPick.Unit.MatchingTokens) trace.SparkTokens.Add(token);
+                lock (_sparkExposureLock) _recentSparkExposure[sparkPick.Unit.Key] = selectionTurn;
             }
         }
         if (result.RelevancePlan == null && candidates.Count < 8)
@@ -323,8 +568,48 @@ internal sealed partial class MemoryStore
         }
         // Same-owner completion is already contained in each unit. Sequence +/-1
         // is not a second way to guess an experience boundary.
+        var probeEventIds = new List<string>();
+        if (geometryActive && !explicitLookup && result.ProbeWireIds.Count > 0)
+        {
+            foreach (string wireId in result.ProbeWireIds)
+            {
+                if (!result.DocQuantiles.TryGetValue(wireId, out double quantile) || quantile > 0.35d) continue;
+                var unit = catalog.Units.FirstOrDefault(u => SemanticWireIdForUnit(u) == wireId);
+                if (unit == null || selected.ContainsKey(unit.Key) || !Eligible(unit)
+                    || unit.Members.All(t => excluded.Contains(t.EventId))
+                    || selected.Values.Any(s => MemorySemantics.AreNearDuplicateUnits(s, unit))) continue;
+                if (selected.Keys.Count + 1 > 24) break;
+                selected.TryAdd(unit.Key, unit);
+                probeEventIds.AddRange(unit.Members.Select(t => t.EventId));
+                trace.ProbeEventIds.AddRange(unit.Members.Select(t => t.EventId));
+                break;
+            }
+        }
+        if (result.RelevancePlan == null && !explicitLookup && selected.Keys.Count < 24)
+        {
+            foreach (var anchor in selected.Values.OrderBy(u => u.Timestamp).ThenBy(u => u.Key).ToArray())
+            {
+                if (anchor.Members.Count != 1) continue;
+                var counterpart = catalog.Units
+                    .Where(u => u.SessionId == anchor.SessionId && u.Role != anchor.Role
+                        && u.Members.Count == 1 && Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes) <= 5d)
+                    .OrderBy(u => Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes))
+                    .FirstOrDefault();
+                if (counterpart == null || selected.ContainsKey(counterpart.Key) || !Eligible(counterpart)) continue;
+                DateTimeOffset first = counterpart.Timestamp < anchor.Timestamp ? counterpart.Timestamp : anchor.Timestamp;
+                DateTimeOffset last = counterpart.Timestamp < anchor.Timestamp ? anchor.Timestamp : counterpart.Timestamp;
+                bool interposed = catalog.Units.Any(u => u.SessionId == anchor.SessionId
+                    && u.Key != anchor.Key && u.Key != counterpart.Key
+                    && u.Timestamp >= first && u.Timestamp <= last);
+                if (interposed || selected.Keys.Count + 1 > 24) continue;
+                // This is one completion record under the same 24-unit capacity;
+                // no separate character truncation budget is introduced here.
+                selected.TryAdd(counterpart.Key, counterpart);
+                break;
+            }
+        }
         var selectedUnits = selected.Values.OrderBy(u => u.Timestamp).ThenBy(u => u.Key, StringComparer.Ordinal).ToArray();
-        var supplied = new LogicalDialogueSelection(selectedUnits, direct, WithNaturalMemoryContext, sparkEventIds);
+        var supplied = new LogicalDialogueSelection(selectedUnits, direct, WithNaturalMemoryContext, sparkEventIds, probeEventIds);
         foreach (var unit in supplied.Units) trace.UnitFingerprints[unit.Key] = unit.VersionFingerprint;
         trace.Supplied.AddRange(supplied.Select(t => t.EventId));
         trace.BodyChars = RenderSemanticExperiences(supplied).Length;

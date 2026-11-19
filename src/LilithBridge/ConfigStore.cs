@@ -249,6 +249,9 @@ internal sealed partial class BridgeConfig
     // 20s leaves observed cold headroom; completed work returns immediately.
     public const int SemanticDefaultBudgetMs = 20000;
     public int SemanticQueryTimeoutMs { get; set; } = SemanticDefaultBudgetMs;
+    public bool SemanticGeometryEnabled { get; set; } = true;
+    public bool SemanticSceneResonanceEnabled { get; set; } = true;
+    public int SemanticExposureCooldownTurns { get; set; } = 12;
     public bool PromptDumpEnabled { get; set; } = false;
     // Explicit local final-wire observation; off/manifest never persist plaintext.
     // Independent of old provider response/thought dumps. No headers or credentials.
@@ -661,6 +664,10 @@ internal static partial class ConfigStore
             {
                 config.SemanticRecallEnabled=ReadBoolean(semantic,"enabled",false);
                 config.ContextRelevanceEnabled=ReadBoolean(semantic,"context_relevance_enabled",false);
+                config.SemanticGeometryEnabled=ReadBoolean(semantic,"geometry_enabled",true);
+                config.SemanticSceneResonanceEnabled=ReadBoolean(semantic,"scene_resonance_enabled",true);
+                if(semantic.TryGetProperty("exposure_cooldown_turns",out var exposureTurns)&&exposureTurns.TryGetInt32(out int turns))
+                    config.SemanticExposureCooldownTurns=Math.Clamp(turns,1,48);
                 if(semantic.TryGetProperty("context_relevance_timeout_seconds",out var relevanceTimeout)&&relevanceTimeout.TryGetInt32(out int rt))
                     config.ContextRelevanceTimeoutSeconds=Math.Clamp(rt,1,180);
                 if(semantic.TryGetProperty("context_relevance_max_utf8_bytes",out var relevanceBudget)&&relevanceBudget.TryGetInt32(out int rb))

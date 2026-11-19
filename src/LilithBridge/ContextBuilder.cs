@@ -901,7 +901,8 @@ internal static class ContextBuilder
                 suppliedExperienceIds.UnionWith(semantic.Select(t => t.EventId));
                 suppliedMemories.AddRange(semantic);
                 var sparkIds = (semantic as LogicalDialogueSelection)?.SparkEventIds;
-                var view = MemoryStore.RenderExperienceBodyView(semantic, "semantic", semanticTrace!.DirectRanks.Keys, sparkEventIds: sparkIds, includeHeader: false);
+                var probeIds = (semantic as LogicalDialogueSelection)?.ProbeEventIds;
+                var view = MemoryStore.RenderExperienceBodyView(semantic, "semantic", semanticTrace!.DirectRanks.Keys, sparkEventIds: sparkIds, includeHeader: false, probeEventIds: probeIds);
                 onContextBodySources?.Invoke(view);
                 builder.AppendLine();
                 builder.AppendLine("[语义与联想参考（过往片段，可自由决定是否提及）]");

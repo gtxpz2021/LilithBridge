@@ -27,6 +27,7 @@ internal sealed partial class BridgeController
     private void TickSemanticRuntime()
     {
         if(_semanticDestroyed)return;
+        _memory.SemanticExposureCooldownTurns=Math.Clamp(_config.SemanticExposureCooldownTurns,1,48);
         string key=string.Join("|",_memory.SemanticDataRoot,_config.SemanticPythonPath,_config.SemanticWorkerScript,_config.SemanticModelPath,_config.SemanticIndexDirectory);
         if(!_config.SemanticRecallEnabled||key!=_semanticWorkerKey)
         {
@@ -64,6 +65,59 @@ internal sealed partial class BridgeController
     private void StopSemanticRuntime()
     {InterruptSharedActivity();CancelReflectionPreparation("shutdown");_semanticDestroyed=true;_memory.SemanticDiscovery=null;_memory.SemanticIndexCurrent=null;_memory.ReadMethods.Sync("",false);_semanticWorker?.Dispose();}
 
+    private static bool SemanticExplicitLookup(string query) =>
+        MemorySemantics.RecallIdentifiers(query).Length > 0 || UtteranceAttribution.LiteralQuotes(query).Length > 0
+        || MemorySemantics.ParseExperienceRecallQuery(query) != null
+        || MemorySemantics.RequestedHistorySpeaker(query).Length > 0;
+
+    private static int EffectiveSemanticCharacters(string? text)
+    {
+        if(string.IsNullOrWhiteSpace(text)) return 0;
+        int count=0;
+        foreach(char value in text)
+            if(char.IsLetterOrDigit(value)) count++;
+        return count;
+    }
+
+    private IReadOnlyList<string> BuildRecentSemanticWireIds(DialogueRequest owner)
+    {
+        var history=_memory.GetRequestHistory(_config);
+        return history.Where(t=>t.EventId.Length>0&&t.EventId!=owner.UserEventId
+                &&t.DeliveryState is "received" or "delivered"&&t.Role is "user" or "assistant"
+                &&EffectiveSemanticCharacters(t.Text)>=8)
+            .OrderBy(t=>t.Timestamp).ThenBy(t=>t.Sequence).ThenBy(t=>t.EventId,StringComparer.Ordinal)
+            .TakeLast(6).Select(t=>t.EventId).ToArray();
+    }
+
+    private string BuildSemanticSceneText(bool enabled)
+    {
+        if(!enabled) return "";
+        var snapshot=_sensoryClient.Latest;
+        if(!snapshot.Available) return "";
+        var clauses=new List<string>();
+        string tail=snapshot.TailText.Trim();
+        if(tail.StartsWith('['))
+        {
+            int end=tail.IndexOf("] ",StringComparison.Ordinal);
+            if(end>=0) tail=tail[(end+2)..];
+        }
+        foreach(string clause in tail.Split('；', StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries))
+        {
+            if(clause.Length==0||clause.Contains("心情",StringComparison.Ordinal)
+                ||clause.Contains("情绪",StringComparison.Ordinal)||clause.Contains("开心",StringComparison.Ordinal)
+                ||clause.Contains("难过",StringComparison.Ordinal)||clause.Contains("生气",StringComparison.Ordinal)
+                ||clause.Contains("高兴",StringComparison.Ordinal)||clause.Contains("焦虑",StringComparison.Ordinal)
+                ||clause.Contains("兴奋",StringComparison.Ordinal)||clause.Contains("孤独",StringComparison.Ordinal)
+                ||clause.Contains("寂寞",StringComparison.Ordinal)||clause.Contains("压力",StringComparison.Ordinal))
+                continue;
+            clauses.Add(clause.TrimEnd('。'));
+        }
+        if(snapshot.BeatBpm>0) clauses.Add($"背景节拍约{snapshot.BeatBpm:F0}BPM");
+        if(snapshot.PendingFocusNote is {FocusMinutes:>0}) clauses.Add($"连续专注约{snapshot.PendingFocusNote.FocusMinutes:F0}分钟");
+        string scene=string.Join("；",clauses.Distinct(StringComparer.Ordinal).Take(3));
+        return scene.Length<=64?scene:scene[..64];
+    }
+
     // Called before any request scope is opened. No using/Unity/MemoryStore
     // mutable object is carried into the worker task.
     private void QueueSemanticDialogue(DialogueRequest owner,long generation,string query,Action continuation)
@@ -96,8 +150,15 @@ internal sealed partial class BridgeController
         // Capture on the owner before yielding; the worker receives copies only.
         var snapshotWatch=Stopwatch.StartNew();
         Task<SemanticRecallResult> discovery;
+        bool explicitLookup=SemanticExplicitLookup(query);
+        bool enableGeometry=_config.SemanticGeometryEnabled&&!explicitLookup;
+        var recentWireIds=enableGeometry?BuildRecentSemanticWireIds(owner):Array.Empty<string>();
+        var sceneText=enableGeometry&&_config.SemanticSceneResonanceEnabled
+            ?BuildSemanticSceneText(true):"";
+        var probeWireIds=enableGeometry?_memory.SelectSemanticProbeWireIds(query):Array.Empty<string>();
         using(PreparationTiming.Use(owner.PreparationTrace))
-            discovery=_memory.DiscoverSemanticAsync(owner.Id,generation,query,SemanticDomain.All,deadline,owner.Token);
+            discovery=_memory.DiscoverSemanticAsync(owner.Id,generation,query,SemanticDomain.All,deadline,owner.Token,
+                recentWireIds,sceneText,enableGeometry,probeWireIds,owner.UserEventId);
         LastSemanticSnapshotMs=snapshotWatch.Elapsed.TotalMilliseconds;
         Task.Run(async()=>
         {
@@ -184,6 +245,31 @@ internal sealed partial class BridgeController
             return completion.Task;
         };
     }
+    private void ObserveSemanticTelemetry(ApiResult result)
+    {
+        // Read-only observation only. These numbers never adjust retrieval,
+        // persona state, scheduling weights or any affection-like value.
+        try
+        {
+            double cacheRatio=result.PromptCacheHitTokens/(double)Math.Max(1,result.PromptTokens);
+            NativeEventLog.Trace("telemetry.kv_cache","mod","system","provider prompt cache usage observed",
+                "prompt_tokens="+result.PromptTokens+";cache_hit_tokens="+result.PromptCacheHitTokens
+                +";cache_hit_ratio="+cacheRatio.ToString("0.####",System.Globalization.CultureInfo.InvariantCulture));
+            var trace=result.DialogueRequest?.SemanticMaterial?.Current?.Trace;
+            if(trace==null||trace.SparkTokens.Count==0) return;
+            var replyTokens=MemorySemantics.MatchingTokens(result.DeliveredText.Length>0?result.DeliveredText:result.Text);
+            int overlap=replyTokens.Count(trace.SparkTokens.Contains);
+            double overlapRatio=overlap/(double)Math.Max(1,trace.SparkTokens.Count);
+            NativeEventLog.Trace("telemetry.spark_adoption","mod","system","semantic spark word-overlap observed",
+                "spark_candidates="+trace.SparkCandidateCount+";spark_supplied="+trace.SparkEventIds.Count
+                +";token_overlap="+overlap+";overlap_ratio="+overlapRatio.ToString("0.####",System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch
+        {
+            // Telemetry must never affect or fail a completed delivery.
+        }
+    }
+
     private SemanticPreparedMaterial BuildFreshSemanticMaterial(DialogueRequest owner,long generation,string query,BridgeConfig config,string extra,int revision)
     {
         var footprint=new List<MemoryTurn>();var recalled=new List<MemoryTurn>();var trace=new SemanticRecallTrace();trace.BindQuery(query);

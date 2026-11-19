@@ -15,7 +15,8 @@ internal sealed class SemanticSnapshotUnavailableException : IOException
 // snapshot locks/I/O cannot be preempted; the owner continuation queue is separate.
 internal sealed record SemanticDiscoveryRequest(string OwnerId,long Generation,string Query,
     string DataRoot,string SessionId,SemanticDomain Domains,IReadOnlyList<SemanticIndexRecord> Snapshot,
-    DateTimeOffset Deadline);
+    DateTimeOffset Deadline,IReadOnlyList<string>? RecentWireIds=null,string SceneText="",
+    bool EnableGeometry=false,IReadOnlyList<string>? ProbeWireIds=null,string QueryWireId="");
 
 internal sealed partial class MemoryStore
 {
@@ -23,7 +24,9 @@ internal sealed partial class MemoryStore
     // Installed with the existing controller worker. No extra process or cache.
     internal Func<string, bool>? SemanticIndexCurrent { get; set; }
     internal async Task<SemanticRecallResult> DiscoverSemanticAsync(string owner,long generation,string query,
-        SemanticDomain domains,DateTimeOffset deadline,CancellationToken token)
+        SemanticDomain domains,DateTimeOffset deadline,CancellationToken token,
+        IReadOnlyList<string>? recentWireIds=null,string sceneText="",bool enableGeometry=false,
+        IReadOnlyList<string>? probeWireIds=null,string queryWireId="")
     {
         using var callTiming=PreparationTiming.Measure("semantic.discovery_call_total");
         token.ThrowIfCancellationRequested();
@@ -45,7 +48,9 @@ internal sealed partial class MemoryStore
             if(DateTimeOffset.UtcNow>=deadline)
                 return new(owner,SemanticTextHash(query),SemanticRecallWorker.ModelRevision,"none",Array.Empty<SemanticRecallCandidate>(),
                     "semantic_deadline_snapshot",false,_root,_sessionId,domains,Generation:generation);
-            var request=new SemanticDiscoveryRequest(owner,generation,query,_root,_sessionId,domains,snapshot,deadline);
+            var request=new SemanticDiscoveryRequest(owner,generation,query,_root,_sessionId,domains,snapshot,deadline,
+                recentWireIds??Array.Empty<string>(),sceneText?? "",enableGeometry,
+                probeWireIds??Array.Empty<string>(),queryWireId?? "");
             long queued=Stopwatch.GetTimestamp();
             return await Task.Run(async()=>
             {

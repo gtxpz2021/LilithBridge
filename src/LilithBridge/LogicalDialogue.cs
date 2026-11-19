@@ -275,7 +275,8 @@ internal sealed class LogicalDialogueSelection : IReadOnlyList<MemoryTurn>
 {
     private readonly MemoryTurn[] _records;
     public LogicalDialogueSelection(IEnumerable<LogicalDialogueUnit> units, IEnumerable<string>? directHitEventIds = null,
-        Func<MemoryTurn, MemoryTurn>? materialize = null, IEnumerable<string>? sparkEventIds = null)
+        Func<MemoryTurn, MemoryTurn>? materialize = null, IEnumerable<string>? sparkEventIds = null,
+        IEnumerable<string>? probeEventIds = null)
     {
         var chosen = units.ToArray();
         foreach (var group in chosen.GroupBy(u => u.Key, StringComparer.Ordinal))
@@ -286,6 +287,7 @@ internal sealed class LogicalDialogueSelection : IReadOnlyList<MemoryTurn>
             .Select(t => materialize?.Invoke(t.Copy()) ?? t.Copy()).ToArray();
         DirectHitEventIds = Array.AsReadOnly((directHitEventIds ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray());
         SparkEventIds = Array.AsReadOnly((sparkEventIds ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray());
+        ProbeEventIds = Array.AsReadOnly((probeEventIds ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray());
     }
     public static LogicalDialogueSelection FromRecords(IEnumerable<MemoryTurn> records, IEnumerable<string>? directHitEventIds = null,
         IEnumerable<string>? sparkEventIds = null)
@@ -293,6 +295,7 @@ internal sealed class LogicalDialogueSelection : IReadOnlyList<MemoryTurn>
     public IReadOnlyList<LogicalDialogueUnit> Units { get; }
     public IReadOnlyList<string> DirectHitEventIds { get; }
     public IReadOnlyList<string> SparkEventIds { get; }
+    public IReadOnlyList<string> ProbeEventIds { get; }
     public int Count => _records.Length;
     public MemoryTurn this[int index] => _records[index].Copy();
     public IEnumerator<MemoryTurn> GetEnumerator() => _records.Select(t => t.Copy()).GetEnumerator();

@@ -434,6 +434,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             Actor = "game",
             Details = "native_menu=" + kind + ";" + details
         });
+        NotifySensoryHostEvent("native_menu_open", kind);
         NativeEventLog.Trace("native.menu." + kind, "game", "player", text, details);
     }
 
@@ -737,6 +738,8 @@ internal sealed partial class BridgeController : MonoBehaviour
             if (drag && !_lastDrag && !_leftDragging)
             {
                 _memory.AddEvent("character.drag", "Lilith was dragged by the player", "", "lilith");
+                if (_aiSpeechActive || NativeBubblePresenter.HasPendingReply)
+                    NotifySensoryHostEvent("speech_interrupted", "dragged_mid_speech");
                 _sessionState.AddSceneEvent(new LilithSceneEvent
                 {
                     Kind = SceneEventKind.DragStart,
@@ -1238,6 +1241,8 @@ internal sealed partial class BridgeController : MonoBehaviour
                 && IsOnLilith(mouse))
             {
                 _leftDragging = true;
+                if (_aiSpeechActive || NativeBubblePresenter.HasPendingReply)
+                    NotifySensoryHostEvent("speech_interrupted", "dragged_mid_speech");
                 _memory.AddEvent("character.drag", "Lilith was dragged by the player",
                     string.Format("start={0:0},{1:0};current={2:0},{3:0}",
                         _leftDownPosition.x, _leftDownPosition.y, mouse.x, mouse.y),
@@ -2182,6 +2187,8 @@ internal sealed partial class BridgeController : MonoBehaviour
         _proactiveRequest = false;
         QueueGeneratedReply(result);
         _queuedReplyBlockedByStory = HasActiveNativeStory();
+        if (result.LatencyMs >= 6000)
+            NotifySensoryHostEvent("cloud_stall", result.LatencyMs.ToString());
         NativeEventLog.Trace("model.reply", "deepseek", "lilith", result.Text,
             $"request_id={result.RequestId};attempt_id={result.Response.AttemptId};" +
             $"response_outcome={result.Response.Outcome};" +

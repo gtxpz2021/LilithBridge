@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
@@ -41,6 +42,8 @@ internal sealed record SensorySnapshot(
         0, false, false, "relaxed", "offline", "off", "offline", false, "", 0, null, null, null, 0.0, 0.0, true);
 }
 
+internal sealed record SensoryHostEvent(string Kind, string Detail, long TsMs);
+
 internal sealed record SensoryHostReport(
     int HostPid,
     int[]? LilithRect,
@@ -51,7 +54,8 @@ internal sealed record SensoryHostReport(
     int InputLength,
     string? SilentAction,
     string? SilentReason,
-    string[]? MediaAllowedSources);
+    string[]? MediaAllowedSources,
+    IReadOnlyList<SensoryHostEvent>? HostEvents = null);
 
 /// <summary>
 /// Non-blocking out-of-process loopback client for LilithBridge's modular Sensory Sidecar.
@@ -130,10 +134,14 @@ internal sealed class SensorySidecarClient : IDisposable
         }
 
         double sincePush = _lastHostPushTicks <= 0 ? 99.0 : (double)(nowTicks - _lastHostPushTicks) / Stopwatch.Frequency;
-        if (!string.IsNullOrEmpty(hostReport.SilentAction) || sincePush >= 1.5)
+        bool hasEvents = hostReport.HostEvents is { Count: > 0 };
+        if (!string.IsNullOrEmpty(hostReport.SilentAction) || hasEvents || sincePush >= 1.5)
         {
             _lastHostPushTicks = nowTicks;
             string postUrl = _endpoint + "/api/host-state";
+            var serializedEvents = hasEvents
+                ? hostReport.HostEvents!.Select(e => new { kind = e.Kind, detail = e.Detail, ts_ms = e.TsMs }).ToArray()
+                : null;
             _ = Task.Run(() => PostJsonAsync(postUrl, new
             {
                 host_pid = hostReport.HostPid,
@@ -145,7 +153,8 @@ internal sealed class SensorySidecarClient : IDisposable
                 input_length = hostReport.InputLength,
                 silent_action = hostReport.SilentAction ?? "",
                 silent_reason = hostReport.SilentReason ?? "",
-                media_allowed_sources = hostReport.MediaAllowedSources
+                media_allowed_sources = hostReport.MediaAllowedSources,
+                host_events = serializedEvents
             }, 250));
         }
     }

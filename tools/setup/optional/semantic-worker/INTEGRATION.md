@@ -7,7 +7,7 @@ optional/semantic-worker/semantic_worker.py
 optional/semantic-worker/model-manifest.json
 ```
 
-可复制本包内说明和模型核验小脚本，勿把任何旧环境目录整包复制。生产 worker SHA-256 为 `6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036`，相邻模型清单 SHA-256 为 `c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17`。构建发行包时应核对相应文件身份。无需把测试 launcher 当生产代码；本包不含假模型 launcher。
+可复制本包内说明和模型核验小脚本，勿把任何旧环境目录整包复制。生产 worker SHA-256 为 `1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0`，相邻模型清单 SHA-256 为 `c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17`。构建发行包时应核对相应文件身份。无需把测试 launcher 当生产代码；本包不含假模型 launcher。
 
 只读核对的产品调用约定：配置项 `SemanticPythonPath`、`SemanticWorkerScript`、`SemanticModelPath`、`SemanticIndexDirectory` 由用户实际路径解析；产品把 worker 所在目录的 `model-manifest.json` 作为 manifest。启动参数是 `-u <worker.py> --model <local model> --manifest <adjacent manifest> --index <index>`，working directory 为 worker 所在目录；stdin/stdout 为 UTF-8 JSONL。无需也不应配置 CMD 为 worker。
 

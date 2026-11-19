@@ -201,7 +201,7 @@ internal static class ActionCatalog
             "perk_yawn", "stretch", "think", "confuse", "blush", "shy",
             "shy_giggle", "giggle", "happy", "hop", "pout", "tsundere",
             "stern_smile", "flirt", "look", "look_around", "tilt_head",
-            "turn_head", "rub_face", "rub_head", "rub_eyes", "beside_pat",
+            "turn_head", "rub_face", "rub_eyes", "beside_pat",
             "hug", "hug_ask", "sleep", "sleepy", "drowsy", "drowsy_slump",
             "lie", "pillow_lie", "stand_up", "snap", "arrange", "music",
             "magic", "magic_cast", "cake", "cake_up", "cake_idle", "cake_end",

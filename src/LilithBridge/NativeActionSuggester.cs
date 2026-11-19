@@ -56,8 +56,6 @@ internal static class NativeActionSuggester
             return "look_around";
         if (HasAny(text, "担心", "心疼", "关心", "陪你", "别难过"))
             return "tilt_head";
-        if (HasAny(text, "摸头", "摸你", "揉头", "摸头发", "摸摸头", "捏脸"))
-            return "rub_head";
         if (HasAny(text, "摸脸", "揉脸", "戳脸", "摸摸脸", "捏脸"))
             return "rub_face";
         if (HasAny(text, "摸手", "捏手", "拉手", "牵手", "握手"))

@@ -290,9 +290,18 @@ internal sealed class SemanticRecallWorker : IDisposable
             }
             PreparationTiming.Current?.Value("semantic_completed_watermark",target);
             phase="query";
-            var r=await CommandAsync("query",new(){["text"]=request.Query,["query_hash"]=queryHash,
+            var commandData=new Dictionary<string,object?>{["text"]=request.Query,["query_hash"]=queryHash,
                 ["conversation_generation"]=request.Generation,["model_revision"]=ModelRevision,
-                ["delay_ms"]=_testMode?TestQueryDelayMs:0},linked.Token).ConfigureAwait(false);
+                ["delay_ms"]=_testMode?TestQueryDelayMs:0};
+            if(request.EnableGeometry)
+            {
+                commandData["enable_geometry"]=true;
+                commandData["recent_event_ids"]=request.RecentWireIds??Array.Empty<string>();
+                commandData["scene_text"]=request.SceneText?? "";
+                commandData["probe_event_ids"]=request.ProbeWireIds??Array.Empty<string>();
+                commandData["query_event_id"]=request.QueryWireId?? "";
+            }
+            var r=await CommandAsync("query",commandData,linked.Token).ConfigureAwait(false);
             linked.Token.ThrowIfCancellationRequested();
             if(r.GetProperty("status").GetString()=="error")return Unavailable("semantic_query_failed");
             if(epoch!=Epoch||r.GetProperty("status").GetString()!="ok"||r.GetProperty("model_revision").GetString()!=ModelRevision
@@ -320,10 +329,23 @@ internal sealed class SemanticRecallWorker : IDisposable
             PreparationTiming.Current?.Value("semantic_message_candidates",candidates.Count(c=>c.Kind=="message"));
             PreparationTiming.Current?.Value("semantic_b1_hits",candidates.Count(c=>c.Kind=="b1"));
             PreparationTiming.Current?.Value("semantic_thought_hits",candidates.Count(c=>c.Kind is "note" or "lesson"));
+            var geometry=request.EnableGeometry?ParseGeometry(r):null;
+            var orthogonal=request.EnableGeometry?ParseGeometrySparks(r,"orthogonal_sparks"):SemanticGeometrySpark.Empty;
+            var wormholes=request.EnableGeometry?ParseGeometrySparks(r,"wormhole_sparks"):SemanticGeometrySpark.Empty;
+            var bridges=request.EnableGeometry?ParseGeometrySparks(r,"bridge_sparks"):SemanticGeometrySpark.Empty;
+            var sceneSparks=request.EnableGeometry?ParseGeometrySparks(r,"scene_sparks"):SemanticGeometrySpark.Empty;
+            var docSims=request.EnableGeometry?ParseNumberMap(r,"doc_sims"):new Dictionary<string,double>();
+            var docQuantiles=request.EnableGeometry?ParseNumberMap(r,"doc_quantiles"):new Dictionary<string,double>();
+            bool salienceGated=request.EnableGeometry&&r.TryGetProperty("salience_gated",out var gated)&&gated.ValueKind==JsonValueKind.True;
+            double salienceZ=request.EnableGeometry&&r.TryGetProperty("salience_z",out var salience)&&salience.TryGetDouble(out double z)?z:0;
             if (_indexDirty) ScheduleBackgroundCommit();
             return new(request.OwnerId,queryHash,ModelRevision,epoch+":"+r.GetProperty("index_generation").GetInt64(),
                 candidates,DataRoot:request.DataRoot,SessionId:request.SessionId,Domains:request.Domains,
-                TargetWatermark:target,CompletedWatermark:target,Generation:request.Generation);
+                TargetWatermark:target,CompletedWatermark:target,Generation:request.Generation){
+                Geometry=geometry,SalienceGated=salienceGated,SalienceZ=salienceZ,
+                OrthogonalSparks=orthogonal,WormholeSparks=wormholes,BridgeSparks=bridges,
+                SceneSparks=sceneSparks,DocSims=docSims,DocQuantiles=docQuantiles,
+                ProbeWireIds=request.ProbeWireIds??Array.Empty<string>()};
         }
         catch(OperationCanceledException)
         {
@@ -336,6 +358,48 @@ internal sealed class SemanticRecallWorker : IDisposable
             return Unavailable("semantic_worker_failed");
         }
         finally{if(held)_discovery.Release();}
+    }
+    private static SemanticGeometryMetrics? ParseGeometry(JsonElement reply)
+    {
+        if (!reply.TryGetProperty("geometry", out JsonElement geometry) || geometry.ValueKind != JsonValueKind.Object)
+            return null;
+        var dpp=geometry.TryGetProperty("dpp_selected_ids",out var ids)&&ids.ValueKind==JsonValueKind.Array
+            ? ids.EnumerateArray().Select(v=>v.GetString()?? "").Where(v=>v.Length>0).ToArray():Array.Empty<string>();
+        var orthSins=new Dictionary<string,double>(StringComparer.Ordinal);
+        if(geometry.TryGetProperty("orth_sins",out var sins)&&sins.ValueKind==JsonValueKind.Object)
+            foreach(var property in sins.EnumerateObject())
+                if(property.Value.TryGetDouble(out double value)) orthSins[property.Name]=value;
+        static double Number(JsonElement element,string name,double fallback=0)=>element.TryGetProperty(name,out var value)&&value.TryGetDouble(out double parsed)?parsed:fallback;
+        return new(Number(geometry,"novelty_eta"),Number(geometry,"tortuosity"),
+            Number(geometry,"net_displacement_rad"),Number(geometry,"arc_length_rad"),
+            Number(geometry,"step_jump_ratio"),(int)Number(geometry,"whitening_d"),dpp,orthSins);
+    }
+    private static IReadOnlyList<SemanticGeometrySpark> ParseGeometrySparks(JsonElement reply,string property)
+    {
+        if(!reply.TryGetProperty(property,out var array)||array.ValueKind!=JsonValueKind.Array)
+            return SemanticGeometrySpark.Empty;
+        var result=new List<SemanticGeometrySpark>();
+        foreach(var item in array.EnumerateArray())
+        {
+            string eventId=item.TryGetProperty("event_id",out var id)?id.GetString()?? "":"";
+            if(eventId.Length==0) continue;
+            string textHash=item.TryGetProperty("text_hash",out var hash)?hash.GetString()?? "":"";
+            double score=item.TryGetProperty("score",out var scoreValue)&&scoreValue.TryGetDouble(out double parsedScore)?parsedScore:0;
+            double z=item.TryGetProperty("z_score",out var zValue)&&zValue.TryGetDouble(out double parsedZ)?parsedZ:0;
+            string via=item.TryGetProperty("bridge_via",out var viaValue)?viaValue.GetString()?? "":"";
+            double viaScore=item.TryGetProperty("bridge_score",out var viaScoreValue)&&viaScoreValue.TryGetDouble(out double parsedViaScore)?parsedViaScore:0;
+            string viaHash=item.TryGetProperty("bridge_via_hash",out var viaHashValue)?viaHashValue.GetString()?? "":"";
+            result.Add(new(eventId,textHash,score,z,via,viaScore,viaHash));
+        }
+        return result;
+    }
+    private static Dictionary<string,double> ParseNumberMap(JsonElement reply,string property)
+    {
+        var result=new Dictionary<string,double>(StringComparer.Ordinal);
+        if(!reply.TryGetProperty(property,out var map)||map.ValueKind!=JsonValueKind.Object) return result;
+        foreach(var item in map.EnumerateObject())
+            if(item.Value.TryGetDouble(out double value)) result[item.Name]=value;
+        return result;
     }
     private int _backgroundCommitQueued;
     private void ScheduleBackgroundCommit()

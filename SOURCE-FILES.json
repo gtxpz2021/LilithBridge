@@ -283,8 +283,8 @@
     },
     {
       "path": "optional/semantic-worker/INTEGRATION.md",
-      "bytes": 2287,
-      "sha256": "77f884adbbdd1b1ef6dcbd28b8c3b221fdfcfa20e8d4114e9ef1bdb3409302a3"
+      "bytes": 2307,
+      "sha256": "8261f25cdebdbf99d4259f7b307afec4c9a75ddf2cbf9777d4e0782f77a3049d"
     },
     {
       "path": "optional/semantic-worker/MODEL-ACQUISITION.md",
@@ -313,8 +313,18 @@
     },
     {
       "path": "optional/semantic-worker/semantic_worker.py",
-      "bytes": 8845,
-      "sha256": "6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036"
+      "bytes": 34529,
+      "sha256": "1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0"
+    },
+    {
+      "path": "optional/semantic-worker/test_semantic_ab_bench.py",
+      "bytes": 21047,
+      "sha256": "8aa49d93d759f45ce3ba04ef0d3748374821d2188b275f0c4c270fbe8db97ee3"
+    },
+    {
+      "path": "optional/semantic-worker/test_semantic_geometry.py",
+      "bytes": 11798,
+      "sha256": "c8264868c89b5c74203bc026d3ce2d6dcb642f8c2ea181f96a45ab33430a6652"
     },
     {
       "path": "optional/semantic-worker/verify_model_files.py",
@@ -338,13 +348,13 @@
     },
     {
       "path": "src/LilithBridge/ActionCapability.cs",
-      "bytes": 9885,
-      "sha256": "806791e0555bc266a92c4f875028233361a74e9ef578c44a0cc764e2b621ecf1"
+      "bytes": 10221,
+      "sha256": "73ebc30719357aefc20414fbf348bbc00b3066e92c0d09a921f46feeae82793a"
     },
     {
       "path": "src/LilithBridge/ActionCatalog.cs",
-      "bytes": 10454,
-      "sha256": "d804d47d883aef0481ddcbd164fde73532b44143783a2b7b3348b576f4adbd54"
+      "bytes": 10673,
+      "sha256": "199eb0d2cf8e5ffe5542a96728a3cea55aa0fed82316a232202cff5bce719627"
     },
     {
       "path": "src/LilithBridge/ActionDirector.cs",
@@ -443,8 +453,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.Delivery.cs",
-      "bytes": 26203,
-      "sha256": "5e4546f89bfe52ff51c3abc12932c06f3a16ae057a2bfea1f754aa438192dd9f"
+      "bytes": 27171,
+      "sha256": "39a6391c34dded1eb30bbdcbd9a8356c40c8a70e7fa9aea12af014f5f3b6b6bf"
     },
     {
       "path": "src/LilithBridge/BridgeController.DisplayHandoff.cs",
@@ -548,8 +558,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.SemanticRecall.cs",
-      "bytes": 15423,
-      "sha256": "df3b326005435707dccb218215a286a10eb2c4d12a3400171e47d882f79267e9"
+      "bytes": 20803,
+      "sha256": "04730d722141fe2be1ebb24236a9d3567779486029e59bb7cc952ad0a21a6713"
     },
     {
       "path": "src/LilithBridge/BridgeController.SharedActivity.cs",
@@ -568,8 +578,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.cs",
-      "bytes": 146092,
-      "sha256": "114e364834c947fab4b8cefeb3d4b3087c82f266085828559a903e7160d50365"
+      "bytes": 147655,
+      "sha256": "d6f559976dfccb2c1a3fe7b721f5526b135c663dddc29ef5f62531285131ac2a"
     },
     {
       "path": "src/LilithBridge/BubbleChunks.cs",
@@ -638,13 +648,13 @@
     },
     {
       "path": "src/LilithBridge/ConfigStore.cs",
-      "bytes": 75540,
-      "sha256": "80ea73ce9d45fdbd8dd5474378f9fec4f58cd6002a7d1d4cd113a9af895457f5"
+      "bytes": 76205,
+      "sha256": "2976ed054819661617b09fcc2930c29cb216eeaacb114ddc4662a3a1f82f17f7"
     },
     {
       "path": "src/LilithBridge/ContextBuilder.cs",
-      "bytes": 65162,
-      "sha256": "e0512494bb97f83d5726361ca5a290854f0c84231f0198581172db73400a164e"
+      "bytes": 66886,
+      "sha256": "0a0560ec5e1c2747c571e27e4908872f5a2f41eb2f4048f47b0aa0ab1c9008b2"
     },
     {
       "path": "src/LilithBridge/ContextDiscovery.cs",
@@ -998,13 +1008,13 @@
     },
     {
       "path": "src/LilithBridge/LogicalDialogue.cs",
-      "bytes": 18147,
-      "sha256": "0e8152fe34c98f959fdcebba49b2633d228dfbb8f4b6acd9bdad675dbe57f76e"
+      "bytes": 18684,
+      "sha256": "ea413c47e55f72d8af1065d82d82004948f2f99e648e7d940433c4f037d3bf0d"
     },
     {
       "path": "src/LilithBridge/LogicalMessageRead.cs",
-      "bytes": 22099,
-      "sha256": "9c1d7b80005452018ee429b663c2cb1cf9f1076982e013b37cb5352afc6ab78c"
+      "bytes": 22921,
+      "sha256": "d38fd303463d1d5be2de44cc7ab596d388c40ea0a6f1a7cec94ac4265f8b829c"
     },
     {
       "path": "src/LilithBridge/MemoTextAccess.cs",
@@ -1313,8 +1323,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.SemanticRecall.cs",
-      "bytes": 24242,
-      "sha256": "24fa04bff2947f70864903df4b6e82fa5be9d554bcbc6105f142c86e22e918e9"
+      "bytes": 42166,
+      "sha256": "9a1d032d0c477492f2be5e5fc1d81eaba29b812e1f3858067b22516fdbcdeaa6"
     },
     {
       "path": "src/LilithBridge/MemoryStore.SemanticRuntime.cs",
@@ -1368,8 +1378,8 @@
     },
     {
       "path": "src/LilithBridge/NativeActionSuggester.cs",
-      "bytes": 5710,
-      "sha256": "50a27e186d4410be44e7c874ade68138d738b97c7561826c53bf93ba1aead89e"
+      "bytes": 5717,
+      "sha256": "c832497c59c5f224a6d549079853b914aec49e553c12fc66582db96dd8567570"
     },
     {
       "path": "src/LilithBridge/NativeAnimationCatalog.cs",
@@ -1898,13 +1908,13 @@
     },
     {
       "path": "src/LilithBridge/SemanticDiscovery.cs",
-      "bytes": 5239,
-      "sha256": "ab2c0d3e38cba330294eae5ab2943a94b5fc706abafd3098c91201575f250271"
+      "bytes": 5809,
+      "sha256": "3c8cb0608cb826ba6f8a26c6edd8a8af833701d91fae7cd117e7fe8e829a1760"
     },
     {
       "path": "src/LilithBridge/SemanticRecallWorker.cs",
-      "bytes": 23873,
-      "sha256": "c2ae16bcb3cd5c7e5b304c0ef8bc24d583240dadbc37b9243772d0aeb46814f0"
+      "bytes": 29294,
+      "sha256": "41a3077ae7ebf91d95ca999f7ce3446980b25ac3126f3fc2360c7b2bf0f8b54f"
     },
     {
       "path": "src/LilithBridge/SemanticRequestMaterial.cs",
@@ -2084,7 +2094,7 @@
     {
       "path": "tools/installer-source/release-profile.json",
       "bytes": 2414,
-      "sha256": "a12d69a31545a6b39ac682e2041d392944c1ef9cf3ac91f98760abc88eb57239"
+      "sha256": "0006848fe4eeab5f63ded8d903926eb478eef76d96d738208f0a0b795b9e15ae"
     },
     {
       "path": "tools/installer-source/src/BundledStory.cs",
@@ -2214,7 +2224,7 @@
     {
       "path": "tools/installer-source/src/Wizard.Provisioning.cs",
       "bytes": 13151,
-      "sha256": "8f4a0624525620f0e507888d26318d765046b095a51ca7d14b5681f3358e6fd6"
+      "sha256": "50f0cb05a86e8db1b13a4e005eddac29f4c03d1339e3166e19cce706f7c3341c"
     },
     {
       "path": "tools/installer-source/src/Wizard.Session.cs",
@@ -2289,7 +2299,7 @@
     {
       "path": "tools/setup/optional-recall/verify_local_recall.py",
       "bytes": 5100,
-      "sha256": "f02741408241b5abf28dfe198b356e907357b823070adfe6069ebca017e9fbb9"
+      "sha256": "9aaa9669d3708c456314288d373046bf845f649da43062ccf4cae9fe205513dc"
     },
     {
       "path": "tools/setup/optional-recall/verify_runtime.py",
@@ -2304,7 +2314,7 @@
     {
       "path": "tools/setup/optional/semantic-worker/INTEGRATION.md",
       "bytes": 2307,
-      "sha256": "596af364f49b5b11ba137860d0c4602ed74dde024aba7094f3cb34c83ff80172"
+      "sha256": "8261f25cdebdbf99d4259f7b307afec4c9a75ddf2cbf9777d4e0782f77a3049d"
     },
     {
       "path": "tools/setup/optional/semantic-worker/MODEL-ACQUISITION.md",
@@ -2333,8 +2343,8 @@
     },
     {
       "path": "tools/setup/optional/semantic-worker/semantic_worker.py",
-      "bytes": 8845,
-      "sha256": "6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036"
+      "bytes": 34529,
+      "sha256": "1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0"
     },
     {
       "path": "tools/setup/optional/semantic-worker/verify_model_files.py",
@@ -2350,6 +2360,16 @@
       "path": "tools/setup/story/SOURCE.json",
       "bytes": 1862,
       "sha256": "0c28a733af1cd5cb0e7770e717f441c959125301534e8cfe5e3fe4655532bd8d"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Sensory.cs",
+      "bytes": 17333,
+      "sha256": "ebf7c15fde9c07a5132aff4b7b3e32a1188ffb11f52f47c91f408851419b4b75"
+    },
+    {
+      "path": "src/LilithBridge/SensorySidecarClient.cs",
+      "bytes": 17684,
+      "sha256": "4229a550d4e37b66d248aa6457de24cd732eaae093a7a2f96f8c9e03f3950d70"
     }
   ]
 }

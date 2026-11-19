@@ -23,7 +23,9 @@ internal static class ActionCapability
         LilithActionType.Falled,
         LilithActionType.Walk,
         LilithActionType.WalkEnd,
-        LilithActionType.Intro
+        LilithActionType.Intro,
+        // Head-pat may only be triggered directly by native player head clicks.
+        LilithActionType.RubHead
     };
 
     // Enum values exist in the original game but have no static animation
@@ -65,7 +67,6 @@ internal static class ActionCapability
         LilithActionType.ShakeLeg,
         LilithActionType.RubFace,
         LilithActionType.RubEyes,
-        LilithActionType.RubHead,
         LilithActionType.FakeCry,
         LilithActionType.FakeAngry,
         LilithActionType.FakeWronged,
@@ -102,7 +103,6 @@ internal static class ActionCapability
         LilithActionType.ShakeLeg,
         LilithActionType.RubFace,
         LilithActionType.RubEyes,
-        LilithActionType.RubHead,
         LilithActionType.FakeCry,
         LilithActionType.FakeAngry,
         LilithActionType.FakeWronged,

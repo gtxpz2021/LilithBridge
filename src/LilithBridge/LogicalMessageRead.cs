@@ -16,6 +16,7 @@ internal sealed record ExperienceBodyView(string Block, string DataJson, IReadOn
     internal IReadOnlyList<string> DirectEventIds {get;init;} = Array.Empty<string>();
     internal IReadOnlyList<string> AnchorEventIds {get;init;} = Array.Empty<string>();
     internal IReadOnlyList<string> SparkEventIds {get;init;} = Array.Empty<string>();
+    internal IReadOnlyList<string> ProbeEventIds {get;init;} = Array.Empty<string>();
 }
 internal sealed record LogicalMessageReadOptions(string Reference = "", string Cursor = "", int Offset = 0, int BodyChars = 0);
 internal sealed record LogicalMessagePage([property: JsonIgnore] LogicalDialogueUnit Unit,
@@ -159,12 +160,14 @@ internal static class LogicalMessageProjection
 
 internal sealed partial class MemoryStore
 {
-    internal static ExperienceBodyView RenderExperienceBodyView(IReadOnlyList<MemoryTurn> turns, string blockId = "experience_recall", IEnumerable<string>? directEventIds = null, IEnumerable<string>? anchorEventIds = null, IEnumerable<string>? sparkEventIds = null, bool includeHeader = true)
+    internal static ExperienceBodyView RenderExperienceBodyView(IReadOnlyList<MemoryTurn> turns, string blockId = "experience_recall", IEnumerable<string>? directEventIds = null, IEnumerable<string>? anchorEventIds = null, IEnumerable<string>? sparkEventIds = null, bool includeHeader = true, IEnumerable<string>? probeEventIds = null)
     {
         if (turns.Count == 0) return new("", "", Array.Empty<RequestSourceBody>());
         var units = turns is LogicalDialogueSelection selected ? selected.Units : LogicalDialogueCatalog.Build(turns).Units;
         var revisions = turns.Where(t => t.NaturalMemoryReadContext.Length > 0).Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
         var sparkSet = (sparkEventIds ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
+        var probeSet = (probeEventIds ?? (turns as LogicalDialogueSelection)?.ProbeEventIds ?? Array.Empty<string>())
+            .ToHashSet(StringComparer.Ordinal);
         var textBuilder = new StringBuilder();
         if (includeHeader) textBuilder.AppendLine("[找回的过往原话（历史片段，非当前事实）]");
         var bodies = new List<RequestSourceBody>();
@@ -185,7 +188,8 @@ internal sealed partial class MemoryStore
             string time = unit.Timestamp == default ? "" : unit.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             string head = time.Length > 0 ? time + " | " + who : who;
             bool isSpark = unit.Members.Any(m => sparkSet.Contains(m.EventId));
-            string tag = isSpark ? "[联想碎片]" : "";
+            bool isProbe = unit.Members.Any(m => probeSet.Contains(m.EventId));
+            string tag = isSpark ? "[联想碎片]" : isProbe ? "[跨时段对照 · 仅供参考]" : "";
             var notes = new List<string>();
             if (!unit.HeadKnown || !unit.TailKnown || unit.HasGaps) notes.Add("片段可能不完整");
             if (unit.Members.Any(m => revisions.Contains(m.EventId))) notes.Add("后有自然更正");
@@ -201,7 +205,8 @@ internal sealed partial class MemoryStore
             AnchorEventIds=(anchorEventIds??Array.Empty<string>()).Where(id=>turns.Any(t=>t.EventId==id)).Distinct(StringComparer.Ordinal).ToArray(),
             DirectEventIds=(directEventIds ?? (turns as LogicalDialogueSelection)?.DirectHitEventIds ?? Array.Empty<string>())
                 .Where(id=>turns.Any(t=>t.EventId==id)).Distinct(StringComparer.Ordinal).ToArray(),
-            SparkEventIds=sparkSet.Where(id=>turns.Any(t=>t.EventId==id)).ToArray()
+            SparkEventIds=sparkSet.Where(id=>turns.Any(t=>t.EventId==id)).ToArray(),
+            ProbeEventIds=probeSet.Where(id=>turns.Any(t=>t.EventId==id)).ToArray()
         };
     }
 
