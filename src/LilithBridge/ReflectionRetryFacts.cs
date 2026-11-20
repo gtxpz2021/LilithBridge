@@ -79,4 +79,31 @@ internal static class ReflectionRetryFacts
         return new(next > now ? ReflectionRetryPlanKind.Wait : ReflectionRetryPlanKind.Ready,
             next > now ? next : null, active.Length, history.EarlierAttemptsUnknown, lastReturn);
     }
+
+    internal const int CompleteResponseFailureLimit = 3;
+
+    // A complete 2xx response that still violates the text contract is a
+    // deterministic contract failure, not a transport fault. Once the Work has
+    // produced enough complete-but-unusable responses, release it so the next
+    // pass can capture fresh material instead of resending the same prompt forever.
+    internal static bool CompleteResponseFailuresExhausted(ReflectionWork? work, ReflectionLocalOutcome outcome)
+    {
+        if (work is not { Purpose: ReflectionWorkPurpose.Dialogue, Result: null }
+            || work.RetryHistory is not { } history || !history.Valid(work))
+            return false;
+        return CompleteResponseFailuresExhausted(history, outcome);
+    }
+
+    internal static bool CompleteResponseFailuresExhausted(ReflectionRetryHistory history,
+        ReflectionLocalOutcome outcome)
+    {
+        if (history.RecordedClaims < CompleteResponseFailureLimit || history.Claims.Length == 0
+            || outcome.Kind != ReflectionLocalOutcomeKind.ResponseRejected
+            || !outcome.BodyComplete || outcome.HttpStatus is < 200 or >= 300
+            || outcome.TransportOutcome is not ("accepted" or "accepted_without_finish_reason"))
+            return false;
+        return history.Claims.All(c => c.Return is { } returned
+            && returned.Kind == ReflectionLocalOutcomeKind.ResponseRejected
+            && returned.TransportOutcome is "accepted" or "accepted_without_finish_reason");
+    }
 }

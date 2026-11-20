@@ -36,7 +36,7 @@ internal sealed partial class DeepSeekClient
             string? text = await SendTextAsync(config, config.ReflectionModel,
                 BuildReflectionPrompt(), source, config.ReflectionMaxTokens, 0.2, false,
                 cancellationToken, "reflection", reflectionDispatch: dispatch,
-                envelopeOverride: envelope).ConfigureAwait(false);
+                envelopeOverride: envelope, jsonObject: true).ConfigureAwait(false);
             contentChars = envelope.Response.ContentChars;
             if (string.IsNullOrWhiteSpace(text)) return Finish();
             contentChars = text.Length;

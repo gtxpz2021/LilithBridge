@@ -1195,7 +1195,7 @@ internal sealed partial class DeepSeekClient : IDisposable
                 config.ReflectionMaxTokens,
                 0.3,
                 false,
-                cancellationToken, "day_task", envelopeOverride: selectionEnvelope).ConfigureAwait(false);
+                cancellationToken, "day_task", envelopeOverride: selectionEnvelope, jsonObject: true).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(text))
                 return null;
             text = StripJsonFences(text).Trim();
@@ -1422,7 +1422,7 @@ internal sealed partial class DeepSeekClient : IDisposable
         CancellationToken cancellationToken,
         string requestKind,
         DialogueRequest? dialogueRequest = null, ReflectionDispatch? reflectionDispatch = null,
-        ApiResult? envelopeOverride = null)
+        ApiResult? envelopeOverride = null, bool jsonObject = false)
     {
         if (string.IsNullOrWhiteSpace(config.ApiKey)
             || string.IsNullOrWhiteSpace(model)
@@ -1433,15 +1433,18 @@ internal sealed partial class DeepSeekClient : IDisposable
             new { role = "system", content = systemPrompt },
             new { role = "user", content = userText }
         };
-        var payload = new
+        var payload = new Dictionary<string, object?>
         {
-            model = model,
-            messages = messages.ToArray(),
-            temperature = temperature,
-            max_tokens = Math.Clamp(maxTokens, 32, requestKind=="context_relevance"?8192:2048),
-            thinking = new { type = thinking ? "enabled" : "disabled" },
-            stream = false
+            ["model"] = model,
+            ["messages"] = messages.ToArray(),
+            ["temperature"] = temperature,
+            ["max_tokens"] = Math.Clamp(maxTokens, 32, requestKind=="context_relevance"?8192:2048),
+            ["thinking"] = new { type = thinking ? "enabled" : "disabled" },
+            ["stream"] = false
         };
+        // JSON object mode is a transport guarantee, not a prompt hint. Only use
+        // it for callers whose parser expects exactly one top-level object.
+        if (jsonObject) payload["response_format"] = new { type = "json_object" };
         string json = JsonSerializer.Serialize(payload);
         var envelope = envelopeOverride ?? new ApiResult { DialogueRequest = dialogueRequest, RequestId = dialogueRequest?.Id ?? Guid.NewGuid().ToString("N") };
         CaptureSelection(config, envelope);

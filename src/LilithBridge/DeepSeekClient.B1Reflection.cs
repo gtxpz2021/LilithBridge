@@ -25,7 +25,7 @@ internal sealed partial class DeepSeekClient
             "Return exactly JSON {\"b1\":null} or {\"b1\":{\"v\":3,\"text\":\"...\",\"scope\":\"...\",\"conditions\":\"...\",\"nature\":\"hypothesis\",\"about\":[],\"sources\":[\"source_ref\"],\"relation\":\"revises\",\"target\":\"source_ref\"}}. " +
             "Maintaining the prior judgment without a new entry is a complete answer, not failure.",
             material, config.ReflectionMaxTokens, 0.2, false, cancellation,
-            "reflection", reflectionDispatch: dispatch, envelopeOverride: envelope).ConfigureAwait(false);
+            "reflection", reflectionDispatch: dispatch, envelopeOverride: envelope, jsonObject: true).ConfigureAwait(false);
         if (cancellation.IsCancellationRequested || raw == null || raw.Length > 32768
             || envelope.Response.Outcome != "accepted" || envelope.IsLocalFallback
             || envelope.Response.HttpSendStartedMs == null || envelope.Response.AttemptId.Length == 0) return null;

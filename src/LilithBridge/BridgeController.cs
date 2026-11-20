@@ -2807,7 +2807,8 @@ internal sealed partial class BridgeController : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
-    private void OnReflectionResult(ReflectionResult? result, ReflectionRequestSnapshot snapshot)
+    private void OnReflectionResult(ReflectionResult? result, ReflectionRequestSnapshot snapshot,
+        bool workRetired = false)
     {
         // True completion/failure earns the existing bounded cooldown. UI
         // activity and deferred steps never reset an already earned chance.
@@ -2815,11 +2816,11 @@ internal sealed partial class BridgeController : MonoBehaviour
         _reflectionInProgress = false;
         if (result == null)
         {
-            bool retained = _reflectionWindow.EndPass(null);
+            bool retained = workRetired ? _reflectionWindow.Snapshot.Work != null : _reflectionWindow.EndPass(null);
             CompleteReflectionCadenceAttempt(false, true);
             ReflectionIntentTrace.Emit(() => ReflectionIntentTrace.Outcome(snapshot, null, null, "no_usable_result", _reflectionWindow.Snapshot.Work != null));
             NativeEventLog.Trace("memory.reflection.empty", "mod", "system",
-                "reflection returned no usable result", "window_retained=" + retained);
+                "reflection returned no usable result", "window_retained=" + retained + ";work_retired=" + workRetired);
             return;
         }
         // The ordinary response owner has already saved this result. Local

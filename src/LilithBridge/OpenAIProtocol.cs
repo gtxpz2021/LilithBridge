@@ -66,6 +66,11 @@ internal static class OpenAIProtocol
         var request = new JsonObject { ["model"] = profile.Model, ["input"] = input,
             ["store"] = false, ["stream"] = true,
             ["max_output_tokens"] = profile.MaxOutputTokens };
+        // Object-mode callers must not rely on prose to enforce a machine contract.
+        // The Responses API expresses the same guarantee through text.format.
+        if (chat["response_format"] is JsonObject responseFormat
+            && responseFormat["type"]?.GetValue<string>() == "json_object")
+            request["text"] = new JsonObject { ["format"] = new JsonObject { ["type"] = "json_object" } };
         // No DeepSeek thinking, temperature, top_p or max_tokens parameters leak.
         if (profile.Effort != "api_default")
             request["reasoning"] = new JsonObject { ["effort"] = profile.Effort };

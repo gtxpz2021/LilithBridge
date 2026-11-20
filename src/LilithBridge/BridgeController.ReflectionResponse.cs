@@ -24,6 +24,7 @@ internal sealed partial class BridgeController
                 if (!CurrentWork()) { state = ReflectionResultSaveKind.Rejected; return true; }
                 if (response == null && !owner.ResultSave.HasReceived)
                 {
+                    bool workRetired = false;
                     if (owner.RetryBudgetEnabled && outcome != null)
                     {
                         // Best effort metadata only. A failed write leaves the durable
@@ -31,8 +32,20 @@ internal sealed partial class BridgeController
                         var recorded = memory.RecordReflectionRetryReturn(_reflectionWindow, owner, snapshot,
                             outcome, owner.RetryReturn!.ObservedAtUtc);
                         TraceReflectionRetry(snapshot.RequestId, "returned", recorded.ToString());
+                        long recordedClaims = _reflectionWindow.Snapshot.Work?.RetryHistory?.RecordedClaims ?? 0;
+                        if (ReflectionRetryFacts.CompleteResponseFailuresExhausted(
+                            _reflectionWindow.Snapshot.Work, outcome))
+                        {
+                            // Raw history is untouched. Release only the frozen Work so a
+                            // later pass can capture fresh material instead of replaying
+                            // this deterministic prompt forever. A failed save keeps it.
+                            workRetired = memory.CancelReflectionWork(_reflectionWindow);
+                            TraceReflectionRetry(snapshot.RequestId, "complete_response_limit",
+                                "retired=" + workRetired + ";claims=" + recordedClaims
+                                + ";parse_code=" + outcome.ParseCode);
+                        }
                     }
-                    OnReflectionResult(null, snapshot); // Original no-usable-result failure policy.
+                    OnReflectionResult(null, snapshot, workRetired);
                     return true;
                 }
                 var saved = owner.ResultSave.Step(snapshot.RequestId, response, owner.Token, CurrentWork,

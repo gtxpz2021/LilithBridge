@@ -15,7 +15,7 @@ internal sealed partial class DeepSeekClient
         using var linked=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken,budget.Token);
         string? response;
         try { response=await SendTextAsync(config,config.ReflectionModel,ContextRelevancePlan.Prompt,snapshot.Payload(),8192,0,false,
-            linked.Token,"context_relevance",envelopeOverride:envelope).ConfigureAwait(false); }
+            linked.Token,"context_relevance",envelopeOverride:envelope,jsonObject:true).ConfigureAwait(false); }
         catch(OperationCanceledException) when(!cancellationToken.IsCancellationRequested)
         {return new(snapshot,"judge_timeout");}
         cancellationToken.ThrowIfCancellationRequested();
