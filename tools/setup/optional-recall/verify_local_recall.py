@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse, hashlib, importlib.metadata, json, os, runpy, socket, subprocess, sys, tempfile
 
-WORKER_HASH='1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0'
+WORKER_HASH='684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979'
 MANIFEST_HASH='c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17'
 LOCK_HASH='17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891'
 REVISION='7999e1d3359715c523056ef9478215996d62a620'

@@ -170,6 +170,17 @@ class SemanticGeometryTests(unittest.TestCase):
         self.assertEqual(selected[0], 'ev0')
         self.assertEqual(selected[1], 'ev5')
 
+    def test_greedy_dpp_handles_all_negative_csls(self):
+        # H-4: all-negative CSLS must still yield an ordered, non-empty selection.
+        eye = np.eye(4, dtype=np.float32)
+        scores = np.asarray([-0.8, -0.5, -0.3, -0.2], dtype=np.float32)
+        ids = [f'ev{i}' for i in range(4)]
+        selected, orth_sins = WORKER._greedy_dpp(eye, scores, ids)
+        self.assertTrue(selected)
+        self.assertEqual(selected[0], 'ev3')
+        self.assertEqual(len(selected), len(set(selected)))
+        self.assertTrue(all(eid in orth_sins for eid in selected))
+
     def test_two_hop_b1_bridge_scene_cone_and_probe(self):
         dimension = 8
         eye = np.eye(dimension, dtype=np.float32)
@@ -214,6 +225,36 @@ class SemanticGeometryTests(unittest.TestCase):
                             for s in scene_result['scene_sparks']))
         self.assertTrue(all(s['event_id'] != 'derived/generated_reply/hidden'
                             for key in ('wormhole_sparks', 'bridge_sparks') for s in result[key]))
+
+    def test_doc_sims_bounded_not_full_corpus(self):
+        # H-2: a 250-event archive must not be copied wholesale into doc_sims.
+        rng = np.random.default_rng(20261120)
+        vectors = [unit(rng.standard_normal(8).astype(np.float32)) for _ in range(250)]
+        rows = rows_for(vectors, prefix='ev')
+        query_vec = vectors[7]
+        probe_ids = ['ev3', 'ev111', 'ev249']
+        engine = WORKER.SemanticGeometryEngine()
+        reply = engine.query(rows, query_vec, [], probe_event_ids=probe_ids,
+                             query_event_id='current_query')
+
+        self.assertLess(len(reply['doc_sims']), 80)
+        self.assertEqual(len(reply['doc_quantiles']), len(reply['doc_sims']))
+        for eid in probe_ids:
+            self.assertIn(eid, reply['doc_sims'])
+            self.assertIn(eid, reply['doc_quantiles'])
+            self.assertGreater(reply['doc_quantiles'][eid], 0.0)
+            self.assertLessEqual(reply['doc_quantiles'][eid], 1.0)
+
+        # Quantiles must still be exact full-corpus empirical quantiles.
+        iso = engine.ensure(rows)
+        ids = list(rows.keys())
+        q_doc = engine._project(WORKER._event_vector(np.asarray(query_vec, dtype=np.float32)), iso)
+        sims = iso['x_iso'] @ q_doc
+        ordered = np.sort(sims)
+        for eid in probe_ids:
+            value = float(sims[iso['id_to_idx'][eid]])
+            expected = float(np.searchsorted(ordered, value, side='right') / len(ids))
+            self.assertAlmostEqual(reply['doc_quantiles'][eid], expected, delta=1e-5)
 
     def test_legacy_backward_compatibility(self):
         # The geometry block is optional and isolated behind an exact True flag.

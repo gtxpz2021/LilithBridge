@@ -169,9 +169,18 @@ def _greedy_dpp(x_iso: np.ndarray, csls_scores: np.ndarray, wire_ids: List[str],
         return [], {}
     count = min(top_n, len(wire_ids))
     pool = np.argsort(-csls_scores)[:count]
-    positive = np.clip(csls_scores[pool].astype(np.float64), 0.0, None)
-    peak = float(np.max(positive)) if positive.size else 0.0
-    quality = positive / peak if peak > 1e-12 else np.ones_like(positive)
+    # H-4: a dense topic cluster can make every top CSLS score negative.
+    # Only that all-negative case needs a min-shift; positive-score behaviour
+    # stays untouched so an orthogonal low-score candidate is not suppressed.
+    top_csls = csls_scores[pool].astype(np.float64)
+    if float(np.max(top_csls)) <= 0.0:
+        shifted = top_csls - float(np.min(top_csls)) + 1e-4
+        max_shifted = float(np.max(shifted))
+        quality = shifted / max_shifted if max_shifted > 0.0 else np.ones_like(shifted)
+    else:
+        positive = np.clip(top_csls, 0.0, None)
+        peak = float(np.max(positive)) if positive.size else 0.0
+        quality = positive / peak if peak > 1e-12 else np.ones_like(positive)
     residual = x_iso[pool].astype(np.float64)
     selected = []
     orth_sins = {}
@@ -399,14 +408,28 @@ class SemanticGeometryEngine:
         doc_sims = {}
         doc_quantiles = {}
         if ids:
-            requested = list(dict.fromkeys((probe_event_ids or [])[:16] + ids))
+            # H-2: only the bounded set C# actually consumes goes over IPC.
+            # The quantile denominator and the sorted distribution stay full-corpus.
+            top_csls_indices = np.argsort(-csls)[:24]
+            spark_ids = [
+                item['event_id']
+                for bucket in (orthogonal, wormhole, bridges, scene_sparks)
+                for item in bucket
+                if 'event_id' in item
+            ]
+            top_csls_ids = [ids[int(i)] for i in top_csls_indices]
+            requested = list(dict.fromkeys(
+                (probe_event_ids or [])[:16] + list(dpp_ids) + top_csls_ids + spark_ids
+            ))
             ordered = np.sort(sims)
+            total_n = len(ids)
             for eid in requested:
-                if eid not in iso['id_to_idx']:
+                idx = iso['id_to_idx'].get(eid)
+                if idx is None:
                     continue
-                value = float(sims[iso['id_to_idx'][eid]])
+                value = float(sims[idx])
                 doc_sims[eid] = round(value, 6)
-                doc_quantiles[eid] = round(float(np.searchsorted(ordered, value, side='right') / len(ids)), 6)
+                doc_quantiles[eid] = round(float(np.searchsorted(ordered, value, side='right') / total_n), 6)
         return dict(salience_gated=salience_gated, salience_z=round(float(salience_z), 5),
                     geometry=dict(novelty_eta=round(eta, 5), tortuosity=round(float(tortuosity), 5),
                                   net_displacement_rad=round(displacement, 5),

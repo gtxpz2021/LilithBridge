@@ -331,16 +331,16 @@ internal sealed partial class MemoryStore
                 ? 1d / (60 + rank) : 0d;
             int lexicalAt=lexicalRows.FindIndex(r=>r.Hit.EventId==c.EventId);
             int overlap=lexicalAt>=0?lexicalRows[lexicalAt].Overlap:0;
-            if (overlap == 0 && geometryActive && c.Rank is > 0 and <= 15) lexical += 0.0005d;
+            if (overlap == 0 && geometryActive && !explicitLookup && c.Rank is > 0 and <= 15) lexical += 0.0005d;
             return semantic + lexical;
         }, StringComparer.Ordinal);
         var dppRank = (result.Geometry?.DppSelectedIds ?? Array.Empty<string>())
             .Select((id, index) => (id, index)).ToDictionary(p => p.id, p => p.index, StringComparer.Ordinal);
-        // M-1: explicit lookup needs BOTH lexical and semantic evidence, so it
-        // must consume the RRF fused rank too instead of falling back to the raw
-        // semantic score. Three explicit branches keep the ordering auditable.
+        // H-1: explicit lookup disables Python geometry in BridgeController,
+        // so RRF must NOT require geometryActive. It only relies on semantic
+        // candidate ranks + local lexical ranks.
         IEnumerable<SemanticRecallCandidate> orderedCandidates;
-        if (geometryActive && explicitLookup)
+        if (explicitLookup && fusedRank.Count > 0)
             orderedCandidates = result.Candidates
                 .OrderByDescending(c => fusedRank.GetValueOrDefault(c.EventId))
                 .ThenByDescending(c => c.Score);
@@ -587,25 +587,37 @@ internal sealed partial class MemoryStore
         }
         if (result.RelevancePlan == null && !explicitLookup && selected.Keys.Count < 24)
         {
-            foreach (var anchor in selected.Values.OrderBy(u => u.Timestamp).ThenBy(u => u.Key).ToArray())
+            // H-3: walk anchors in selection priority, not oldest-first. A
+            // closer but already-selected/ineligible neighbour must not hide a
+            // still-missing, eligible counterpart on the other side.
+            bool backfilled = false;
+            foreach (var anchor in selected.Values.ToArray())
             {
                 if (anchor.Members.Count != 1) continue;
-                var counterpart = catalog.Units
-                    .Where(u => u.SessionId == anchor.SessionId && u.Role != anchor.Role
-                        && u.Members.Count == 1 && Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes) <= 5d)
+                var counterparts = catalog.Units
+                    .Where(u => u.SessionId == anchor.SessionId
+                        && u.Role != anchor.Role
+                        && u.Members.Count == 1
+                        && !selected.ContainsKey(u.Key)
+                        && Eligible(u)
+                        && Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes) <= 5d)
                     .OrderBy(u => Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes))
-                    .FirstOrDefault();
-                if (counterpart == null || selected.ContainsKey(counterpart.Key) || !Eligible(counterpart)) continue;
-                DateTimeOffset first = counterpart.Timestamp < anchor.Timestamp ? counterpart.Timestamp : anchor.Timestamp;
-                DateTimeOffset last = counterpart.Timestamp < anchor.Timestamp ? anchor.Timestamp : counterpart.Timestamp;
-                bool interposed = catalog.Units.Any(u => u.SessionId == anchor.SessionId
-                    && u.Key != anchor.Key && u.Key != counterpart.Key
-                    && u.Timestamp >= first && u.Timestamp <= last);
-                if (interposed || selected.Keys.Count + 1 > 24) continue;
-                // This is one completion record under the same 24-unit capacity;
-                // no separate character truncation budget is introduced here.
-                selected.TryAdd(counterpart.Key, counterpart);
-                break;
+                    .ThenBy(u => u.Timestamp);
+
+                foreach (var counterpart in counterparts)
+                {
+                    DateTimeOffset first = counterpart.Timestamp < anchor.Timestamp ? counterpart.Timestamp : anchor.Timestamp;
+                    DateTimeOffset last = counterpart.Timestamp < anchor.Timestamp ? anchor.Timestamp : counterpart.Timestamp;
+                    bool interposed = catalog.Units.Any(u => u.SessionId == anchor.SessionId
+                        && u.Key != anchor.Key && u.Key != counterpart.Key
+                        && u.Timestamp >= first && u.Timestamp <= last);
+                    if (interposed || selected.Keys.Count + 1 > 24) continue;
+                    // Same 24-unit capacity; never enters trace.Anchors.
+                    selected.TryAdd(counterpart.Key, counterpart);
+                    backfilled = true;
+                    break;
+                }
+                if (backfilled) break;
             }
         }
         var selectedUnits = selected.Values.OrderBy(u => u.Timestamp).ThenBy(u => u.Key, StringComparer.Ordinal).ToArray();

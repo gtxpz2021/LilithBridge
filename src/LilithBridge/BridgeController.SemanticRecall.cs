@@ -89,18 +89,27 @@ internal sealed partial class BridgeController
             .TakeLast(6).Select(t=>t.EventId).ToArray();
     }
 
+    private static string StripSceneTitle(string tail)
+    {
+        if(tail.StartsWith('['))
+        {
+            int end=tail.IndexOf(']');
+            if(end>0) tail=tail[(end+1)..].TrimStart();
+        }
+        return tail;
+    }
+
     private string BuildSemanticSceneText(bool enabled)
     {
         if(!enabled) return "";
-        var snapshot=_sensoryClient.Latest;
+        return BuildSemanticSceneTextFromSnapshot(_sensoryClient.Latest);
+    }
+
+    private static string BuildSemanticSceneTextFromSnapshot(SensorySnapshot snapshot)
+    {
         if(!snapshot.Available) return "";
         var clauses=new List<string>();
-        string tail=snapshot.TailText.Trim();
-        if(tail.StartsWith('['))
-        {
-            int end=tail.IndexOf("] ",StringComparison.Ordinal);
-            if(end>=0) tail=tail[(end+2)..];
-        }
+        string tail=StripSceneTitle(snapshot.TailText.Trim());
         foreach(string clause in tail.Split('；', StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries))
         {
             if(clause.Length==0||clause.Contains("心情",StringComparison.Ordinal)

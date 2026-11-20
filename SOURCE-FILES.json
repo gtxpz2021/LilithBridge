@@ -284,7 +284,7 @@
     {
       "path": "optional/semantic-worker/INTEGRATION.md",
       "bytes": 2307,
-      "sha256": "8261f25cdebdbf99d4259f7b307afec4c9a75ddf2cbf9777d4e0782f77a3049d"
+      "sha256": "542e8aab93a0893420493f56fbb551eb953365028a3778f44e8b447f3175bc7c"
     },
     {
       "path": "optional/semantic-worker/MODEL-ACQUISITION.md",
@@ -313,18 +313,18 @@
     },
     {
       "path": "optional/semantic-worker/semantic_worker.py",
-      "bytes": 34529,
-      "sha256": "1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0"
+      "bytes": 35651,
+      "sha256": "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979"
     },
     {
       "path": "optional/semantic-worker/test_semantic_ab_bench.py",
-      "bytes": 21047,
-      "sha256": "8aa49d93d759f45ce3ba04ef0d3748374821d2188b275f0c4c270fbe8db97ee3"
+      "bytes": 22158,
+      "sha256": "d5ac97be66496752de921d357351e1860976bfe8181385f7890bb71bf3cdb85c"
     },
     {
       "path": "optional/semantic-worker/test_semantic_geometry.py",
-      "bytes": 11798,
-      "sha256": "c8264868c89b5c74203bc026d3ce2d6dcb642f8c2ea181f96a45ab33430a6652"
+      "bytes": 13910,
+      "sha256": "cd402d7bc885b49e9b20124ad36f2639a7f490e200ba462b3619903af0eefa54"
     },
     {
       "path": "optional/semantic-worker/verify_model_files.py",
@@ -558,8 +558,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.SemanticRecall.cs",
-      "bytes": 20803,
-      "sha256": "04730d722141fe2be1ebb24236a9d3567779486029e59bb7cc952ad0a21a6713"
+      "bytes": 21033,
+      "sha256": "13131ef67ce214bd77f92d467de938525b48f2b05c6d1d4bb98650d11c4af418"
     },
     {
       "path": "src/LilithBridge/BridgeController.SharedActivity.cs",
@@ -1323,8 +1323,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.SemanticRecall.cs",
-      "bytes": 42166,
-      "sha256": "9a1d032d0c477492f2be5e5fc1d81eaba29b812e1f3858067b22516fdbcdeaa6"
+      "bytes": 42536,
+      "sha256": "1c677f492e76219385809a1d75701f58f48aaf1e3763b0d955b9d8e0a0f2f96f"
     },
     {
       "path": "src/LilithBridge/MemoryStore.SemanticRuntime.cs",
@@ -2094,7 +2094,7 @@
     {
       "path": "tools/installer-source/release-profile.json",
       "bytes": 2414,
-      "sha256": "0006848fe4eeab5f63ded8d903926eb478eef76d96d738208f0a0b795b9e15ae"
+      "sha256": "7010d2dc4a1f27e6acff7259c0165b1560d088b445462654c6f19d9fc81df5a7"
     },
     {
       "path": "tools/installer-source/src/BundledStory.cs",
@@ -2224,7 +2224,7 @@
     {
       "path": "tools/installer-source/src/Wizard.Provisioning.cs",
       "bytes": 13151,
-      "sha256": "50f0cb05a86e8db1b13a4e005eddac29f4c03d1339e3166e19cce706f7c3341c"
+      "sha256": "4d0dba64cb1e156d3864cd2c2fdf73f725811848453372c4b3cea07772b28b4b"
     },
     {
       "path": "tools/installer-source/src/Wizard.Session.cs",
@@ -2299,7 +2299,7 @@
     {
       "path": "tools/setup/optional-recall/verify_local_recall.py",
       "bytes": 5100,
-      "sha256": "9aaa9669d3708c456314288d373046bf845f649da43062ccf4cae9fe205513dc"
+      "sha256": "b26af80f179ba63a14e5e322c78d7361c70426ecc04f8b75fd6a62f9f083a3cb"
     },
     {
       "path": "tools/setup/optional-recall/verify_runtime.py",
@@ -2314,7 +2314,7 @@
     {
       "path": "tools/setup/optional/semantic-worker/INTEGRATION.md",
       "bytes": 2307,
-      "sha256": "8261f25cdebdbf99d4259f7b307afec4c9a75ddf2cbf9777d4e0782f77a3049d"
+      "sha256": "542e8aab93a0893420493f56fbb551eb953365028a3778f44e8b447f3175bc7c"
     },
     {
       "path": "tools/setup/optional/semantic-worker/MODEL-ACQUISITION.md",
@@ -2343,8 +2343,8 @@
     },
     {
       "path": "tools/setup/optional/semantic-worker/semantic_worker.py",
-      "bytes": 34529,
-      "sha256": "1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0"
+      "bytes": 35651,
+      "sha256": "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979"
     },
     {
       "path": "tools/setup/optional/semantic-worker/verify_model_files.py",

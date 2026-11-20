@@ -338,15 +338,29 @@ def real_bge_probe(model_dir: Path) -> int:
                                          if candidate["event_id"] == target_id))
             prefix_angle = safe_angle(prefixed_cosine)
             recent_ids = [event_id for event_id, _ in PROBE_RECORDS[-6:]]
-            timings: List[Dict[str, float]] = []
-            for at in range(5):
-                query_text = "窗外的雨声和刚才那段钢琴副歌有点像。"
-                reply = worker.call(dict(request_id=f"timing-{at}", op="query", text=query_text,
+            query_text = "窗外的雨声和刚才那段钢琴副歌有点像。"
+
+            def timed_query(request_id: str, generation: int) -> Dict[str, Any]:
+                return worker.call(dict(request_id=request_id, op="query", text=query_text,
                     query_hash=sha256(query_text), model_revision=REVISION,
-                    index_generation=worker.generation, conversation_generation=at + 2,
+                    index_generation=worker.generation, conversation_generation=generation,
                     enable_geometry=True, recent_event_ids=recent_ids,
                     scene_text="耳机里有钢琴曲；窗外雨点打在屋檐上。",
                     probe_event_ids=[event_id for event_id, _ in PROBE_RECORDS[:16]]))
+
+            # H-5: two unrecorded warmups keep a single cold-start geometry
+            # sample from dominating a five-point p95. The first cold value is
+            # still reported for observability.
+            cold_first_geometry_ms = 0.0
+            for warm in range(2):
+                warm_reply = timed_query(f"warmup-{warm}", warm + 2)
+                if warm_reply.get("status") != "ok":
+                    raise RuntimeError("warmup query failed")
+                if warm == 0:
+                    cold_first_geometry_ms = float(warm_reply["geometry_ms"])
+            timings: List[Dict[str, float]] = []
+            for at in range(15):
+                reply = timed_query(f"timing-{at}", at + 4)
                 if reply.get("status") != "ok":
                     raise RuntimeError("timing query failed")
                 timings.append(dict(total=float(reply["elapsed_ms"]), encode=float(reply["encode_ms"]),
@@ -365,9 +379,14 @@ def real_bge_probe(model_dir: Path) -> int:
                 self_angle_rad=round(self_angle, 6), self_angle_pass=self_angle < 0.05,
                 prefixed_query_offset_rad=round(prefix_angle, 6),
                 query_count=len(timings),
+                warmup_queries=2,
+                cold_first_geometry_ms=round(cold_first_geometry_ms, 3),
                 encode_ms=[round(item["encode"], 3) for item in timings],
                 geometry_ms=[round(item["geometry"], 3) for item in timings],
                 end_to_end_ms=[round(item["total"], 3) for item in timings],
+                p50_encode_ms=round(percentile([item["encode"] for item in timings], 0.50), 3),
+                p50_geometry_ms=round(percentile([item["geometry"] for item in timings], 0.50), 3),
+                p50_end_to_end_ms=round(percentile([item["total"] for item in timings], 0.50), 3),
                 p95_encode_ms=round(percentile([item["encode"] for item in timings], 0.95), 3),
                 p95_geometry_ms=round(percentile([item["geometry"] for item in timings], 0.95), 3),
                 p95_end_to_end_ms=round(percentile([item["total"] for item in timings], 0.95), 3),

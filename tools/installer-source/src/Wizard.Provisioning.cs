@@ -11,7 +11,7 @@ namespace LilithSetup
 {
     public static class WizardProvisioning
     {
-        public const string WorkerHash = "1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0";
+        public const string WorkerHash = "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979";
         public static string PathIn(string root, string relative)
         { string path = SetupCore.SafePath(relative, root); SetupCore.Require(SetupCore.Inside(root, path, false), "LBWIZ_PATH_ESCAPES_ROOT"); SetupCore.NoReparse(path); return path; }
         public static void CopyVerified(string source, string destination, string hash)
