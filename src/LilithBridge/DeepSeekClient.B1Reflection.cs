@@ -18,12 +18,16 @@ internal sealed partial class DeepSeekClient
     {
         var envelope = new ApiResult();
         CaptureSelection(config, envelope, selectionStore);
+        bool experienceAnchored = material.Contains("\"work_kind\":\"experience_anchored_b1_retrospective\"", StringComparison.Ordinal);
+        string systemPrompt = experienceAnchored
+            ? MemoryStore.B1ReconsiderationOwner.ExperienceAnchoredContract
+            : MemoryStore.B1ReconsiderationOwner.Contract +
+                " This is a B1-only reflection, not MAIN, dialogue, note, lesson, relationship, or day_task. " +
+                "Use only the supplied prior judgment. Its original sources are NOT supplied. " +
+                "Return exactly JSON {\"b1\":null} or {\"b1\":{\"v\":3,\"text\":\"...\",\"scope\":\"...\",\"conditions\":\"...\",\"nature\":\"hypothesis\",\"about\":[],\"sources\":[\"source_ref\"],\"relation\":\"revises\",\"target\":\"source_ref\"}}. " +
+                "Maintaining the prior judgment without a new entry is a complete answer, not failure.";
         string? raw = await SendTextAsync(config, config.ReflectionModel,
-            MemoryStore.B1ReconsiderationOwner.Contract +
-            " This is a B1-only reflection, not MAIN, dialogue, note, lesson, relationship, or day_task. " +
-            "Use only the supplied prior judgment. Its original sources are NOT supplied. " +
-            "Return exactly JSON {\"b1\":null} or {\"b1\":{\"v\":3,\"text\":\"...\",\"scope\":\"...\",\"conditions\":\"...\",\"nature\":\"hypothesis\",\"about\":[],\"sources\":[\"source_ref\"],\"relation\":\"revises\",\"target\":\"source_ref\"}}. " +
-            "Maintaining the prior judgment without a new entry is a complete answer, not failure.",
+            systemPrompt,
             material, config.ReflectionMaxTokens, 0.2, false, cancellation,
             "reflection", reflectionDispatch: dispatch, envelopeOverride: envelope, jsonObject: true).ConfigureAwait(false);
         if (cancellation.IsCancellationRequested || raw == null || raw.Length > 32768

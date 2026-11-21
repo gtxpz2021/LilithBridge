@@ -119,7 +119,8 @@ internal sealed partial class MemoryStore
             }
             using (PreparationTiming.Measure("sem.snap.reflections"))
             {
-                retained.AddRange(_reflectionNotes.Concat(_reflectionLessons).Where(t=>t.LifecycleState is "active" or "settled" or "superseded")
+                retained.AddRange(_reflectionNotes.Concat(_reflectionLessons).Concat(_relationshipReadings)
+                    .Where(t=>t.LifecycleState is "active" or "settled" or "superseded")
                     .Select(t=>new SemanticIndexRecord(t.EventId,t.Text,"assistant","retained","delivered",B1Kind(t),SemanticSourceVersion(t))));
             }
         }

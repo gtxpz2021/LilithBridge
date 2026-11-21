@@ -15,7 +15,17 @@ internal sealed partial class MemoryStore
     private static readonly HashSet<string> B1WeakSearchTokens = new(StringComparer.OrdinalIgnoreCase)
     { "没有", "不同", "一个", "这个", "那个", "这些", "那些", "本次", "一次", "描述", "观察", "判断", "条件",
       "可能", "需要", "不能", "可以", "已经", "看到", "看见", "如果", "但是", "因为", "所以", "目前", "现在",
-      "仍然", "是否", "不是", "并不", "不足", "认为", "说明", "证据", "线索", "情况", "问题", "状态", "记录" };
+      "仍然", "是否", "不是", "并不", "不足", "认为", "说明", "证据", "线索", "情况", "问题", "状态", "记录",
+      "莉莉", "莉丝", "莉莉丝", "lilith",
+      "我的", "你的", "他的", "她的", "它的", "我们", "你们", "他们", "她们", "自己",
+      "好吧", "好的", "当然", "其实", "觉得", "有点", "非常", "真的", "这里", "那里", "哪里",
+      "这样", "那样", "这么", "那么", "怎么", "什么", "是什", "有什", "知道", "还是", "就是", "只是", "都是", "也是",
+      "而且", "不过", "可是", "或者", "还有", "然后", "开始", "时候", "地方", "东西", "事情", "看法", "想法", "意见",
+      "今晚", "今天", "昨晚", "昨天", "明天", "以后", "以前", "刚才", "一直", "一样", "一起",
+      "应该", "好像", "大概", "也许", "或许", "反正", "总之", "果然", "确实", "原来", "本来",
+      "不会", "不要", "不用", "不知", "不太", "有些", "很多", "比较", "特别",
+      "差不", "不多", "差不多", "又有", "有谁", "谁能", "能知", "谁知", "分明", "里是", "是今", "可没", "没这",
+      "我现", "我又", "我想", "我说", "我看", "我觉", "你在", "你说", "你看", "你觉" };
     private B1Packet CaptureB1View(DialogueRequest request, string query, IEnumerable<MemoryTurn> footprint,
         IReadOnlyList<RequestSourceBody>? hostBodies = null,
         IReadOnlyList<RequestSourceBody>? jsonFallbackHostBodies = null,
@@ -31,6 +41,8 @@ internal sealed partial class MemoryStore
     {
         lock (_experienceLock)
         {
+            if (!proactiveReadOnly && semantic is { Unavailable.Length: 0 })
+                _lastDialogueSemanticRecall = semantic;
             // Only the host shared-object reader treats quotations as document content.
             // Identifiers, relevance, source qualification and full raw query stay unchanged.
             bool MatchScope(B1Entry entry) => SemanticB1QueryScope(query, entry,
@@ -103,7 +115,10 @@ internal sealed partial class MemoryStore
                     "judgment_source" => 12, "later_user_correction" => 14, "late_related_user_wording_unbound" => 25,
                     "late_public_reply" => 30, "historical_public_reply" => 45,
                     "related_exchange_user_wording_unbound" => 80, "recent_public_reply" => 90,
-                    _ => material.Ref.Kind == "b1" ? material.State.StartsWith("current_retained", StringComparison.Ordinal) ? 20 : 40 : 60 });
+                    _ => material.Ref.Kind == "b1"
+                        ? (material.State.StartsWith("current_retained", StringComparison.Ordinal)
+                            || (material.LogicalId.Length > 0 && doc.Current.GetValueOrDefault(material.LogicalId) == material.Ref.Version)) ? 20 : 40
+                        : 60 });
                 int prior = materials.FindIndex(m => m.Ref.Key == reference.Key);
                 if (prior >= 0)
                 {
@@ -161,15 +176,19 @@ internal sealed partial class MemoryStore
             }
 
             FindB1(doc, "");
-            var terms = MemorySemantics.MatchingTokens(query);
+            var terms = B1SearchTokens(query);
+            var discoveryTerms = terms.Where(B1DiscoveryContent).ToHashSet(StringComparer.Ordinal);
             var ranked = doc.Entries.Where(e => B1ManagementState(doc, e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted"))
                 .Select(e => { var tokens = _b1SearchIndex[e.Version]; var objects = _b1SourceSearchIndex[e.Version];
                     int overlap = terms.Count(tokens.Contains), objectOverlap = terms.Count(objects.Contains);
-                    double textScore = overlap / (double)Math.Max(1, Math.Min(terms.Count, tokens.Count));
-                    double objectScore = objectOverlap / (double)Math.Max(1, Math.Min(terms.Count, objects.Count));
+                    double textScore = terms.Count == 0 || tokens.Count == 0 ? 0d
+                        : overlap / (double)Math.Max(1, Math.Min(terms.Count, tokens.Count));
+                    double objectScore = terms.Count == 0 || objects.Count == 0 ? 0d
+                        : objectOverlap / (double)Math.Max(1, Math.Min(terms.Count, objects.Count));
                     var meaning = _b1MeaningSearchIndex[e.Version];
                     int meaningOverlap = terms.Count(meaning.Contains);
-                    double meaningScore = meaningOverlap / (double)Math.Max(1, Math.Min(terms.Count, meaning.Count));
+                    double meaningScore = terms.Count == 0 || meaning.Count == 0 ? 0d
+                        : meaningOverlap / (double)Math.Max(1, Math.Min(terms.Count, meaning.Count));
                     // Conditions describe a thought, not a proved current situation.
                     // Use the existing relevance floor and exact query constraints;
                     // do not lower old body scores or expand footprint-source hints.
@@ -177,22 +196,53 @@ internal sealed partial class MemoryStore
                         && meaningScore >= MemorySemantics.MinRecallSimilarity
                         && (meaningOverlap >= MemorySemantics.MinRecallOverlap || meaningScore >= 0.5)
                         && MatchScope(e);
-                    bool corroborated = terms.Any(t => t.Length >= 2 && !B1WeakSearchTokens.Contains(t)
-                        && tokens.Contains(t) && objects.Contains(t));
+                    bool corroborated = discoveryTerms.Any(t => tokens.Contains(t) && objects.Contains(t));
                     var hint = _b1DiscoveryIndex[e.Version]
-                        .Select(h => (h.Ref, Overlap:terms.Count(t => h.Tokens.Contains(t) && B1DiscoveryContent(t))))
-                        .OrderByDescending(h => h.Overlap).FirstOrDefault();
-                    bool discovered = hint.Overlap > 0;
+                        .Select(h => {
+                            int hintOverlap = discoveryTerms.Count(h.Tokens.Contains);
+                            double hintScore = hintOverlap == 0 ? 0d
+                                : hintOverlap / (double)Math.Max(1, Math.Min(discoveryTerms.Count, h.Tokens.Count));
+                            // Prevent a single incidental bigram in a long historical paste
+                            // from forcing Corroborated discovery, while preserving crisp
+                            // 1-token concrete queries on short sources.
+                            bool ok = hintOverlap > 0 && hintScore >= MemorySemantics.MinRecallSimilarity
+                                && (hintOverlap >= MemorySemantics.MinRecallOverlap
+                                    || (discoveryTerms.Count <= 2 && hintScore >= 0.5 && h.Tokens.Count <= 32));
+                            return (h.Ref, Overlap:hintOverlap, Score:hintScore, Ok:ok);
+                        })
+                        .Where(h => h.Ok)
+                        .OrderByDescending(h => h.Overlap)
+                        .ThenByDescending(h => h.Score)
+                        .FirstOrDefault();
+                    var directDiscoveredAnchor = !hint.Ok && permittedDiscovery.Count > 0
+                        && doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
+                        && MatchScope(e)
+                        ? permittedDiscovery.FirstOrDefault(u =>
+                            e.Packet.UserEventId == u.EventId
+                            || e.ObjectAnchors.Any(r => r.Kind == "utterance" && r.Version == u.EventId)
+                            || (e.ObjectAnchors.Count == 0 && e.Sources.Any(r => r.Kind == "utterance" && r.Version == u.EventId)))
+                        : null;
+                    B1Ref? directAnchorRef = directDiscoveredAnchor != null
+                        ? new B1Ref("utterance", directDiscoveredAnchor.EventId, B1Hash(directDiscoveredAnchor.Text), "history")
+                        : null;
+                    bool discovered = hint.Ok || directAnchorRef != null;
+                    double discoveredScore = hint.Ok ? Math.Max(MemorySemantics.MinRecallSimilarity, hint.Score)
+                        : directAnchorRef != null ? 0.25d : 0d;
                     return (Entry:e, Score:Math.Max(Math.Max(Math.Max(textScore, objectScore),
-                            corroborated || discovered ? MemorySemantics.MinRecallSimilarity : 0), meaningDiscovered ? meaningScore : 0),
+                            corroborated ? MemorySemantics.MinRecallSimilarity : 0),
+                            Math.Max(discoveredScore,
+                                meaningDiscovered ? meaningScore : 0)),
                         Overlap:Math.Max(Math.Max(overlap, objectOverlap), meaningDiscovered ? meaningOverlap : 0), Corroborated:corroborated || discovered,
-                        Discovery:discovered ? hint.Ref : null); })
+                        Discovery:hint.Ok ? hint.Ref : directAnchorRef); })
                 .Where(x => x.Score >= MemorySemantics.MinRecallSimilarity
                     && (x.Corroborated || x.Overlap >= MemorySemantics.MinRecallOverlap || x.Score >= 0.5)).OrderByDescending(x => x.Score)
                 .ThenByDescending(x => doc.Current.GetValueOrDefault(x.Entry.LogicalId) == x.Entry.Version)
                 .ThenByDescending(x => x.Entry.At).ToList();
+            bool explicitB1SemanticLookup = B1IsExplicitLookup(query);
             var typed=SemanticResultMatches(query,semantic,SemanticDomain.B1)&&semantic!.QueryId==requestId
-                ? semantic.Candidates.Where(c=>c.Kind=="b1").OrderByDescending(c=>c.Score)
+                && B1SemanticDiscoveryPermitted(query, semantic)
+                ? semantic.Candidates.Where(c=>c.Kind=="b1" && B1SemanticCandidatePermitted(c, semantic, explicitB1SemanticLookup))
+                    .OrderByDescending(c=>c.Score)
                     .Select(c=>doc.Entries.FirstOrDefault(e=>e.Version==c.EventId
                         && c.Version==e.Revision.ToString()&&c.TextHash==SemanticTextHash(B1DiscoveryText(e))
                         && B1ManagementState(doc,e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")

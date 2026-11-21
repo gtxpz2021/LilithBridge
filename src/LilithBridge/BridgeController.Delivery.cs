@@ -440,7 +440,11 @@ internal sealed partial class BridgeController
         SettleAiDelivery(reply);
         // Only a fully delivered completed turn may become a past-thought source.
         if (reply.Delivery is { IsFullyDelivered: true })
+        {
             _memory.ThoughtLedger.Record(reply);
+            if (reply.DialogueRequest is { CarriedTemporaryOperationIds.Length: > 0 } deliveredReq)
+                _temporaryExpressions.RetireDeliveredCarry(deliveredReq.CarriedTemporaryOperationIds);
+        }
         ReplyDeliveryRecord? delivery = reply.Delivery;
         _memory.RecordB1Delivery(reply, outcome: outcome);
         if (delivery?.IsTerminal == true)

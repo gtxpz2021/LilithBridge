@@ -128,9 +128,9 @@ internal sealed partial class MemoryStore
     /// header, instead of searching the context for note text.
     /// </summary>
     internal const string ThoughtBlockHeader = "[你的想法记录";
-    internal const string ChatNoteHeader = "[你以前留下的想法：可以重新考虑，也可以不提起]";
-    internal const string SettledNoteHeader = "[你以前收起的想法记录：可以重新考虑，也可以不提]";
-    internal const string LessonHeader = "[你自己的经验法则：可以推翻，也不必遵照]";
+    internal const string ChatNoteHeader = "[你以前留下的想法]";
+    internal const string SettledNoteHeader = "[你以前收起的想法记录]";
+    internal const string LessonHeader = "[你自己的经验法则]";
     internal const string ThoughtLifecycleContract = "state=active 表示记录尚未被收起或后继版本取代；state=settled 表示记录曾被收起，时间和理由保留在 settled_at / settle_reason；state=superseded 表示该版本已被后继版本取代，关联见 revises / revised_by。这些是记录生命周期，仅凭状态不能判断此刻是否赞同、正在想或已经不再在意。可以采纳、提出异议、重新考虑，也可以不提起。";
 
     /// <summary>
@@ -1775,6 +1775,7 @@ internal sealed partial class MemoryStore
             }
             builder.Append(text);appendedCount++;return true;
         }
+        string lastNoteHeader = "";
         foreach (MemoryTurn note in chosen)
         {
             bool isSpark = ReferenceEquals(note, sparkNote);
@@ -1783,7 +1784,9 @@ internal sealed partial class MemoryStore
                 ? " | 曾收起" + (note.SettleReason.Length > 0 ? "：" + note.SettleReason : "")
                 : isSpark ? " | 偶发联想（未严格匹配当前字面，可接可不接）" : "";
             string sourceAttr = DescribeSourceAttribution(note);
-            string fragment = (IsSettledLifecycle(note) ? SettledNoteHeader : ChatNoteHeader) + Environment.NewLine
+            string header = IsSettledLifecycle(note) ? SettledNoteHeader : ChatNoteHeader;
+            string headerPrefix = header != lastNoteHeader ? header + Environment.NewLine : "";
+            string fragment = headerPrefix
                 + "[" + time + settleTag + "] " + note.Text
                 + (sourceAttr.Length > 0 ? Environment.NewLine + sourceAttr : "")
                 + Environment.NewLine;
@@ -1797,22 +1800,27 @@ internal sealed partial class MemoryStore
                 { FocusSourceIds = basis.Visible, RetrievedSourceIds = basis.Retrieved, SupplyReason = reason,
                     OmissionReason = appended ? "" : "block_budget" });
             if (!appended) continue;
+            lastNoteHeader = header;
             onSupplied?.Invoke(new[] { note });
         }
         var selectedLessons=semantic?.RelevancePlan is {} lessonAdmission
             ?GetReflectionLessons(int.MaxValue).Where(t=>IsNativeSupplyAllowed(t)&&lessonAdmission.Admits(t.EventId)).ToArray()
             :lesson==null?Array.Empty<MemoryTurn>():new[]{lesson};
+        bool emittedLessonHeader = false;
         foreach (var selectedLesson in selectedLessons)
         {
             lesson=selectedLesson;
             var fragment = new StringBuilder();
             string time = lesson.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             string sourceContext = DescribeSourceAttribution(lesson);
-            fragment.AppendLine(LessonHeader);
+            if (!emittedLessonHeader) fragment.AppendLine(LessonHeader);
             fragment.AppendLine("[" + time + "] " + lesson.Text);
             if (sourceContext.Length > 0) fragment.AppendLine(sourceContext);
-            fragment.AppendLine("这只是你从过往相处里攒下的互动手艺与主意，不是硬规矩；眼下合适就用，不合适就丢开。");
-            if (AppendWhole(fragment.ToString(), lesson.EventId)) onSupplied?.Invoke(new[] { lesson });
+            if (AppendWhole(fragment.ToString(), lesson.EventId))
+            {
+                emittedLessonHeader = true;
+                onSupplied?.Invoke(new[] { lesson });
+            }
         }
         return appendedCount > 0 ? builder.ToString() : "";
     }

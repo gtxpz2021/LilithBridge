@@ -1,14 +1,14 @@
 {
   "schema": 1,
-  "assembly_version": "0.1.4.22",
-  "build": "0.1.4.22-hybrid-live-tail.release.1",
-  "caption": "LilithBridge · 产品 .106/2576304b · 安装器 .22",
-  "launcher_caption": "LilithBridge 安装 · .106 / 2576304b",
-  "manifest_id": "lilithbridge-106-2576304b",
-  "installer_schema": 16,
+  "assembly_version": "0.1.4.23",
+  "build": "0.1.4.23-v0.4.release.1",
+  "caption": "LilithBridge · v0.4 (ffe08b05) · 安装器 .23",
+  "launcher_caption": "LilithBridge 安装 · v0.4 / ffe08b05",
+  "manifest_id": "lilithbridge-0.4.0-ffe08b05",
+  "installer_schema": 17,
   "config_schema": 1,
   "handoff_protocol": 1,
-  "product_sha256": "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3",
+  "product_sha256": "ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df",
   "model_revision": "7999e1d3359715c523056ef9478215996d62a620",
   "model_manifest_sha256": "c0f597c0cd4a19a54e08b3d589633b94154ea6f76df9c23365a9ff212eb07c17",
   "wheel_manifest_sha256": "17f66187aae50df1e0613305b0f1d8f42b2665ea499d8f1952483ca85d566891",
@@ -57,7 +57,7 @@
       "us.aws.cdn.hf.co"
     ]
   },
-  "product_version": "0.3.150.106-hybrid-live-tail.1",
-  "min_installer_schema": 16,
-  "artifact_suffix": "cn22-2576304b"
+  "product_version": "0.4.0",
+  "min_installer_schema": 17,
+  "artifact_suffix": "cn23-ffe08b05"
 }

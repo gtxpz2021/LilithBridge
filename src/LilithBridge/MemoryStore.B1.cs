@@ -31,13 +31,13 @@ internal sealed partial class MemoryStore
         if (!ReferenceEquals(_b1IndexedEntries, doc.Entries))
         {
             _b1Index = doc.Entries.ToDictionary(e => e.Version, StringComparer.Ordinal);
-            _b1SearchIndex = doc.Entries.ToDictionary(e => e.Version, e => MemorySemantics.MatchingTokens(e.Text + " " + e.Scope), StringComparer.Ordinal);
+            _b1SearchIndex = doc.Entries.ToDictionary(e => e.Version, e => B1SearchTokens(e.Text + " " + e.Scope), StringComparer.Ordinal);
             _b1MeaningSearchIndex = doc.Entries.ToDictionary(e => e.Version,
-                e => MemorySemantics.MatchingTokens(B1DiscoveryText(e)), StringComparer.Ordinal);
+                e => B1SearchTokens(B1DiscoveryText(e)), StringComparer.Ordinal);
             // Discovery hints may include legacy declared sources. This never
             // backfills semantic object anchors or strengthens historical provenance.
             _b1SourceSearchIndex = doc.Entries.ToDictionary(e => e.Version,
-                e => MemorySemantics.MatchingTokens(string.Join(" ", e.ObjectAnchors.Concat(e.Sources.Where(r => r.Kind != "b1"))
+                e => B1SearchTokens(string.Join(" ", e.ObjectAnchors.Concat(e.Sources.Where(r => r.Kind != "b1"))
                     .Select(r => B1Turn(r.Kind, r.Version)?.Text ?? ""))), StringComparer.Ordinal);
             _b1DiscoveryIndex = doc.Entries.ToDictionary(e => e.Version, B1DiscoverySources, StringComparer.Ordinal);
             _b1IndexedEntries = doc.Entries;
@@ -201,6 +201,29 @@ internal sealed partial class MemoryStore
         .SelectMany(m => m.DisplayedReplyFragments ?? Array.Empty<B1Delivery>())
         .Where(d => d.Text.Length > 0).Select(d => new B1Ref("utterance", d.EventId, B1Hash(d.Text), "permission"));
 
+    internal IEnumerable<B1Ref> B1EntryPermissionFootprint(B1Entry e)
+    {
+        var citedKeys = e.Sources.Concat(e.ObjectAnchors)
+            .Concat(e.Packet.Materials.Select(m => m.Ref))
+            .Select(r => r.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        var suppressed = SuppressedExperienceIds();
+        return e.Packet.Footprint.Where(r =>
+        {
+            if (citedKeys.Contains(r.Key) || r.Kind != "utterance") return true;
+            var turn = B1Turn(r.Kind, r.Version);
+            if (turn == null || !IsNativeUtterance(turn)) return true;
+            // Uncited ambient native game greetings from the creation session must not
+            // permanently brick a stored B1 entry across future sessions, unless the
+            // native line was explicitly suppressed, mention-restricted, or tampered.
+            return suppressed.Contains(turn.EventId)
+                || suppressed.Contains(turn.SourceEventId)
+                || SuppressedTextMatches(turn.Text)
+                || !IsMentionAllowed(turn)
+                || (r.Sha256.Length > 0 && r.Sha256 != B1Hash(turn.Text));
+        });
+    }
+
     private B1Resolution ResolveB1(B1Ref reference, B1Document doc, HashSet<string> visiting, bool needMaterial = true)
     {
         using var diagnostic=PreparationTiming.Measure("b1.resolve");
@@ -231,7 +254,7 @@ internal sealed partial class MemoryStore
                 if (reference.Sha256.Length > 0 && reference.Sha256 != B1Hash(e.Text)) return new(false, "fragment_mismatch");
                 if (!IsMentionTextAllowed(e.Text + " " + e.Scope) || SuppressedTextMatches(e.Text)
                     || SuppressedExperienceIds().Contains(e.Version)) return new(false, "permission_denied");
-                foreach (var r in e.Sources.Concat(e.ObjectAnchors).Concat(e.Packet.Footprint).Concat(B1DisplayFootprint(e.Packet)))
+                foreach (var r in e.Sources.Concat(e.ObjectAnchors).Concat(B1EntryPermissionFootprint(e)).Concat(B1DisplayFootprint(e.Packet)))
                     if (!ResolveB1(r with { Purpose = "permission" }, doc, visiting, needMaterial: false).Found)
                         return new(false, "source_permission_denied");
                 if (!needMaterial && reference.Purpose != "current") return new(true, reference.Purpose);

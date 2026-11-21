@@ -77,8 +77,11 @@ internal sealed partial class BridgeController
         {
             if (_memory.B1ReflectionOpportunityAlreadyUsed(_reflectionWindow)) return false;
             // Timely normal dialogue may yield a completed pass's cooldown;
-            // this candidate does not extend that bypass to B1-only work.
-            if (ReflectionClock() >= _nextReflectionAt && TryQueueB1Reflection(selection)) return true;
+            // this candidate does not extend that bypass to legacy B1-only work,
+            // but experience-anchored B1 reflection shares the current-dialogue lane.
+            if ((ReflectionClock() >= _nextReflectionAt
+                    || B1CapabilityOwner.ReflectionEnabled(_config) && _reflectionDialogueMayBypassCooldown && CurrentDialogueReflection(selection))
+                && TryQueueB1Reflection(selection)) return true;
         }
         var total = Stopwatch.StartNew();
         var memory = _memory;

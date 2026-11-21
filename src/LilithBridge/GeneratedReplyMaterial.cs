@@ -22,6 +22,14 @@ internal sealed partial class MemoryStore
         && t.Text.StartsWith("莉莉丝说：", StringComparison.Ordinal)
         && t.Text.EndsWith(" [assistant_reply]", StringComparison.Ordinal);
 
+    internal static bool QueriesHistoricalDraftOrAssistantSpeech(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return false;
+        if (MemorySemantics.RequestedHistorySpeaker(query) == "assistant") return true;
+        return System.Text.RegularExpressions.Regex.IsMatch(query,
+            "没说完|没写完|半句|半截|草稿|打断|没显示|未展示|刚才想说|前面想说|上次想说");
+    }
+
     internal GeneratedReplyMaterial BuildGeneratedReplyMaterial(string query, BridgeConfig config,
         IReadOnlyList<MemoryTurn> history, string currentUserId, string currentUserText,
         SemanticRecallResult? semantic, bool allowHistoryReferences, bool relevanceForRequest=true)
@@ -52,7 +60,7 @@ internal sealed partial class MemoryStore
                 if(selected.All(s=>s.Key!=source.Key))selected.Add(source);
             }
         }
-        else if (SemanticResultMatches(query, semantic, SemanticDomain.Events))
+        else if (SemanticResultMatches(query, semantic, SemanticDomain.Events) && QueriesHistoricalDraftOrAssistantSpeech(query))
         {
             int semanticAdded = 0;
             foreach (var candidate in semantic!.Candidates.Where(c => c.Kind == "generated_reply" && c.Score >= 0.48).OrderByDescending(c => c.Score))
@@ -101,10 +109,12 @@ internal sealed partial class MemoryStore
             return covered >= body.Length || body.AsSpan(covered).IsWhiteSpace();
         }
         static string StripWs(string v) => string.IsNullOrWhiteSpace(v) ? "" : string.Concat(v.Where(c => !char.IsWhiteSpace(c)));
-        var recentOwnerKeys = historyUnits.Where(u => u.Role == "assistant" && u.IsMessage)
-            .Select(u => u.Key).TakeLast(3).ToHashSet(StringComparer.Ordinal);
-        var recentUserIds = history.Where(t => t.Role == "user" && t.EventId.Length > 0)
-            .Select(t => t.EventId).TakeLast(3).ToHashSet(StringComparer.Ordinal);
+        var recentOwnerKeys = historyUnits.Where(u => u.Role == "assistant"
+                && (u.SessionId.Length == 0 || u.SessionId == _sessionId))
+            .TakeLast(1).Where(u => u.IsMessage).Select(u => u.Key).ToHashSet(StringComparer.Ordinal);
+        var recentUserIds = history.Where(t => t.Role == "user" && t.EventId.Length > 0 && t.EventId != currentUserId
+                && (t.SessionId.Length == 0 || t.SessionId == _sessionId))
+            .Select(t => t.EventId).TakeLast(1).ToHashSet(StringComparer.Ordinal);
         selected = selected.Where(s =>
         {
             if (!relevanceActive && IsFullyDisplayedArchive(s))

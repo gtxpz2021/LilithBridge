@@ -1,28 +1,28 @@
 {
-  "product_version": "0.3.150.106-hybrid-live-tail.1",
-  "product_sha256": "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3",
+  "product_version": "0.4.0",
+  "product_sha256": "ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df",
   "product_artifacts": {
     "LilithBridge.deps.json": {
-      "sha256": "03762c8d085ee683bccc6e80f0c619265b38f795a806306a04c4c7bb83eb771d",
-      "bytes": 478
+      "sha256": "f7fcdd3ad80f72051fa0e89bf9ab1bc05d730a90444f006a01a814441522fbf3",
+      "bytes": 428
     },
     "LilithBridge.dll": {
-      "sha256": "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3",
-      "bytes": 4345344
+      "sha256": "ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df",
+      "bytes": 4481536
     },
     "LilithBridge.pdb": {
-      "sha256": "eb33fac692756871b9c8e9317eb812f87a4f381a98fd66142a17dfcc8380701b",
-      "bytes": 774300
+      "sha256": "9aeb3287d77dd25fe826922e281d947c129bda287015d205342c78c531c99468",
+      "bytes": 802104
     }
   },
-  "product_source_files": 339,
-  "product_source_tree_sha256": "38c1d0fa1286b9f8573d6a70aedeecadd42a496d12c6f1ca7b42afd36d29e9e2",
-  "installer_build": "0.1.4.22-hybrid-live-tail.release.1",
-  "installer_sha256": "14eebb250e60498657669f39eaf4b40d5608b84a4c1ed88224ac125dc4b953a4",
-  "handoff_sha256": "f1d12b0b5bcc60729de047f4f9f0a1e9bbc68c1ca95de135a5391dbd863cfe0f",
-  "manifest_sha256": "2d31c2b4f895fb2770ed28e30178ed0aca8c6d3c6ccbf106ba03668aaac9336a",
-  "profile_sha256": "a12d69a31545a6b39ac682e2041d392944c1ef9cf3ac91f98760abc88eb57239",
-  "installer_schema": 16,
+  "product_source_files": 342,
+  "product_source_tree_sha256": "f0542bacead62b05c614cd289dd7df2f9abcc0c5566d6214694a0cf28eb9d515",
+  "installer_build": "0.1.4.23-v0.4.release.1",
+  "installer_sha256": "54b01fb99fc808056448b7834fa8ccfc45ca67faa91ebbd4aec0af3265910a96",
+  "handoff_sha256": "d91191639165bfab7dc4fb4a06d148bcffc603ca50b46a94f7609f11d6528eb4",
+  "manifest_sha256": "8cc01e44072939a6a0bc0d048e39ffdd1ff843ac236f4ebc342631214d6578c9",
+  "profile_sha256": "1a34d4232579f7a51e7103fb20c320cbbf1d1ea0d14a00789d2f48e8eb1a6f74",
+  "installer_schema": 17,
   "config_schema": 1,
   "supported_config_schema": 1,
   "handoff_protocol": 1,
@@ -33,7 +33,7 @@
     "perf_bench": "exit_0",
     "dedup_verify": "passed",
     "optional_recall_fixture": 3,
-    "bugfix_tests": 51
+    "bugfix_tests": 129
   },
   "installer_wizard_ui_run": false,
   "source_contains_no_daily_backups_or_private_data": true,

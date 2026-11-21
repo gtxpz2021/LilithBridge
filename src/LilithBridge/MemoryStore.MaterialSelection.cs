@@ -19,6 +19,14 @@ internal sealed record RelationshipMaterialSelection(
 internal sealed partial class MemoryStore
 {
     private const string RelationshipReadingSource = "memory_store.relationship_readings";
+    // Calibrated on real bge-small-zh-v1.5 scores across active readings:
+    // casual/unrelated lines ("早安", "我们晚饭吃面条怎么样", "今天天气不错") peak at 0.33–0.52,
+    // while genuine topical/relational hits sit at >= 0.57.
+    private const double MinReadingSemanticScore = 0.57d;
+    private const double MinReadingSemanticLexAssistedScore = 0.54d;
+    private const double MinReadingSemanticEventScore = 0.60d;
+    private const int MaxReadingSemanticRank = 24;
+    private const int MaxReadingSemanticEventRank = 12;
 
     // Equivalent natural phrasings that ask about the relationship itself. This
     // is a bounded grammar, not a keyword OR list: each pattern needs a
@@ -71,8 +79,11 @@ internal sealed partial class MemoryStore
     /// re-deriving it from the query.
     /// </summary>
     internal RelationshipMaterialSelection SelectRequestRelationshipMaterial(string? query)
-        =>SelectRequestRelationshipMaterialCore(query,true);
-    private RelationshipMaterialSelection SelectRequestRelationshipMaterialCore(string? query,bool trace)
+        => SelectRequestRelationshipMaterialCore(query, true, null);
+    internal RelationshipMaterialSelection SelectRequestRelationshipMaterial(string? query, SemanticRecallResult? semantic)
+        => SelectRequestRelationshipMaterialCore(query, true, semantic);
+    private RelationshipMaterialSelection SelectRequestRelationshipMaterialCore(string? query, bool trace,
+        SemanticRecallResult? semantic = null)
     {
         string text = query ?? "";
         IReadOnlyList<MemoryTurn> candidates = FilterMentionSupply(GetRelationshipReadings(24));
@@ -91,16 +102,92 @@ internal sealed partial class MemoryStore
                 sourceIds.Add(anchor.EventId);
         });
         bool explicitRelationship = LooksLikeRelationshipQuestion(text);
-        MemoryTurn? selected = candidates
-            .Where(t => explicitRelationship || t.SourceEventIds.Any(sourceIds.Contains)
-                || IsRelevantRecallCached(text, t.Text))
-            .OrderByDescending(t => SimilarityCached(text, t.Text))
-            .ThenByDescending(t => t.Timestamp)
+        var directReadingScores = new Dictionary<string, double>(StringComparer.Ordinal);
+        var semanticNoteScores = new Dictionary<string, double>(StringComparer.Ordinal);
+        var semanticEventScores = new Dictionary<string, double>(StringComparer.Ordinal);
+        bool canUseSemantic = candidates.Count > 0
+            && semantic is { Unavailable.Length: 0 }
+            && !MemorySemantics.DeclinesArchiveRecall(text)
+            && (explicitRelationship || (!semantic.SalienceGated && !MemorySemantics.IsLowInfoGreetingOrFiller(text)));
+        if (canUseSemantic && SemanticResultMatches(text, semantic!, SemanticDomain.Thoughts))
+        {
+            var candById = candidates.ToDictionary(c => c.EventId, StringComparer.Ordinal);
+            var activeNotesById = new Lazy<Dictionary<string, MemoryTurn>>(() =>
+                FilterMentionSupply(GetReflectionNotes(int.MaxValue))
+                    .GroupBy(n => n.EventId, StringComparer.Ordinal)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal));
+            foreach (var hit in semantic!.Candidates)
+            {
+                if (hit.Rank > 0 && hit.Rank > MaxReadingSemanticRank) continue;
+                if (hit.Kind == "reading")
+                {
+                    if (!candById.TryGetValue(hit.EventId, out var cand)) continue;
+                    if (!SemanticCandidateMatches(hit, cand, "reading")) continue;
+                    double minScore = SimilarityCached(text, cand.Text) > 0d
+                        ? MinReadingSemanticLexAssistedScore : MinReadingSemanticScore;
+                    if (hit.Score < minScore) continue;
+                    if (!directReadingScores.TryGetValue(cand.EventId, out double prev) || hit.Score > prev)
+                        directReadingScores[cand.EventId] = hit.Score;
+                }
+                else if (hit.Kind == "note" && hit.Score >= MinReadingSemanticScore)
+                {
+                    if (!activeNotesById.Value.TryGetValue(hit.EventId, out var note)) continue;
+                    if (!SemanticCandidateMatches(hit, note, "note")) continue;
+                    if (!semanticNoteScores.TryGetValue(note.EventId, out double prev) || hit.Score > prev)
+                        semanticNoteScores[note.EventId] = hit.Score;
+                }
+            }
+        }
+        if (canUseSemantic && SemanticResultMatches(text, semantic!, SemanticDomain.Events))
+        {
+            LogicalDialogueCatalog? catalog = null;
+            foreach (var hit in semantic!.Candidates)
+            {
+                if (hit.Kind is not ("utterance" or "message")) continue;
+                if (hit.Score < MinReadingSemanticEventScore || (hit.Rank > 0 && hit.Rank > MaxReadingSemanticEventRank)) continue;
+                catalog ??= GetExperienceLogicalCatalog(scoped: false, dialogueOnly: false);
+                var unit = catalog.ResolveCandidate(hit);
+                if (unit == null) continue;
+                if (!unit.Members.All(m => m.DeliveryState is "received" or "delivered"
+                    && IsMentionAllowed(m) && IsNativeSupplyAllowed(m))) continue;
+                foreach (var member in unit.Members)
+                {
+                    if (!semanticEventScores.TryGetValue(member.EventId, out double prev) || hit.Score > prev)
+                        semanticEventScores[member.EventId] = hit.Score;
+                }
+            }
+        }
+        var ranked = candidates
+            .Select(t =>
+            {
+                bool directLexOrSource = t.SourceEventIds.Any(sourceIds.Contains)
+                    || IsRelevantRecallCached(text, t.Text);
+                double lexScore = SimilarityCached(text, t.Text);
+                double directSem = directReadingScores.GetValueOrDefault(t.EventId);
+                double noteSem = t.SourceNoteIds.Length == 0 ? 0d
+                    : t.SourceNoteIds.Select(id => semanticNoteScores.GetValueOrDefault(id)).DefaultIfEmpty(0d).Max();
+                double eventSem = t.SourceEventIds.Length == 0 ? 0d
+                    : t.SourceEventIds.Select(id => semanticEventScores.GetValueOrDefault(id)).DefaultIfEmpty(0d).Max();
+                bool admitted = explicitRelationship || directLexOrSource
+                    || directSem > 0d || noteSem > 0d || eventSem > 0d;
+                double combined = Math.Max(
+                    lexScore + (directLexOrSource ? 0.15d : 0d),
+                    Math.Max(directSem, Math.Max(noteSem * 0.92d, eventSem * 0.88d)));
+                return (Turn: t, Admitted: admitted, DirectLexOrSource: directLexOrSource,
+                    DirectSem: directSem, NoteSem: noteSem, EventSem: eventSem, Score: combined);
+            })
+            .Where(x => x.Admitted)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Turn.Timestamp)
             .FirstOrDefault();
+        MemoryTurn? selected = ranked.Turn;
         string reason = selected == null
             ? "no_current_relevant_material"
-            : explicitRelationship ? "relationship_question" : "topic_or_source_match";
-        if(trace)NativeEventLog.Trace("material.selection", "mod", "system", "relationship material selection",
+            : explicitRelationship ? "relationship_question"
+            : ranked.DirectLexOrSource ? "topic_or_source_match"
+            : ranked.DirectSem > 0d ? "semantic_reading_match"
+            : "semantic_source_coactivation";
+        if (trace) NativeEventLog.Trace("material.selection", "mod", "system", "relationship material selection",
             "candidate_count=" + candidates.Count + ";selected=" + (selected?.EventId ?? "none")
             + ";reason=" + reason + ";explicit_relationship_question=" + explicitRelationship);
         return new RelationshipMaterialSelection(selected, reason, text, RelationshipReadingSource);

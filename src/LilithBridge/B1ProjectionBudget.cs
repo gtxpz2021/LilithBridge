@@ -89,8 +89,75 @@ internal static class B1ProjectionBudget
             B1Continuity.AssignShortRefs(packet);
             bytes = Bytes();
         }
+        OrderSurvivingB1LineageChronologically(materials);
+        B1Continuity.AssignShortRefs(packet);
         observation.InlineRenderedUtf8Bytes = bytes;
         packet.SuppliedChars = materials.Sum(m => m.Text.Length);
+    }
+
+    // After budget selection has guaranteed that latest current heads survive
+    // ahead of older historical versions, order surviving B1 entries within each
+    // connected lineage chronologically (predecessor before successor) so
+    // B1ReadableView and JSON views never present revisions before their targets.
+    private static void OrderSurvivingB1LineageChronologically(List<B1Material> materials)
+    {
+        var b1Indices = new List<int>();
+        var b1Items = new List<B1Material>();
+        for (int i = 0; i < materials.Count; i++)
+        {
+            if (materials[i].Ref.Kind == "b1" && materials[i].ReplyRunFirst == null)
+            {
+                b1Indices.Add(i);
+                b1Items.Add(materials[i]);
+            }
+        }
+        if (b1Items.Count < 2) return;
+        // Group connected B1 entries (by LogicalId or Target link among surviving B1 items)
+        var parentOf = new int[b1Items.Count];
+        for (int i = 0; i < b1Items.Count; i++) parentOf[i] = i;
+        int Find(int x) => parentOf[x] == x ? x : (parentOf[x] = Find(parentOf[x]));
+        void Union(int a, int b) { int ra = Find(a), rb = Find(b); if (ra != rb) parentOf[Math.Max(ra, rb)] = Math.Min(ra, rb); }
+        for (int i = 0; i < b1Items.Count; i++)
+        {
+            for (int j = i + 1; j < b1Items.Count; j++)
+            {
+                bool sameLogical = b1Items[i].LogicalId.Length > 0 && b1Items[i].LogicalId == b1Items[j].LogicalId;
+                bool targetLink = b1Items[i].Target == b1Items[j].Ref.Key || b1Items[j].Target == b1Items[i].Ref.Key;
+                if (sameLogical || targetLink) Union(i, j);
+            }
+        }
+        var groups = new List<(int Root, List<B1Material> Members)>();
+        var byRoot = new Dictionary<int, List<B1Material>>();
+        for (int i = 0; i < b1Items.Count; i++)
+        {
+            int r = Find(i);
+            if (!byRoot.TryGetValue(r, out var list))
+            {
+                list = new List<B1Material>();
+                byRoot[r] = list;
+                groups.Add((r, list));
+            }
+            list.Add(b1Items[i]);
+        }
+        if (groups.All(g => g.Members.Count <= 1)) return;
+        var reordered = new List<B1Material>(b1Items.Count);
+        foreach (var g in groups)
+        {
+            if (g.Members.Count <= 1) { reordered.AddRange(g.Members); continue; }
+            var remaining = g.Members.OrderBy(m => m.At).ThenBy(m => m.Revision).ToList();
+            var sorted = new List<B1Material>(remaining.Count);
+            while (remaining.Count > 0)
+            {
+                // Pick the earliest item whose Target is not among 'remaining'
+                int pick = remaining.FindIndex(m => !remaining.Any(other => other.Ref.Key != m.Ref.Key && m.Target == other.Ref.Key));
+                if (pick < 0) pick = 0;
+                sorted.Add(remaining[pick]);
+                remaining.RemoveAt(pick);
+            }
+            reordered.AddRange(sorted);
+        }
+        for (int i = 0; i < b1Indices.Count; i++)
+            materials[b1Indices[i]] = reordered[i];
     }
 
     internal static void Trace(B1Packet packet)

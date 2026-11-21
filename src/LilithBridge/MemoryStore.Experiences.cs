@@ -347,8 +347,15 @@ internal sealed partial class MemoryStore
                     }
                     if (overlap > 0)
                     {
-                        score = overlap / (double)Math.Max(1, Math.Min(tokens.Count, scoringTokens.Count));
-                        weightedScore = (idfSum / queryIdfSum) * 0.70d + (overlap / (double)Math.Max(1, scoringTokens.Count)) * 0.30d;
+                        double baseDenom = Math.Max(1, Math.Min(tokens.Count, scoringTokens.Count));
+                        double excessDocDamp = !isExactLookup && tokens.Count > 36 && tokens.Count > scoringTokens.Count * 2
+                            ? Math.Max(0d, Math.Sqrt(tokens.Count) - 6d)
+                            : 0d;
+                        score = overlap / (baseDenom + excessDocDamp);
+                        double rawWeighted = (idfSum / queryIdfSum) * 0.70d + (overlap / (double)Math.Max(1, scoringTokens.Count)) * 0.30d;
+                        weightedScore = excessDocDamp > 0d
+                            ? rawWeighted / (1d + excessDocDamp / 15d)
+                            : rawWeighted;
                     }
                 }
             }
@@ -562,9 +569,10 @@ internal sealed partial class MemoryStore
                         || !LogicalUnitScopeAllowed(u, recallQuery, discoveryTerms: true)
                         || u.IsLowInfoFiller)
                         continue;
+                    double normBridgeScore = kv.Value / Math.Sqrt(Math.Max(16, u.MatchingTokens.Count));
                     bridgeMatches.Add((
                         u,
-                        kv.Value,
+                        normBridgeScore,
                         !anchorSessions.Contains(u.SessionId) ? 1 : 0,
                         !directKeys.Contains(u.Key) ? 1 : 0));
                 }

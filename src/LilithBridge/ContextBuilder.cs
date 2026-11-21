@@ -133,7 +133,7 @@ internal static class ContextBuilder
             // user line, so the gate decision recorded here is the one that runs.
             using (PreparationTiming.Measure("ctx.material_selection"))
                 selection = ContextMaterialSelection.Select(memory, config, retrievalQuery, querySource,
-                    materialBranch, PreviousUserLine(state, retrievalQuery), playerDirected);
+                    materialBranch, PreviousUserLine(state, retrievalQuery), playerDirected, semanticRecall);
         }
         catch
         {
@@ -998,7 +998,7 @@ internal static class ContextBuilder
         string sourceContext = memory.DescribeSourceAttribution(reading);
         return persona
             + Environment.NewLine
-            + "[你最近对这段关系的理解（你自己写的，可以随时改变，不是事实）]"
+            + "[你最近对这段关系的理解（你的主观视角，非外部事实）]"
             + Environment.NewLine + "- " + reading.Text
             + (sourceContext.Length > 0 ? Environment.NewLine + sourceContext : "");
     }

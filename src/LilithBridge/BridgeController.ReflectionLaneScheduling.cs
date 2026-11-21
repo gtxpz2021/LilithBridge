@@ -97,9 +97,11 @@ internal sealed partial class BridgeController
         // the original mixed-prefix fair replacement again after this choice.
         bool pickedCurrent = lane == ReflectionOpportunityLane.Current;
         // Preserve the existing B1 handoff only if this same current window
-        // also meets the old pacing. The new material clock authorizes ordinary
-        // dialogue alone; it must not lend that opportunity to another purpose.
+        // also meets the old pacing (or experience-anchored B1 retrospective
+        // development is enabled, which reflects on the current window itself
+        // and yields NormalTurnDue to ordinary 3-chain reflection right after).
         bool ordinaryCurrentOnly = pickedCurrent && plan.AgeKnown
+            && !B1CapabilityOwner.ReflectionEnabled(_config)
             && !ReflectionLaneQualified(current, nativeIdle, changed, true, null);
         if (!QueueReflectionPreparation(selected, null, ordinaryCurrentOnly)) return;
         _reflectionDialogueOpportunityWait.Clear();

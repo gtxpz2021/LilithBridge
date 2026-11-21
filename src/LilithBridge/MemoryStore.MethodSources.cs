@@ -232,7 +232,7 @@ internal sealed partial class MemoryStore
                 if(reference.Kind=="b1")
                 {
                     var e=FindB1(doc!,reference.Version)!;
-                    foreach(var r in e.Sources.Concat(e.ObjectAnchors).Concat(e.Packet.Footprint).Concat(B1DisplayFootprint(e.Packet)))
+                    foreach(var r in e.Sources.Concat(e.ObjectAnchors).Concat(B1EntryPermissionFootprint(e)).Concat(B1DisplayFootprint(e.Packet)))
                         if(!Add(r with{Purpose="permission"}))return false;
                 }
                 return true;

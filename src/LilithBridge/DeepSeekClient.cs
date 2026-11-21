@@ -323,8 +323,25 @@ internal sealed partial class DeepSeekClient : IDisposable
     {
         _chatgptAuthFactory = chatgptAuthFactory;
         _injectedTransport=transport!=null;
-        _http = transport == null ? new HttpClient() : new HttpClient(transport);
-        _planHttp = transport == null ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) : _http;
+        _http = transport == null
+            ? new HttpClient(new SocketsHttpHandler
+            {
+                PooledConnectionIdleTimeout = TimeSpan.FromSeconds(45),
+                KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+                KeepAlivePingTimeout = TimeSpan.FromSeconds(15),
+                KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always
+            })
+            : new HttpClient(transport);
+        _planHttp = transport == null
+            ? new HttpClient(new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                PooledConnectionIdleTimeout = TimeSpan.FromSeconds(45),
+                KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+                KeepAlivePingTimeout = TimeSpan.FromSeconds(15),
+                KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always
+            })
+            : _http;
         _http.Timeout = Timeout.InfiniteTimeSpan;
         _planHttp.Timeout = Timeout.InfiniteTimeSpan;
     }

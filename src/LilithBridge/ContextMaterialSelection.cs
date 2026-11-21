@@ -130,7 +130,8 @@ internal sealed class ContextMaterialSelection
     /// selected" with a recorded reason instead of breaking the request.
     /// </summary>
     internal static ContextMaterialSelection Select(MemoryStore memory, BridgeConfig config,
-        string query, string querySource, string branch, string? previousUserLine = null, bool playerDirected = true)
+        string query, string querySource, string branch, string? previousUserLine = null, bool playerDirected = true,
+        SemanticRecallResult? semanticRecall = null)
     {
         string text = query ?? "";
         if (memory == null || config == null)
@@ -138,7 +139,7 @@ internal sealed class ContextMaterialSelection
         RelationshipMaterialSelection relationship;
         try
         {
-            relationship = memory.SelectRequestRelationshipMaterial(text);
+            relationship = memory.SelectRequestRelationshipMaterial(text, playerDirected ? semanticRecall : null);
         }
         catch
         {

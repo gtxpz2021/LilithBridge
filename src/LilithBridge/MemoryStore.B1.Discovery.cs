@@ -7,11 +7,33 @@ namespace LilithBridge;
 
 internal sealed partial class MemoryStore
 {
+    // Strip addressee self-name before CJK bigramming so calling "莉莉丝" never
+    // creates boundary-crossing bigrams (e.g. "欢莉"/"丝有") or inflates B1 overlap.
+    private static readonly Regex B1AddresseeMask = new(@"莉莉丝|lilith", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+    private static bool B1IsParticleGlueToken(string t)
+    {
+        if (t.Length != 2) return false;
+        char c0 = t[0], c1 = t[1];
+        if (c0 < '\u3400' || c0 > '\u9fff' || c1 < '\u3400' || c1 > '\u9fff') return false;
+        const string particles = "的了吗呢呀啊哦喔嘛呐诶欸哈嘿唔";
+        return particles.IndexOf(c0) >= 0 || particles.IndexOf(c1) >= 0;
+    }
+
+    private static HashSet<string> B1SearchTokens(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return new HashSet<string>(StringComparer.Ordinal);
+        string masked = B1AddresseeMask.Replace(text, " ");
+        var raw = MemorySemantics.MatchingTokens(masked);
+        raw.RemoveWhere(t => B1WeakSearchTokens.Contains(t) || B1IsParticleGlueToken(t));
+        return raw;
+    }
+
     // These are discovery hints, never new object anchors or semantic premises.
     // A source must actually have been supplied to this generation, and share a
     // concrete token with its retained content. This avoids indexing an entire
     // conversation as if all of it described the same object.
     private static bool B1ConcreteDiscoveryToken(string t) => t.Length >= 2 && !B1WeakSearchTokens.Contains(t)
+        && !B1IsParticleGlueToken(t)
         && t is not ("假设" or "玩家" or "现实" or "物品" or "经历" or "仅限" or "涉及" or "不涉"
             or "前面" or "之前" or "刚才" or "先前" or "原先" or "当时" or "一直" or "之后"
             or "一张" or "一个" or "一下" or "一些" or "一点" or "一种" or "一次" or "一件"
@@ -19,13 +41,13 @@ internal sealed partial class MemoryStore
 
     private List<(B1Ref Ref, HashSet<string> Tokens)> B1DiscoverySources(B1Entry entry)
     {
-        var body = MemorySemantics.MatchingTokens(entry.Text + " " + entry.Scope);
+        var body = B1SearchTokens(entry.Text + " " + entry.Scope);
         return entry.Packet.Footprint.Where(r => r.Kind == "utterance")
             .GroupBy(r => r.Key).Select(g => g.First()).TakeLast(96)
             .Select(r => (Ref:r, Turn:B1Turn(r.Kind, r.Version)))
             .Where(x => x.Turn is { Role: "user", Origin: "user", DeliveryState: "received", SchemaVersion: 1 }
                 && (x.Ref.Sha256.Length == 0 || x.Ref.Sha256 == B1Hash(x.Turn.Text)))
-            .Select(x => (x.Ref, Tokens:MemorySemantics.MatchingTokens(x.Turn!.Text)))
+            .Select(x => (x.Ref, Tokens:B1SearchTokens(x.Turn!.Text).Where(B1DiscoveryContent).ToHashSet(StringComparer.Ordinal)))
             .Select(x => (x.Ref, x.Tokens, Pivots:x.Tokens.Count(t => body.Contains(t) && B1ConcreteDiscoveryToken(t))))
             .Where(x => x.Pivots > 0).OrderByDescending(x => x.Pivots).Take(8)
             .Select(x => (x.Ref, x.Tokens)).ToList();
@@ -58,14 +80,89 @@ internal sealed partial class MemoryStore
     private static bool B1RecallReferenceOnly(string text) => Regex.IsMatch(text,
         @"^(?:前面|之前|上次|以前|你还记得|还记得|记不记得).*(?:[？?]|记不清|告诉我)", RegexOptions.Singleline);
 
+    private const int MaxB1SemanticGlobalRank = 24;
+    private const double MinB1SemanticScore = 0.33;
+    private const double MinB1StrongUtteranceScore = 0.45;
+
+    private static bool B1IsExplicitLookup(string query)
+        => MemorySemantics.RecallIdentifiers(query).Length > 0
+            || UtteranceAttribution.LiteralQuotes(query).Length > 0
+            || MemorySemantics.ParseExperienceRecallQuery(query) != null
+            || MemorySemantics.RequestedHistorySpeaker(query).Length > 0;
+
+    // Mirror SemanticRecall's filler & salience discipline so casual greetings or
+    // low-rank background buzz in a full-corpus ranking never trigger speculative
+    // B1 family + historical reply-group fan-out.
+    private static bool B1SemanticDiscoveryPermitted(string query, SemanticRecallResult semantic)
+    {
+        if (semantic.RelevancePlan != null) return true;
+        bool explicitLookup = B1IsExplicitLookup(query);
+        if (!explicitLookup && !B1HasRecallIntent(query) && MemorySemantics.IsLowInfoGreetingOrFiller(query))
+            return false;
+        bool geometryActive = semantic.Geometry != null;
+        bool geometryHighOrderEmpty = semantic.OrthogonalSparks.Count == 0 && semantic.WormholeSparks.Count == 0
+            && semantic.BridgeSparks.Count == 0 && semantic.SceneSparks.Count == 0;
+        if (geometryActive && !explicitLookup && !B1HasRecallIntent(query) && semantic.SalienceGated && geometryHighOrderEmpty)
+            return false;
+        return true;
+    }
+
+    private static bool B1SemanticCandidatePermitted(SemanticRecallCandidate candidate, SemanticRecallResult semantic,
+        bool explicitLookup, bool requireStrongUnplanned = false)
+    {
+        if (semantic.RelevancePlan != null) return true;
+        double minScore = requireStrongUnplanned ? MinB1StrongUtteranceScore : MinB1SemanticScore;
+        if (candidate.Score < minScore) return false;
+        // Full-corpus queries assign Rank across all domains (Events + B1 + Thoughts).
+        // A B1 entry sitting at global rank #231 or #456 is anisotropic background buzz,
+        // not a genuine hit—even if its raw cosine clears 0.45–0.60. Legacy/mock callers
+        // that omit Rank (<= 0) keep passing when their Score clears the floor.
+        if (!explicitLookup && candidate.Rank > MaxB1SemanticGlobalRank) return false;
+        return true;
+    }
+
+    private static bool B1UtteranceMatchesQuery(string query, string utteranceText, bool explicitLookup)
+    {
+        if (explicitLookup) return true;
+        var qTokens = B1SearchTokens(query).Where(B1DiscoveryContent).ToHashSet(StringComparer.Ordinal);
+        if (qTokens.Count == 0) return false;
+        var uTokens = B1SearchTokens(utteranceText);
+        if (uTokens.Count == 0) return false;
+        int overlap = qTokens.Count(uTokens.Contains);
+        if (overlap <= 0) return false;
+        double score = overlap / (double)Math.Max(1, Math.Min(qTokens.Count, uTokens.Count));
+        return score >= MemorySemantics.MinRecallSimilarity
+            && (overlap >= MemorySemantics.MinRecallOverlap || score >= 0.5);
+    }
+
+    private static bool B1SemanticUtteranceMatchesQuery(string query, string utteranceText,
+        SemanticRecallCandidate candidate, bool explicitLookup)
+    {
+        if (explicitLookup) return true;
+        // Synthetic/unit-test candidates omit global corpus Rank (<= 0).
+        if (candidate.Rank <= 0) return candidate.Score >= MinB1StrongUtteranceScore;
+        // High-confidence top-5 cross-word semantic hit is permitted even without
+        // lexical overlap; lower-rank semantic candidates must meet the same
+        // substantive token similarity/overlap floor on the user utterance itself
+        // (preventing assistant-hit spillover or a single incidental 2-char token
+        // in a long old paste from pulling unrelated sessions into B1 fan-out).
+        if (candidate.Score >= 0.68 && candidate.Rank <= 5) return true;
+        return B1UtteranceMatchesQuery(query, utteranceText, explicitLookup);
+    }
+
     private IReadOnlyList<MemoryTurn> GetB1ExperienceDiscovery(string query, string currentInput, int max,SemanticRecallResult? semantic=null)
     {
         if (max <= 0 || MemorySemantics.DeclinesArchiveRecall(query)) return Array.Empty<MemoryTurn>();
         var excluded = new[] { currentInput };
+        bool explicitQueryLookup = B1IsExplicitLookup(query);
         // Reuse the existing archive lookup and all of its role/date/identifier
         // boundaries. This path supplies original utterances even with zero B.
+        // Require the user turn itself to match substantive query tokens on
+        // non-explicit queries so an assistant-side match in a LogicalDialogueUnit
+        // never drags its unrelated user prompt into B1 root fan-out.
         var normal = GetExperienceCandidates(query, max * 3, excluded).Where(t => t.Role == "user"
-            && t.Origin == "user" && t.Text != query).Take(max).ToList();
+            && t.Origin == "user" && t.Text != query
+            && B1UtteranceMatchesQuery(query, t.Text, explicitQueryLookup)).Take(max).ToList();
         var vector=new List<MemoryTurn>();
         IReadOnlyList<MemoryTurn> Merge(IEnumerable<MemoryTurn> lexical)
         {
@@ -76,19 +173,24 @@ internal sealed partial class MemoryStore
             return rankedLexical.Take(1).Concat(vector.Take(max)).Concat(rankedLexical.Skip(1))
                 .DistinctBy(t=>t.EventId).Take(max).ToList();
         }
-        if(SemanticResultMatches(query,semantic,SemanticDomain.Events))
+        if(SemanticResultMatches(query,semantic,SemanticDomain.Events) && B1SemanticDiscoveryPermitted(query, semantic!))
         {
             var scope=MemorySemantics.ParseExperienceRecallQuery(query);
             var ids=MemorySemantics.RecallIdentifiers(query);
             var quotes=UtteranceAttribution.LiteralQuotes(query);
             string requested=MemorySemantics.RequestedHistorySpeaker(query);
+            bool explicitLookup = ids.Length > 0 || quotes.Length > 0 || scope != null || requested.Length > 0;
             var permitted=ReadExperiences().Where(t=>t.EventId!=currentInput&&t.Role=="user"&&t.Origin=="user"
                 &&t.DeliveryState=="received"&&t.Text!=query&&IsMentionAllowed(t)&&IsNativeSupplyAllowed(t)
                 &&requested!="assistant"&&(scope==null||scope.AllowsSourceScope(t))
                 &&ids.All(id=>MemorySemantics.ContainsRecallIdentifier(t.Text,id))
-                &&quotes.All(q=>t.Text.Contains(q,StringComparison.Ordinal))).ToList();
-            vector=semantic!.Candidates.Where(c=>c.Kind=="utterance").OrderByDescending(c=>c.Score)
-                .Select(c=>permitted.FirstOrDefault(t=>SemanticCandidateMatches(c,t))).Where(t=>t!=null).Cast<MemoryTurn>().ToList();
+                &&quotes.All(q=>t.Text.Contains(q,StringComparison.Ordinal))
+                &&(explicitLookup || !MemorySemantics.IsLowInfoGreetingOrFiller(t.Text))).ToList();
+            vector=semantic!.Candidates.Where(c=>c.Kind=="utterance" && B1SemanticCandidatePermitted(c, semantic, explicitLookup, requireStrongUnplanned: !explicitLookup))
+                .OrderByDescending(c=>c.Score)
+                .Select(c=>(Candidate:c, Turn:permitted.FirstOrDefault(t=>SemanticCandidateMatches(c,t))))
+                .Where(x=>x.Turn!=null && B1SemanticUtteranceMatchesQuery(query, x.Turn.Text, x.Candidate, explicitLookup))
+                .Select(x=>x.Turn!).ToList();
         }
         if (!Regex.IsMatch(query, @"记得|记不记得|聊过|更正|改正|纠正|之前|前面|上次")) return Merge(normal);
         var policy = MemorySemantics.ParseExperienceRecallQuery(query);

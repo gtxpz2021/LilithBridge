@@ -30,7 +30,7 @@ internal sealed partial class MemoryStore
             }
             sources.Add(source);
             if (reference.Kind == "b1" && document != null && FindB1(document, reference.Version) is {} entry)
-                foreach (var prior in entry.Sources.Concat(entry.ObjectAnchors).Concat(entry.Packet.Footprint).Concat(B1DisplayFootprint(entry.Packet)))
+                foreach (var prior in entry.Sources.Concat(entry.ObjectAnchors).Concat(B1EntryPermissionFootprint(entry)).Concat(B1DisplayFootprint(entry.Packet)))
                     Add(prior with { Purpose = "permission" });
         }
         foreach (var turn in records.DistinctBy(t => (t.Kind, t.EventId, t.Role)))

@@ -1,1 +1,1 @@
-namespace LilithSetupLauncher { internal static class PayloadInfo { internal const string Hash="20ee9b98018be444c695edf784b3d3fd3c50d77c601b56b9a87f73f775ef214e"; internal const long Bytes=57470875L; } }
+namespace LilithSetupLauncher { internal static class PayloadInfo { internal const string Hash="dc94df566a111008ef850cdf00276f3bd1ad0d5f7adc1c5eac031aea85c8625c"; internal const long Bytes=57526146L; } }

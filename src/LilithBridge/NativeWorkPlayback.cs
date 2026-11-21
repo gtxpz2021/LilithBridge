@@ -64,6 +64,26 @@ internal sealed class TemporaryExpressionSession
         _retained.Add((work, final));
         while (_retained.Count > 4) { _retained[0].Work.DisposeFromRetainEviction(); _retained.RemoveAt(0); }
     }
+    /// <summary>
+    /// Retires carried temporary work entries once a subsequent turn that carried them
+    /// has fully delivered its own reply, preventing resolved interrupted drafts from
+    /// sticking across later turns while keeping DisposeFromRetainEviction() chain safety.
+    /// </summary>
+    internal void RetireDeliveredCarry(IReadOnlyCollection<string>? carriedOperationIds)
+    {
+        if (carriedOperationIds == null || carriedOperationIds.Count == 0 || _retained.Count == 0)
+            return;
+        var retired = carriedOperationIds as HashSet<string>
+            ?? new HashSet<string>(carriedOperationIds, StringComparer.Ordinal);
+        for (int i = _retained.Count - 1; i >= 0; i--)
+        {
+            if (retired.Contains(_retained[i].Work.OperationId))
+            {
+                _retained[i].Work.DisposeFromRetainEviction();
+                _retained.RemoveAt(i);
+            }
+        }
+    }
     private static string Draft(ApiResult? final)
     {
         if (final == null) return "";

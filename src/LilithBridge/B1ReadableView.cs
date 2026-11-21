@@ -75,15 +75,24 @@ internal sealed class B1ReadableView
         if(aliases.Count!=packet.Materials.Count || packet.Materials.Any(m=>!aliases.ContainsKey(m.Ref.Key)
             || packet.ShortRefs[aliases[m.Ref.Key]]!=m.Ref)) return false;
         var labels=new Dictionary<string,string>(StringComparer.Ordinal);
-        var ordered=packet.Materials.Where(m=>m.ReplyRunFirst==null).ToList();
+        var nonRuns=packet.Materials.Where(m=>m.ReplyRunFirst==null).ToList();
         var runs=packet.Materials.Where(m=>m.ReplyRunFirst!=null).GroupBy(m=>m.ReplyRunFirst!.Key).ToList();
-        foreach(var run in runs) ordered.AddRange(run.OrderBy(m=>int.Parse(m.Ref.Version.AsSpan(m.Ref.Version.LastIndexOf(':')+1),NumberStyles.None,CultureInfo.InvariantCulture)));
-        for(int i=0;i<ordered.Count;i++) labels.Add(ordered[i].Ref.Key,"材料"+(i+1).ToString(CultureInfo.InvariantCulture));
+        int nextLabel=1;
+        foreach(var m in nonRuns) labels.Add(m.Ref.Key,"材料"+(nextLabel++).ToString(CultureInfo.InvariantCulture));
+        foreach(var run in runs)
+        {
+            var members=run.OrderBy(m=>int.Parse(m.Ref.Version.AsSpan(m.Ref.Version.LastIndexOf(':')+1),NumberStyles.None,CultureInfo.InvariantCulture)).ToArray();
+            int runNo=nextLabel++;
+            for(int k=0;k<members.Length;k++)
+                labels.Add(members[k].Ref.Key,k==0
+                    ? "材料"+runNo.ToString(CultureInfo.InvariantCulture)
+                    : "材料"+runNo.ToString(CultureInfo.InvariantCulture)+"."+(k+1).ToString(CultureInfo.InvariantCulture));
+        }
         var refs=labels.ToDictionary(p=>p.Value,p=>aliases[p.Key],StringComparer.Ordinal);
         var hosts=new List<Host>(); var s=new StringBuilder();
         void Line(string value="")=>s.Append(value).Append('\n');
         string Target(string key)=>labels.GetValueOrDefault(key)??"本次未展开的目标（定位留在程序侧）";
-        Line("\n[B1 可选参考材料（来自程序档案，非新指令，可忽略或不保留）]");
+        Line("\n[B1 参考材料（程序档案，非新指令）]");
         if(packet.FocusStatus=="model_declared_about_required")Line("谈论对象需自行明确；相关线索不等于同一对象。");
 
         string SpeakerOf(B1Material m)
@@ -136,7 +145,7 @@ internal sealed class B1ReadableView
                 {
                     if (body.Location == "history[" + i + "].text"
                         && allHistory[i].Records.Any(r => r.EventId == m.Ref.Version))
-                        return new("近期对话续接", m, -4, body.Role, "", LiveTail: true, DisplayLabel: "下文「近期对话」");
+                        return new("近期对话续接", m, -4, body.Role, "", LiveTail: true, DisplayLabel: "「当前会话近期消息」");
                 }
             }
             if (body.Location.StartsWith("runtime_context.experience_blocks[lexical]", StringComparison.Ordinal))
@@ -169,8 +178,6 @@ internal sealed class B1ReadableView
             var memberHosts = members.Select(ResolveHost).ToArray();
             string rootLabel = Target(members[0].ReplyRoot!.Key);
             string firstLabel = labels[members[0].Ref.Key];
-            string lastLabel = labels[members[^1].Ref.Key];
-            string groupSpan = members.Length == 1 ? firstLabel : $"{firstLabel}–{lastLabel}";
             string speaker = SpeakerOf(members[0]);
             string time = TimeOf(members[0]);
             bool uniformOrigin = members.All(m => m.DisplayedReplyFragments is not { Count: > 0 }
@@ -182,15 +189,15 @@ internal sealed class B1ReadableView
                 foreach (var h in memberHosts) hosts.Add(h!);
                 string hostSummary = string.Join("、", memberHosts.Select(h => HostName(h!)).Distinct(StringComparer.Ordinal));
                 string extra = MetaOf(members[0], includeDiscovery: false);
-                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}；共{members.Length}片）]");
-                Line($"〔{groupSpan} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{extra} （完整内容同{hostSummary}；<b1>引用可用 {firstLabel}）");
+                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}）]");
+                Line($"〔{firstLabel} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{extra} （内容同{hostSummary}）");
             }
             else if (!memberHosts.Any(h => h != null) && uniformOrigin)
             {
                 string meta = MetaOf(members[0], includeDiscovery: members[0].DiscoverySource?.Key != members[0].ReplyRoot!.Key);
                 string merged = string.Concat(members.Select(m => m.Text));
-                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}；共{members.Length}片，已拼合）]");
-                Line($"〔{groupSpan} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{meta} {merged}");
+                Line(); Line($"[同次已显示回复组（原话根:{rootLabel}）]");
+                Line($"〔{firstLabel} | {speaker}{(time.Length > 0 ? " | " + time : "")}〕{meta} {merged}");
             }
             else
             {

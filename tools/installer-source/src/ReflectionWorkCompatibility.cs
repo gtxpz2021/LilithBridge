@@ -89,14 +89,14 @@ namespace LilithSetup
                 // .103 and model-options variant: same persisted readers, exact bound images.
                 || imageHash == "83168a8fd166b87c56d0ebc3fa9a5cae0f045b2f07b5622e38cb180a3bc54dda"
                 || imageHash == "afd03ea7b66f8ad3b5d2513467803e326c40253f3d742d7f681b2a6e74fd4ca7"
-                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff" || imageHash == "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6" || imageHash == "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802" || imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5" || imageHash == "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492" || imageHash == "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3";
+                || imageHash == "e4c865ca691559e8b9fe784c88cc7c491f825e32f8cf051b0496f027319152ff" || imageHash == "bfb40b65f2bfeb2963cb753967e6d6d8cb5fac864896103927c1994c321858e6" || imageHash == "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802" || imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5" || imageHash == "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492" || imageHash == "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3" || imageHash == "ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df";
         }
         // Exact private image whose converter supports explicit and MAIN revisit receipts.
         // Header preflight only; no migration, Work replay or data downgrade.
         static bool SupportsRevisitReceipt(string imageHash)
-        { return imageHash == "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802" || imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5" || imageHash == "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492" || imageHash == "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3"; }
+        { return imageHash == "ea9fe04b2fa22fbc903538d46790a624cfe634153874daa79495c28f7fe1e802" || imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5" || imageHash == "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492" || imageHash == "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3" || imageHash == "ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df"; }
         static bool SupportsFinalReceipt(string imageHash)
-        { return imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5" || imageHash == "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492" || imageHash == "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3"; }
+        { return imageHash == "61122db554cdc2f71ae52dabae49d4c9fb8bb09c5266e57583353681572bfaf5" || imageHash == "4de072f7e01f0e820f1ae6c7069963165bf969d4e99f21b8e9d8638e54bcf492" || imageHash == "2576304bf3d9fc5c1ed4db241a58b9b5b97d49efea69b4bce8266b1612a8a6a3" || imageHash == "ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df"; }
         static void RequiredText(Dictionary<string, object> value, string key)
         { SetupCore.Require(DataJson.Get(value, key) is string && !String.IsNullOrWhiteSpace((string)value[key]) && ((string)value[key]).Length <= 256, "LBINSTALL_WORK_STATE_UNKNOWN"); }
         static DateTimeOffset RequiredTime(Dictionary<string, object> value, string key)

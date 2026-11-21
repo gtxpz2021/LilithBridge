@@ -14,7 +14,7 @@ internal sealed record SemanticIndexRecord(string EventId, string Text, string R
     [System.Text.Json.Serialization.JsonIgnore]
     internal string TextHash => _textHash ??= KnownTextHash ?? MemoryStore.SemanticTextHash(Text);
     internal string WireId=>Kind=="utterance"?EventId:"derived/"+Kind+"/"+EventId;
-    internal SemanticDomain Domain=>Kind switch {"b1"=>SemanticDomain.B1,"note" or "lesson"=>SemanticDomain.Thoughts,_=>SemanticDomain.Events};
+    internal SemanticDomain Domain=>Kind switch {"b1"=>SemanticDomain.B1,"note" or "lesson" or "reading"=>SemanticDomain.Thoughts,_=>SemanticDomain.Events};
 }
 
 // One private child per Bridge/data root. It owns derived vectors only. The
@@ -328,7 +328,7 @@ internal sealed class SemanticRecallWorker : IDisposable
             PreparationTiming.Current?.Value("semantic_event_candidates",candidates.Count(c=>c.Kind is "utterance" or "message"));
             PreparationTiming.Current?.Value("semantic_message_candidates",candidates.Count(c=>c.Kind=="message"));
             PreparationTiming.Current?.Value("semantic_b1_hits",candidates.Count(c=>c.Kind=="b1"));
-            PreparationTiming.Current?.Value("semantic_thought_hits",candidates.Count(c=>c.Kind is "note" or "lesson"));
+            PreparationTiming.Current?.Value("semantic_thought_hits",candidates.Count(c=>c.Kind is "note" or "lesson" or "reading"));
             var geometry=request.EnableGeometry?ParseGeometry(r):null;
             var orthogonal=request.EnableGeometry?ParseGeometrySparks(r,"orthogonal_sparks"):SemanticGeometrySpark.Empty;
             var wormholes=request.EnableGeometry?ParseGeometrySparks(r,"wormhole_sparks"):SemanticGeometrySpark.Empty;

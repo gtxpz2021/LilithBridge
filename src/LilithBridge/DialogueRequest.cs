@@ -467,6 +467,7 @@ internal sealed partial class DialogueRequest : IDisposable
     internal DialogueWorkSession? WorkPrototype { get; set; }
     internal Func<bool>? WorkCarryPermission { get; set; }
     internal CarryPermissionChain? WorkCarryChain { get; set; }
+    internal string[] CarriedTemporaryOperationIds { get; set; } = Array.Empty<string>();
     // Includes screenshot continuation and existing boundary/recall retries.
     public const int MaxHttpAttempts = 6;
     private readonly CancellationTokenSource _cancellation = new();

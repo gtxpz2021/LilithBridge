@@ -552,7 +552,8 @@ internal static partial class ConfigStore
                 config.B1MaterialPresentation = ReadString(b1, "material_presentation") ?? config.B1MaterialPresentation;
                 config.B1ProactiveReadOnlyEnabled = ReadBoolean(b1, "proactive_read_only_enabled", false);
                 config.B1SharedActivityReadOnlyEnabled = ReadBoolean(b1, "shared_activity_read_only_enabled", false);
-                config.B1ReflectionEnabled = ReadBoolean(b1, "reflection_reconsideration_enabled", false);
+                config.B1ReflectionEnabled = ReadBoolean(b1, "reflection_reconsideration_enabled",
+                    ReadBoolean(b1, "retrospective_development_enabled", false));
             }
             if (root.TryGetProperty("review_context", out JsonElement reviewContext)
                 && reviewContext.ValueKind == JsonValueKind.Object)

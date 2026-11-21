@@ -34,6 +34,9 @@ internal sealed partial class BridgeController
         owner.PublicExpressionCarryText = text;
         owner.WorkCarryChain = carry.Chain;
         owner.WorkCarryPermission = carry.Chain != null ? carry.Chain.PermissionDelegate : carry.Permitted;
+        owner.CarriedTemporaryOperationIds = carry.Context.Length > 0 && carry.Chain != null
+            ? carry.Chain.DirectEntries.Select(e => e.Work.OperationId).Distinct(StringComparer.Ordinal).ToArray()
+            : Array.Empty<string>();
         return new(text,owner.WorkCarryPermission,owner.PublicExpressionCarrySources,carry.Chain);
     }
     [HideFromIl2Cpp]

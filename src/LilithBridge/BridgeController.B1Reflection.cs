@@ -170,7 +170,7 @@ internal sealed partial class BridgeController
     }
     private void FinishB1Reflection(ReflectionPreparation owner, MemoryStore.B1ReconsiderationOwner b1)
     {
-        _reflectionDialogueMayBypassCooldown = false;
+        _reflectionDialogueMayBypassCooldown = b1.ExperienceAnchored;
         _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
         _reflectionPreparation = null; _reflectionContinuation = null; _reflectionInProgress = false;
         _b1ReflectionOwner = null; b1.Dispose(); owner.Dispose();

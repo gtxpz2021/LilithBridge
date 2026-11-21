@@ -29,7 +29,7 @@ LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》](https://store.s
 > [!IMPORTANT]
 > 已经装过旧版的玩家直接用新版安装器即可无损升级，**绝不会清空或覆盖**你现有的记忆库、配置文件、API Key 与登录态。开始前请先**正常退出游戏**。
 
-1. **下载安装器**：前往[**最新版发布页**](https://github.com/gtxpz2021/LilithBridge/releases/latest)，下载单个 **`LilithBridge-Setup-0.3.150.106-cn22-2576304b.exe`**（面向官方游戏 **1.2.1 / Windows x64**，无需自行解压拼合资源包）。
+1. **下载安装器**：前往[**最新版发布页**](https://github.com/gtxpz2021/LilithBridge/releases/latest)，下载单个 **`LilithBridge-Setup-0.4.0-cn23-ffe08b05.exe`**（面向官方游戏 **1.2.1 / Windows x64**，无需自行解压拼合资源包）。
 2. **一键安装 / 升级**：双击运行，核对自动识别到的游戏目录（需要本地语义召回可勾选“本地召回”，默认仅装核心插件与加载器即可开聊），勾选确认后点击安装。
 3. **游戏内启用**：启动游戏，在画面右上角进入 **`⋯ → 模型与资料设置`**：
    - 在 **对话模型 / 密钥与隐私** 选择 DeepSeek 并填入自己的 Key，或在 **认证账户** 点击 **`Continue with ChatGPT`** 完成浏览器登录，也可以填自定义 OpenAI 格式服务端点；
@@ -63,8 +63,8 @@ LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》](https://store.s
 
 - [**架构入门（ARCHITECTURE）**](ARCHITECTURE.md)：从第一性原理了解一次对话如何沉淀为长期相处，以及各模块的设计取舍与源码入口。
 - [**安装与使用（NORMAL-USE）**](NORMAL-USE.zh-CN.md)：首次配置、模型与登录指引、无损升级、数据目录与常见问题排查。
-- [**本版更新说明（RELEASE-NOTES）**](RELEASE-NOTES.zh-CN.md)：`0.3.150.106` 本次变化与资产校验。
-- [**升级与回退边界（UPGRADE-COMPATIBILITY）**](UPGRADE-COMPATIBILITY.zh-CN.md)：从 `.105` 升级的数据兼容、安装器自动交接机制与版本化备份注意。
+- [**本版更新说明（RELEASE-NOTES）**](RELEASE-NOTES.zh-CN.md)：`v0.4` 本次变化与资产校验。
+- [**升级与回退边界（UPGRADE-COMPATIBILITY）**](UPGRADE-COMPATIBILITY.zh-CN.md)：从 `.106` 升级的数据兼容、安装器自动交接机制与版本化备份注意。
 - [**本地召回依赖（DEPENDENCIES）**](docs/DEPENDENCIES.md) · [**反馈与脱敏指南（FEEDBACK）**](FEEDBACK.zh-CN.md) · [**GitHub Issues**](https://github.com/gtxpz2021/LilithBridge/issues)
 
-核心产品源码位于 [`src/LilithBridge/`](src/LilithBridge/)，一体化安装器位于 [`tools/installer-source/`](tools/installer-source/)。`SOURCE-FILES.json` 与 `SOURCE-IDENTITY.json` 记录发行标签 `v0.3.150.106-2576304b` 对应的源码快照身份。
+核心产品源码位于 [`src/LilithBridge/`](src/LilithBridge/)，一体化安装器位于 [`tools/installer-source/`](tools/installer-source/)。`SOURCE-FILES.json` 与 `SOURCE-IDENTITY.json` 记录发行标签 `v0.4` 对应的源码快照身份。
