@@ -28,9 +28,9 @@
 
 | 设置方式 | 游戏内操作路径 | 注意事项 |
 |---|---|---|
-| **DeepSeek 官方** | 在「对话模型」选 `DeepSeek 官方` 与模型（推荐 `deepseek-flash` 或纯文本 `deepseek-v4-pro`），再到 **「密钥与隐私」** 填写并保存 API Key | DeepSeek Key 以本机 `config.json` 明文格式保存，**请勿将配置文件或整包发给他人** |
-| **ChatGPT 登录** | 在 **「认证账户」** 页点击 **`Continue with ChatGPT`**，在浏览器完成官方授权 | 使用该账户可用计划额度；API 与订阅额度互相独立 |
-| **OpenAI API / 自定义端点** | 在「对话模型」选 OpenAI 预设（`GPT-6.1 Terra` / `GPT-6.1 Sol` / `GPT-6 Astra`）或输入自定义模型 ID / HTTPS 地址，再去「密钥与隐私」填写 Key | 自定义服务端需兼容请求格式，且保存前先确认账户权限与余额 |
+| **DeepSeek 官方 / 兼容接口** | 在「对话模型」选 `DeepSeek` 与模型（推荐 `deepseek-flash` 或纯文本 `deepseek-v4-pro`），再到 **「密钥与隐私」** 填写并保存 API Key；需要接入自定义兼容 HTTPS 端点可在 `config.json` 修改 `provider.base_url` | DeepSeek / 兼容服务 Key 沿用本机 `config.json` 明文格式保存，**请勿将配置文件或整包发给他人** |
+| **ChatGPT 登录** | 在 **「认证账户」** 页点击 **`Continue with ChatGPT`**，在浏览器完成官方授权 | 使用该账户可用计划额度（无需 API Key），凭据以 Windows DPAPI 本机加密保存；API 与订阅额度互相独立 |
+| **OpenAI 官方 API** | 在「对话模型」选 `OpenAI` 与预设模型（`GPT-6.1 Terra` / `GPT-6.1 Sol` / `GPT-6 Astra`）或输入自定义模型 ID，再去「密钥与隐私」加密保存 Key | 走官方 Responses API（`api.openai.com/v1`，`store=false`），Key 以 Windows DPAPI 本机加密保存；保存前请确认账户权限与余额 |
 
 ### 第一次用别忘了点一次「推荐使用设置」
 
