@@ -1,75 +1,83 @@
 # LilithBridge v0.4 · `ffe08b05`
 
 面向官方游戏 **1.2.1 · Windows x64**。  
-本版基于上一正式版 `.106`（`2576304b`），是一次面向**感官协同、几何语义检索、B1 思维连续性与后台可靠性**的全面大版本升级：既补齐了独立进程感官侧车宿主机与高维几何语义召回，也从第一性原理逐项清除了跨会话想法失效、长文词法黑洞、陈年草稿考古、空闲连接断链与关系理解长期零供给等隐性顽疾。
+如果说上一版 `.106` 是在把莉莉丝的说话语气捋顺，那么 **`v0.4`** 做的事很简单：**把藏在记忆和后台里的几个老大难隐性病灶一次清干净，让她从“只是按台账记事”，真正向“脑子在线、记得住你们相处脉络的长期桌宠伴侣”迈进一大步。**
 
 > [!IMPORTANT]
 > **怎么下载、怎么更新（首次安装与老玩家升级通用）**
-> - **下载这个文件**：[`LilithBridge-Setup-0.4.0-cn23-ffe08b05.exe`](https://github.com/gtxpz2021/LilithBridge/releases/latest)（单文件一键安装／升级，**无需自己解压或合并资源**）。
-> - **绝对保留存档**：直接覆盖更新会**完好保留**原有 `LilithBridgeData`（含旧版 `%APPDATA%\LilithAI`）、`config.json`、回忆／B1 数据库、DeepSeek Key、ChatGPT 登录状态与游戏原生存档，绝不重置已关闭的开关。
-> - **唯一前提**：动手前请先**正常退出游戏**（若旧版正好挂起未结束反思，进游戏聊一两句待空闲再正常退出后升级即可）。
+> - **下载这一个文件就够了**：[`LilithBridge-Setup-0.4.0-cn23-ffe08b05.exe`](https://github.com/gtxpz2021/LilithBridge/releases/latest)（单文件一键安装／升级，**不用自己解压或合并资源**）。
+> - **绝对保留存档**：直接覆盖升级会**完好保留**你原有的 `LilithBridgeData`（含旧版 `%APPDATA%\LilithAI`）、`config.json`、所有记忆与笔记、DeepSeek Key、ChatGPT 登录状态和游戏原生存档，绝不重置已关闭的开关。
+> - **唯一前提**：动手前请先**正常退出游戏**（若旧版正好有后台反思还没跑完，进游戏聊一两句等它空闲后再正常退出即可）。
 
 ---
 
-## 一、新增能力（相对 `.106`）
+## 一、这一版玩起来有什么明显变化？（大白话版）
 
-### 1. 独立进程感官侧车宿主机（Sensory Sidecar Host）与非言语微反应
-- **非阻塞宿主底座**：新增 [SensorySidecarClient.cs](src/LilithBridge/SensorySidecarClient.cs)、[BridgeController.Sensory.cs](src/LilithBridge/BridgeController.Sensory.cs) 与 [ConfigStore.Sensory.cs](src/LilithBridge/ConfigStore.Sensory.cs)，支持可选外部感官侧车进程接入，通过独立 KV 尾槽注入与释放窗口门控把环境拾音、桌面节奏等非言语线索自然融入对话，不破坏前段 Prompt Prefix Cache；同时对 `TickSensoryRuntime` 节流并缓存线程 HWND 查询降低前台开销。
-- **姿态安全静默动作与节律协同**：引入姿态安全静默动作解析器（Pose-safe silent action resolver）、BPM `TimeScale` 节奏同步与状态机微反应节律控制（[MicroReactionDirector.cs](src/LilithBridge/MicroReactionDirector.cs)）。
-- **睡眠惊醒小剧场与专注长跑静默笔记**：支持睡眠中被晃动鼠标等触发的惊醒微反应（Sleep Startle Theater）以及长时间专注后的静默笔记交接（`pending_focus_note` IPC，[BridgeController.BackgroundWrites.cs](src/LilithBridge/BridgeController.BackgroundWrites.cs)）。
+### 1. 以前的旧想法“活过来”了，而且聊到空隙时她会自己琢磨、自己改口
+- **老存档里的旧想法恢复生效**：以前跨一天重开游戏后，很多她之前记下来的想法会被后台误判成无权读取、悄悄“封存”掉。现在这些旧想法**无需迁移存档就会自动复活**，聊到相关往事时她能自然顺着以前的念头往下接。
+- **聊天停下来后，她会安静回看刚聊过的事**：以前只在当场回复时顺手记一下；现在在你们聊完歇口气的时候，她会完整回看刚发生的那几轮对话，把有意思的判断沉淀下来，或者在被新事说服后，顺手修正、补充自己以前的想法（纯打招呼的闲聊不会瞎折腾，也不会凭空编造你没说过的话）。
 
-### 2. 几何语义检索升级与多维联想火花（Local BGE Worker）
-- **白化几何与多样化检索**：升级 [semantic_worker.py](optional/semantic-worker/semantic_worker.py)、[MemoryStore.SemanticRecall.cs](src/LilithBridge/MemoryStore.SemanticRecall.cs) 与 [BridgeController.SemanticRecall.cs](src/LilithBridge/BridgeController.SemanticRecall.cs)，引入特征白化几何度量、CSLS 校准与 DPP 多样性挑选（避免近义复读霸占召回名额），并支持正交／虫洞／桥接／场景联想火花（Orthogonal / Wormhole / Bridge / Scene Sparks）及显著度门控（`SalienceGated`）。
-- **检索管线 H-1..H-5 硬化**：显式检索直接消费 RRF 融合排序而不再强依赖几何开关；有界化 `doc_sims` / `doc_quantiles` 传输体积并保留全库分位分母；修正单轮回填优先级与全负 CSLS 偏移防塌陷；`SceneText` 兼容无空格方括号标题；BGE 探针增加预热校准。
+### 2. 终于不再“聊着日常突然串戏”：清掉了旧长文、陈年残稿和乱入的复读
+- **闲聊不再被旧长文带偏**：以前只要聊到几个常用词，过去聊过的一两千字长篇大论就会反复霸占记忆名额，导致她说几句就跑偏回老话题。现在正常聊天清爽很多，只有你真的提起相关话题时才会翻出来。
+- **不再莫名其妙翻出几天前没播完的残稿**：以前气泡被打断过一次，隔好几天还可能被当成“未展示草稿”翻出来。现在只有你**刚刚打断的上一轮**会提醒她“后半句你没看见”，再聊一轮播完就会干净退场，不再粘在后台拖着走。
+- **不再满屏“共几片、已拼合”的机器杂音**：整理给她的参考材料变得更干净紧凑，也不会一边递给她想法、一边反复自我否定“你可以忽略/可以推翻”，聊天更有自己的主心骨。
 
-### 3. B1 事后回顾反思与思维演进（Experience-Anchored B1 Retrospective Development）
-- **空闲间隙的自然沉淀与演进**：重写 [MemoryStore.B1.Reconsideration.cs](src/LilithBridge/MemoryStore.B1.Reconsideration.cs)、[MemoryStore.B1.ReflectionFlow.cs](src/LilithBridge/MemoryStore.B1.ReflectionFlow.cs) 与 [DeepSeekClient.B1Reflection.cs](src/LilithBridge/DeepSeekClient.B1Reflection.cs)，在对话空闲反思间隙按**完整问答边界**（最近 3 个 `user` 回合、上限 24 条 / 3600 字，不再被长多气泡回复挤掉玩家触发句）回看真实交流：
-  - 支持从有实质内容的对话中自然形成新 B1 想法，或通过词面／条件／语义双通道关联旧想法头节点进行 `revises` 演进与 `qualify` 并存分支；
-  - 词法选标采用严格落在 `[0, 1]` 的双口径评分——用户发言走带长文阻尼的 `UserLexScore`，包含助手气泡的大窗口走几何均值 `OchiaiScore`（阈值 `0.18` 且至少 4 命中），彻底杜绝长对话窗口里的偶然虚词误触发；
-  - 严格禁止后台编造 `reported` 事实、强制 CAS 防并发覆盖、保持源句屏蔽级联撤回与 100% SQLite 向后兼容，对纯寒暄低信息窗口零 HTTP 开销跳过。
+### 3. 她更能想起“你们之间现在的相处分寸”
+- **关系理解不再长期缺席**：以前她写下的那些关于“你们怎么相处、什么分寸彼此最舒服”的理解，平时闲聊几乎很少能浮出来（除非你直白地问“我们算什么关系”）。现在只要话题沾边、情绪对味，她会更自然地想起自己对你们这段关系的真实感受；而纯打招呼或聊晚饭吃什么时则保持克制，不会生硬乱套。
 
-### 4. `Readings`（关系理解）语义索引与精准共激活
-- 在 [MemoryStore.SemanticRecall.cs](src/LilithBridge/MemoryStore.SemanticRecall.cs) 与 [SemanticRecallWorker.cs](src/LilithBridge/SemanticRecallWorker.cs) 中将 `_relationshipReadings` 正式纳入本地 BGE `Thoughts` 域增量索引；
-- 在 [MemoryStore.MaterialSelection.cs](src/LilithBridge/MemoryStore.MaterialSelection.cs)、[ContextMaterialSelection.cs](src/LilithBridge/ContextMaterialSelection.cs) 与 [ContextBuilder.cs](src/LilithBridge/ContextBuilder.cs) 接通语义直中（`>= 0.57`，词面辅助 `>= 0.54`）与高置信反思笔记／原话锚点共激活，打破此前仅靠显式关系问句和纯词面导致的关系理解长期零供给，同时严格拦截寒暄、无关日常提议、`SalienceGated` 与版本哈希不匹配，且渲染于 `[近期对话]` 之后不破坏 KV Prefix Cache。
+### 4. 本地记忆检索更聪明，还支持了可选的桌面感官联动
+- **按意思找回忆更准、不重复**：本地可选语义召回升级了检索与去重方式，不容易把意思一模一样的几句旧话重复塞满，也更容易在合适的时候冒出有点意思的跨天联想。
+- **新增可选感官侧车支持**：为希望接入桌面环境感知（如环境声响、专注时长、睡眠惊醒微反应等）的进阶玩家预留并打通了独立进程宿主接口与动作节律协同；平时不开也完全不影响正常聊天。
 
----
-
-## 二、关键问题修复与体验治理
-
-### 1. 跨会话 B1 想法复活与上下文去噪
-- **B1 跨会话历史想法复活**：[MemoryStore.B1.cs](src/LilithBridge/MemoryStore.B1.cs)、[MemoryStore.MethodSources.cs](src/LilithBridge/MemoryStore.MethodSources.cs) 与 [MemoryStore.ReflectionReasonBasis.cs](src/LilithBridge/MemoryStore.ReflectionReasonBasis.cs) 新增 `B1EntryPermissionFootprint`——`Footprint` 中未被 `Sources` / `ObjectAnchors` / `Materials` 实际引用的环境原生游戏问候，不再于跨会话回读时触发 `source_permission_denied` 误杀（旧存档中历史 B1 想法无需迁移数据库即可即时恢复可见），同时显式屏蔽、提及边界与防篡改哈希校验保持严格级联撤回。
-- **B1 语义发现降噪与锚定共激活**：[MemoryStore.B1.Discovery.cs](src/LilithBridge/MemoryStore.B1.Discovery.cs) 与 [MemoryStore.B1.Projection.cs](src/LilithBridge/MemoryStore.B1.Projection.cs) 加入 BGE 显著度／离群门控、称呼／弱词／粘连词清洗，并在历史原话获准发现时自动共激活其已锚定的有效 B1 `Current` 头节点。
-- **无损折叠与清晰编号**：[B1ProjectionBudget.cs](src/LilithBridge/B1ProjectionBudget.cs) 与 [B1ReadableView.cs](src/LilithBridge/B1ReadableView.cs) 改进无损折叠与预算分配，采用紧凑连续编号（`材料1..N` 及无损子标 `材料N.2`），去掉 `共X片`／`已拼合` 气泡统计噪声，修正假向下指针 `"下文「近期对话」"` → `"「当前会话近期消息」"`。
-
-### 2. 主经历“词法黑洞”、草稿考古与临时表达粘滞修复
-- **消除长文词法劫持**：[MemoryStore.Experiences.cs](src/LilithBridge/MemoryStore.Experiences.cs) 对超过 36 词且超过查询词数 2 倍的历史长文引入平滑长度阻尼，并对 1-hop 联想桥按文档长度归一化，阻止 1000–2000 字旧元评论长文靠 2–3 个偶发双字词反复劫持日常闲聊，同时不影响正常长度记录与显式精确查找。
-- **根治陈年草稿考古**：[GeneratedReplyMaterial.cs](src/LilithBridge/GeneratedReplyMaterial.cs) 仅在玩家明确追问旧草稿／此前没说完的话时才放行语义 `generated_reply` 检索，并将当前会话残稿收敛为严格紧邻上一轮（`T` 轮被打断 → `T+1` 轮呈递 → `T+2` 轮自动退场）。
-- **收敛临时表达粘滞 JSON**：[DialogueRequest.cs](src/LilithBridge/DialogueRequest.cs)、[BridgeController.Work.cs](src/LilithBridge/BridgeController.Work.cs)、[NativeWorkPlayback.cs](src/LilithBridge/NativeWorkPlayback.cs) 与 [BridgeController.Delivery.cs](src/LilithBridge/BridgeController.Delivery.cs) 新增 `RetireDeliveredCarry`，当承载了上一轮未播完草稿的新一轮回复**完整交付完毕**（`IsFullyDelivered == true`）后自动退役已处理的 `[本会话临时表达·尚未进入长期历史]`，避免原始 JSON 跨多轮粘滞，同时完整保留连续打断与 `CarryPermissionChain` 传递撤回语义。
-
-### 3. 主观上下文呈现瘦身、缓存与视觉回执优化
-- **摘除主观块自我降权后缀并去重标题**：[MemoryStore.Reflections.cs](src/LilithBridge/MemoryStore.Reflections.cs)、[ContextBuilder.cs](src/LilithBridge/ContextBuilder.cs) 与 [B1ReadableView.cs](src/LilithBridge/B1ReadableView.cs) 去掉对自身想法／法则／关系理解／B1 材料的冗余自我降权尾缀，合并同一块内连续多条想法的重复标题行，并同步扩展 [ReplySanitizer.cs](src/LilithBridge/ReplySanitizer.cs) 覆盖全部新旧内部标题剥离。
-- **KV Prefix 稳定排序、LiveTail 校验与视觉瘦身**：优化 [ContextBuilder.cs](src/LilithBridge/ContextBuilder.cs) 与 [DeepSeekClient.cs](src/LilithBridge/DeepSeekClient.cs) 的静态／动态段边界与视觉回执体积，稳定提高多轮对话缓存命中率。
-
-### 4. 后台反思协议加固与 HTTP 长连接保活
-- **强制 JSON 对象契约与卡死释放**：[DeepSeekClient.cs](src/LilithBridge/DeepSeekClient.cs)、[OpenAIProtocol.cs](src/LilithBridge/OpenAIProtocol.cs)、[BridgeController.ReflectionResponse.cs](src/LilithBridge/BridgeController.ReflectionResponse.cs) 与 [ReflectionRetryFacts.cs](src/LilithBridge/ReflectionRetryFacts.cs) 为常规反思、B1 回顾、日整理与上下文相关性调用启用服务商级 `response_format: json_object`（含 OpenAI Responses `text.format` 映射）；若同一 `Work` 连续遭遇 3 次完整 2xx 协议拒收则安全释放卡死任务并完整保留历史与记忆资产（不完整传输失败仍可重试）。
-- **消除空闲断链 `sending_headers` 报错**：[DeepSeekClient.cs](src/LilithBridge/DeepSeekClient.cs) 将默认 `HttpClient` 替换为显式 `SocketsHttpHandler`（`PooledConnectionIdleTimeout = 45s`、`KeepAlivePingDelay = 30s`、`KeepAlivePingTimeout = 15s`），根治上游约 60 秒空闲断连引发的后台反思／对话偶发 `IOException`。
+### 5. 后台反思和长连接更稳，减少莫名其妙的断连报错
+- **修掉了闲置一分钟后再发请求偶发断连的老毛病**：以前聊着聊着停顿一两分钟，下一句或后台整理偶尔会因为上游连接超时直接报错；现在增加了连接保活与自动换新。
+- **后台整理更稳不卡死**：强制要求后台整理严格按结构化格式返回；万一某次模型抽风连续返回异常格式，系统会自动安全释放任务，不再卡住后续反思，也不会丢任何聊天记录。
 
 ---
 
-## 三、验证与兼容性摘要
+## 二、本版发布文件怎么选？
 
-- **自动回归验证（针对最终 `v0.4` 同一份编译产物 `ffe08b05`）**：
-  - `Verify-All.ps1` **7 / 7 全通过**：Release 零错误构建、`eval.dll`（134 项）、`FreezeCarryTests`（262 项）、`DedupVerify`、`PerfBench`、`test_optional_recall_fixture`（3 项）、静态清洁与 LF 检查。
-  - `BugFixTests` **129 / 129 全通过**（新增覆盖 B1 噪音门控、Step 2 事后回顾反思、长文词法阻尼、草稿生命周期、跨会话 B1 复活、关系理解语义召回、主观标题去重与 `RetireDeliveredCarry` 传递撤回等全部回归场景）。
-- **安装器与升级兼容**：安装器同步升级至 `0.1.4.23`（`installer_schema: 17`），显式绑定 `v0.4` 产品 DLL 哈希并在 `previous_plugin_hashes` 保留 `.106` 及更早版本哈希；`v4-b1-continuity-v2.sqlite3` 与 `config.json` 100% 向后兼容。详情见 [升级与回退边界](UPGRADE-COMPATIBILITY.zh-CN.md)。
+- **`LilithBridge-Setup-0.4.0-cn23-ffe08b05.exe`**：单文件一键安装／升级程序（**绝大多数玩家只下载这一个即可**）。
+- **`LilithBridge-installer-0.4.0-cn23-ffe08b05.zip`**：精简在线更新包（供旧版安装器在线检查更新与自动交接使用）。
+- **`LilithBridge-source-0.4.0-cn23-ffe08b05.zip`**：清洁 MIT 开源源码包（不含二进制、私密配置及非 MIT 语料）。
+- **`SHA256SUMS.txt`**：以上全部文件的 SHA-256 校验值清单。
+
+详细安装与常见问题见 [安装与使用指南](NORMAL-USE.zh-CN.md)，升级兼容与回退说明见 [升级与回退边界](UPGRADE-COMPATIBILITY.zh-CN.md)，遇到问题请附脱敏日志提交至 [问题反馈指南](FEEDBACK.zh-CN.md)。
 
 ---
 
-## 四、本版发布资产说明
+## 三、技术更新明细与源码改动（开发者／进阶参考）
 
-- **`LilithBridge-Setup-0.4.0-cn23-ffe08b05.exe`**：单文件一键安装／升级程序（**普通玩家下载这一个即可**）。
-- **`LilithBridge-installer-0.4.0-cn23-ffe08b05.zip`**：精简在线更新包（供旧版安装器检查更新与自动交接使用）。
-- **`LilithBridge-source-0.4.0-cn23-ffe08b05.zip`**：清洁 MIT 源码归档（不含二进制、私密配置及非 MIT 语料）。
-- **`SHA256SUMS.txt`**：以上全部发布资产的 SHA-256 校验清单。
+<details>
+<summary>点击展开完整技术变更、源码入口与回归测试明细（相对 <code>.106 / 2576304b</code>）</summary>
 
-详细安装与常见问题见 [安装与使用指南](NORMAL-USE.zh-CN.md)，遇到问题请附脱敏日志提交至 [问题反馈指南](FEEDBACK.zh-CN.md)。
+### 1. 新增架构与核心机制
+- **独立进程感官侧车宿主机（Sensory Sidecar Host）与微反应**：
+  - 新增 [SensorySidecarClient.cs](src/LilithBridge/SensorySidecarClient.cs)、[BridgeController.Sensory.cs](src/LilithBridge/BridgeController.Sensory.cs) 与 [ConfigStore.Sensory.cs](src/LilithBridge/ConfigStore.Sensory.cs)，支持外置侧车进程、独立 KV 尾槽注入、释放窗口门控、`TickSensoryRuntime` 节流与线程 HWND 缓存；
+  - 新增姿态安全静默动作解析器、BPM `TimeScale` 同步与微反应状态机节律（[MicroReactionDirector.cs](src/LilithBridge/MicroReactionDirector.cs)），以及睡眠惊醒小剧场与专注长跑静默笔记（`pending_focus_note` IPC，[BridgeController.BackgroundWrites.cs](src/LilithBridge/BridgeController.BackgroundWrites.cs)）。
+- **几何语义检索升级（Local BGE Worker）**：
+  - 升级 [semantic_worker.py](optional/semantic-worker/semantic_worker.py)（SHA-256 `684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979`）、[MemoryStore.SemanticRecall.cs](src/LilithBridge/MemoryStore.SemanticRecall.cs) 与 [BridgeController.SemanticRecall.cs](src/LilithBridge/BridgeController.SemanticRecall.cs)：引入特征白化几何度量、CSLS 校准、DPP 多样性去冗余、多维联想火花（Orthogonal / Wormhole / Bridge / Scene Sparks）及显著度门控（`SalienceGated`）；
+  - 完成 H-1..H-5 检索硬化：显式检索无条件消费 RRF、有界 `doc_sims`/`doc_quantiles` 传输、单轮回填优先级修复、全负 CSLS 偏移保护、无空格方括号 `SceneText` 解析与 BGE 探针预热。
+- **B1 事后回顾反思（Experience-Anchored Retrospective Development）**：
+  - 重写 [MemoryStore.B1.Reconsideration.cs](src/LilithBridge/MemoryStore.B1.Reconsideration.cs)、[MemoryStore.B1.ReflectionFlow.cs](src/LilithBridge/MemoryStore.B1.ReflectionFlow.cs) 与 [DeepSeekClient.B1Reflection.cs](src/LilithBridge/DeepSeekClient.B1Reflection.cs)：按完整问答边界（最近 3 个 `user` 回合、上限 24 条 / 3600 字）切片，防止长多气泡回复挤掉 `user` 触发句；
+  - 词法选标采用严格 `[0, 1]` 有界双口径：用户发言走带长文阻尼的 `UserLexScore`，多气泡窗口走几何均值 `OchiaiScore`（阈值 `0.18`、至少 4 命中），结合缓存语义与 `Conditions` 实现新形成、`revises` 演进与 `qualify` 分支并存；禁止后台生成 `reported`、严格 CAS 与源句屏蔽级联撤回，100% SQLite 向后兼容。
+- **`Readings`（关系理解）语义索引与精准共激活**：
+  - [MemoryStore.SemanticRecall.cs](src/LilithBridge/MemoryStore.SemanticRecall.cs) 与 [SemanticRecallWorker.cs](src/LilithBridge/SemanticRecallWorker.cs) 将 `_relationshipReadings` 纳入 `SemanticDomain.Thoughts` 增量索引；
+  - [MemoryStore.MaterialSelection.cs](src/LilithBridge/MemoryStore.MaterialSelection.cs)、[ContextMaterialSelection.cs](src/LilithBridge/ContextMaterialSelection.cs) 与 [ContextBuilder.cs](src/LilithBridge/ContextBuilder.cs) 接通语义直中（`>= 0.57`，词面辅助 `>= 0.54`）与高置信笔记／原话锚点共激活，同时守住寒暄过滤、`SalienceGated`、`SemanticCandidateMatches` 哈希／版本校验与 KV Prefix Cache 边界。
+
+### 2. 关键根因修复
+- **B1 跨会话复活**：[MemoryStore.B1.cs](src/LilithBridge/MemoryStore.B1.cs)、[MemoryStore.MethodSources.cs](src/LilithBridge/MemoryStore.MethodSources.cs) 与 [MemoryStore.ReflectionReasonBasis.cs](src/LilithBridge/MemoryStore.ReflectionReasonBasis.cs) 新增 `B1EntryPermissionFootprint`，`Footprint` 中未被 `Sources` / `ObjectAnchors` / `Materials` 引用的环境原生台词不再触发跨会话 `source_permission_denied` 误杀，显式屏蔽与防篡改哈希仍严格级联撤回。
+- **B1 发现降噪、共激活与无损折叠**：[MemoryStore.B1.Discovery.cs](src/LilithBridge/MemoryStore.B1.Discovery.cs)、[MemoryStore.B1.Projection.cs](src/LilithBridge/MemoryStore.B1.Projection.cs)、[B1ProjectionBudget.cs](src/LilithBridge/B1ProjectionBudget.cs) 与 [B1ReadableView.cs](src/LilithBridge/B1ReadableView.cs) 增加 BGE 显著度／离群门控、弱词与粘连词清洗、已发现原话共激活 B1 头节点、紧凑连续编号（`材料1..N` + 无损子标 `材料N.2`）、去掉 `共X片`/`已拼合` 噪声并修正 `"下文「近期对话」"` → `"「当前会话近期消息」"`。
+- **主经历长文阻尼、草稿考古与临时表达退役**：
+  - [MemoryStore.Experiences.cs](src/LilithBridge/MemoryStore.Experiences.cs)：对 `>36` 词且超查询 2 倍的长文加平滑长度阻尼，并对 1-hop 联想桥长度归一化；
+  - [GeneratedReplyMaterial.cs](src/LilithBridge/GeneratedReplyMaterial.cs)：门控语义 `generated_reply` 检索至显式追问旧草稿场景，并将当前会话残稿收敛到紧邻上一轮（`T -> T+1 -> T+2` 退役）；
+  - [DialogueRequest.cs](src/LilithBridge/DialogueRequest.cs)、[BridgeController.Work.cs](src/LilithBridge/BridgeController.Work.cs)、[NativeWorkPlayback.cs](src/LilithBridge/NativeWorkPlayback.cs) 与 [BridgeController.Delivery.cs](src/LilithBridge/BridgeController.Delivery.cs)：新增 `RetireDeliveredCarry`，在承接轮完整交付（`IsFullyDelivered == true`）后自动退役已处理的 `[本会话临时表达·尚未进入长期历史]`，同时保留 `CarryPermissionChain` 传递撤回语义。
+- **主观标题瘦身、去重与泄露剥离**：[MemoryStore.Reflections.cs](src/LilithBridge/MemoryStore.Reflections.cs)、[ContextBuilder.cs](src/LilithBridge/ContextBuilder.cs) 与 [B1ReadableView.cs](src/LilithBridge/B1ReadableView.cs) 移除主观块自我降权后缀并合并同块连续重复标题行，同步扩展 [ReplySanitizer.cs](src/LilithBridge/ReplySanitizer.cs)；同步优化 KV Prefix 顺序、LiveTail 宿主校验与视觉回执瘦身。
+- **反思协议加固与传输保活**：[DeepSeekClient.cs](src/LilithBridge/DeepSeekClient.cs)、[OpenAIProtocol.cs](src/LilithBridge/OpenAIProtocol.cs)、[BridgeController.ReflectionResponse.cs](src/LilithBridge/BridgeController.ReflectionResponse.cs) 与 [ReflectionRetryFacts.cs](src/LilithBridge/ReflectionRetryFacts.cs) 强制启用 `response_format: json_object`（含 OpenAI `text.format` 映射）与 3 次完整 2xx 协议拒收后释放卡死 `Work`；`DeepSeekClient` 切换显式 `SocketsHttpHandler`（`PooledConnectionIdleTimeout = 45s`、`KeepAlivePingDelay = 30s`、`KeepAlivePingTimeout = 15s`）消除空闲 `sending_headers` `IOException`。
+
+### 3. 回归验证与打包校验
+- **产品 DLL**：`0.4.0`（SHA-256 `ffe08b05eddca0ae3ef7c4be619b5974a472a7bf7990abff5e9b4a8d93bfc8df`）
+- **验证门全绿**：`Verify-All.ps1` **7 / 7**（Release 0 错误、`eval.dll` 134 项、`FreezeCarryTests` 262 项、`DedupVerify`、`PerfBench`、`test_optional_recall_fixture` 3 项、静态清洁）+ `BugFixTests` **129 / 129**。
+- **安装器**：`0.1.4.23-v0.4.release.1`（`installer_schema: 17`，显式绑定 `v0.4` 读契约并在 `previous_plugin_hashes` 保留 `.106` 及更早版本哈希，单文件嵌入载荷静态一致性校验通过）。
+
+</details>
