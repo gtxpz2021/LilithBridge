@@ -134,44 +134,62 @@ def run_frozen_ab(model_dir: Path, fixture_path: Path) -> int:
         rows[event_id] = dict(text_hash=sha256(text), vectors=vector[None, :],
                               windows=[dict(chunk_start=0, chunk_end=1, char_start=0,
                                             char_end=len(text))])
+    baseline_orders: List[List[str]] = []
     baseline_ranks: Dict[str, List[int]] = {}
-    baseline_scores: Dict[str, List[float]] = {}
-    for query, q_vector in zip(queries, prefixed_queries):
+    for q_vector in prefixed_queries:
         scores = raw_docs @ q_vector
         order = [ids[index] for index in np.argsort(-scores)]
+        baseline_orders.append(order)
         for rank, event_id in enumerate(order, 1):
             baseline_ranks.setdefault(event_id, []).append(rank)
-            baseline_scores.setdefault(event_id, []).append(float(scores[rank - 1]))
     engine = geometry_module.SemanticGeometryEngine()
     geometry_results = [engine.query(rows, raw_queries[at], []) for at in range(len(queries))]
     geometry_orders = [result["geometry"]["dpp_selected_ids"] for result in geometry_results]
-    geometry_ranks: Dict[str, List[int]] = {}
+    iso = engine.iso
+    x_iso = iso["x_iso"]
+    r_k = iso["r_k"]
+    # Exact full-corpus CSLS ranking (matching semantic_worker.py:280-285).
+    # H-2 bounded result["doc_sims"] to ~30 IDs, so reading doc_sims here would
+    # omit the tail and drop the -r_k hubness term.
+    csls_orders: List[List[str]] = []
     csls_ranks: Dict[str, List[int]] = {}
-    for order, result in zip(geometry_orders, geometry_results):
+    for at in range(len(queries)):
+        q_doc = engine._project(geometry_module._event_vector(raw_queries[at]), iso)
+        sims = x_iso @ q_doc
+        k_query = min(10, len(ids))
+        r_query = float(np.mean(np.partition(sims, -k_query)[-k_query:]))
+        true_csls = 2.0 * sims - r_query - r_k
+        order = [ids[index] for index in np.argsort(-true_csls)]
+        csls_orders.append(order)
         for rank, event_id in enumerate(order, 1):
-            geometry_ranks.setdefault(event_id, []).append(rank)
-        # CSLS is the quality score behind DPP; retain the non-DPP rank for metaphor rescue.
-        sims = result["doc_sims"]
-        ranked = sorted(ids, key=lambda event_id: (-(2 * sims.get(event_id, -2)
-                                                     - result["salience_z"]), event_id))
-        for rank, event_id in enumerate(ranked, 1):
             csls_ranks.setdefault(event_id, []).append(rank)
-    recall_hits = 0
+
+    required_total = 0
+    required_geometry_hits = 0
+    required_baseline_hits = 0
+    all_geometry_hits = 0
+    all_baseline_hits = 0
     for at, query in enumerate(queries):
-        baseline_top3 = [event_id for event_id, _ in
-                         sorted(baseline_scores.items(), key=lambda pair: pair[1][at], reverse=True)][:3]
-        # Per-query baseline top3 is more direct than the transposed score map.
-        scores = raw_docs @ prefixed_queries[at]
-        baseline_top3 = [ids[index] for index in np.argsort(-scores)[:3]]
+        baseline_top3 = baseline_orders[at][:3]
         geometry_top3 = geometry_orders[at][:3]
-        if query["expected_id"] in baseline_top3:
-            recall_hits += 1
-        if query["expected_id"] not in geometry_top3 and query.get("required", True):
-            emit(dict(status="metric_failed", metric="recall_at_3",
-                      query_index=at, expected=query["expected_id"],
-                      geometry_top3=geometry_top3))
-            return 4
-    recall_at_3 = recall_hits / len(queries)
+        expected = query["expected_id"]
+        in_baseline = expected in baseline_top3
+        in_geometry = expected in geometry_top3
+        all_baseline_hits += int(in_baseline)
+        all_geometry_hits += int(in_geometry)
+        if query.get("required", True):
+            required_total += 1
+            required_baseline_hits += int(in_baseline)
+            required_geometry_hits += int(in_geometry)
+            if not in_geometry:
+                emit(dict(status="metric_failed", metric="recall_at_3",
+                          query_index=at, expected=expected,
+                          geometry_top3=geometry_top3))
+                return 4
+    recall_at_3 = (required_geometry_hits / required_total) if required_total else (all_geometry_hits / len(queries))
+    baseline_recall_at_3 = (required_baseline_hits / required_total) if required_total else (all_baseline_hits / len(queries))
+    all_queries_recall_at_3 = all_geometry_hits / len(queries)
+    all_queries_baseline_recall_at_3 = all_baseline_hits / len(queries)
 
     def volume(event_ids: Sequence[str], vectors: Any) -> float:
         chosen = np.stack([vectors[ids.index(event_id)] for event_id in event_ids]).astype(np.float64)
@@ -182,13 +200,17 @@ def run_frozen_ab(model_dir: Path, fixture_path: Path) -> int:
 
     baseline_volumes: List[float] = []
     geometry_volumes: List[float] = []
+    geometry_raw_volumes: List[float] = []
     for at in range(len(queries)):
-        scores = raw_docs @ prefixed_queries[at]
-        baseline_top = [ids[index] for index in np.argsort(-scores)[:3]]
+        baseline_top = baseline_orders[at][:3]
+        geometry_top = geometry_orders[at][:3]
         baseline_volumes.append(volume(baseline_top, raw_docs))
-        geometry_volumes.append(volume(geometry_orders[at][:3], engine.iso["x_iso"]))
+        geometry_volumes.append(volume(geometry_top, x_iso))
+        geometry_raw_volumes.append(volume(geometry_top, raw_docs))
     dpp_gain = (statistics.geometric_mean([max(v, 1e-12) for v in geometry_volumes])
                 / statistics.geometric_mean([max(v, 1e-12) for v in baseline_volumes]))
+    dpp_raw_gain = (statistics.geometric_mean([max(v, 1e-12) for v in geometry_raw_volumes])
+                    / statistics.geometric_mean([max(v, 1e-12) for v in baseline_volumes]))
 
     metaphor_total = metaphor_hits = 0
     for at, query in enumerate(queries):
@@ -197,17 +219,51 @@ def run_frozen_ab(model_dir: Path, fixture_path: Path) -> int:
             continue
         metaphor_total += 1
         if not any(lexical_overlap(query["query"], record["text"], tokens) for record in records):
-            ranked = sorted(ids, key=lambda event_id: csls_ranks.get(event_id, [999999])[at])
-            if query["expected_id"] in ranked[:15]:
+            if query["expected_id"] in csls_orders[at][:15]:
                 metaphor_hits += 1
     metaphor_rate = metaphor_hits / metaphor_total if metaphor_total else 1.0
 
-    hub_ids = [record["id"] for record in records if record.get("kind") == "hub"]
-    baseline_hub_rank = statistics.mean([rank for event_id in hub_ids
-                                        for rank in baseline_ranks.get(event_id, [])]) if hub_ids else 0.0
-    geometry_hub_rank = statistics.mean([rank for event_id in hub_ids
-                                        for rank in geometry_ranks.get(event_id, [])]) if hub_ids else 0.0
-    hub_suppression = baseline_hub_rank / geometry_hub_rank if geometry_hub_rank > 0 else math.inf
+    # Hub suppression is measured without Top-10 rank truncation bias or empty-mean crashes:
+    # 1) Manifold hubness-excess suppression (whitening collapse of hub vs normal r_k excess)
+    # 2) Top-5 hub intrusion suppression ratio (baseline_top5_hits / dpp_top5_hits)
+    # 3) Full-corpus CSLS mean hub rank pushed strictly deeper than raw cosine baseline
+    hub_indices = [idx for idx, record in enumerate(records) if record.get("kind") == "hub"]
+    normal_indices = [idx for idx, record in enumerate(records) if record.get("kind") != "hub"]
+    hub_id_set = {ids[idx] for idx in hub_indices}
+    if hub_indices and normal_indices:
+        k_nn = min(10, max(0, len(ids) - 1))
+        if k_nn > 0:
+            raw_sim_mat = raw_docs @ raw_docs.T
+            np.fill_diagonal(raw_sim_mat, -2.0)
+            raw_rk = np.mean(np.partition(raw_sim_mat, -k_nn, axis=1)[:, -k_nn:], axis=1)
+        else:
+            raw_rk = np.zeros((len(ids),), dtype=np.float32)
+        raw_hub_excess = float(np.mean(raw_rk[hub_indices]) - np.mean(raw_rk[normal_indices]))
+        iso_hub_excess = float(np.mean(r_k[hub_indices]) - np.mean(r_k[normal_indices]))
+        if raw_hub_excess <= 0.0:
+            hub_suppression = 1.0
+        elif iso_hub_excess <= 0.0:
+            hub_suppression = math.inf
+        else:
+            hub_suppression = raw_hub_excess / iso_hub_excess
+        baseline_hub_top5 = sum(1 for order in baseline_orders for eid in order[:5] if eid in hub_id_set)
+        dpp_hub_top5 = sum(1 for order in geometry_orders for eid in order[:5] if eid in hub_id_set)
+        if baseline_hub_top5 == 0 and dpp_hub_top5 == 0:
+            hub_top5_suppression = 1.0
+        elif dpp_hub_top5 == 0:
+            hub_top5_suppression = math.inf
+        else:
+            hub_top5_suppression = baseline_hub_top5 / dpp_hub_top5
+        baseline_hub_mean_rank = statistics.mean([rank for eid in hub_id_set for rank in baseline_ranks[eid]])
+        csls_hub_mean_rank = statistics.mean([rank for eid in hub_id_set for rank in csls_ranks[eid]])
+        hub_rank_improved = csls_hub_mean_rank > baseline_hub_mean_rank
+    else:
+        raw_hub_excess = iso_hub_excess = 0.0
+        hub_suppression = math.inf
+        baseline_hub_top5 = dpp_hub_top5 = 0
+        hub_top5_suppression = math.inf
+        baseline_hub_mean_rank = csls_hub_mean_rank = 0.0
+        hub_rank_improved = True
 
     # p95 is measured on a real worker round trip, not on in-process matrix products.
     # M-3: the fifth hard gate is split by the measured reality that pure-CPU BGE
@@ -220,16 +276,31 @@ def run_frozen_ab(model_dir: Path, fixture_path: Path) -> int:
         fixture=str(fixture_path),
         model=str(model_dir),
         records=len(records), queries=len(queries),
+        required_queries=required_total,
+        metaphor_queries=metaphor_total,
         recall_at_3=round(recall_at_3, 5),
+        baseline_recall_at_3=round(baseline_recall_at_3, 5),
+        all_queries_recall_at_3=round(all_queries_recall_at_3, 5),
+        all_queries_baseline_recall_at_3=round(all_queries_baseline_recall_at_3, 5),
         dpp_volume_gain=round(dpp_gain, 5),
+        dpp_raw_space_volume_gain=round(dpp_raw_gain, 5),
         zero_lexical_metaphor_hit_rate=round(metaphor_rate, 5),
         hub_suppression_multiplier=round(hub_suppression, 5) if math.isfinite(hub_suppression) else "infinite",
+        hub_top5_intrusion_ratio=round(hub_top5_suppression, 5) if math.isfinite(hub_top5_suppression) else "infinite",
+        hub_top5_baseline_hits=baseline_hub_top5,
+        hub_top5_dpp_hits=dpp_hub_top5,
+        hub_baseline_mean_rank=round(baseline_hub_mean_rank, 3),
+        hub_csls_mean_rank=round(csls_hub_mean_rank, 3),
+        hub_raw_rk_excess=round(raw_hub_excess, 5),
+        hub_iso_rk_excess=round(iso_hub_excess, 5),
         p95_geometry_ms=p95_geometry_ms,
         p95_end_to_end_ms=p95_end_to_end_ms,
         elapsed_ms=round((time.perf_counter() - started) * 1000, 3))
     emit(metrics)
-    if recall_at_3 < 1.0 or dpp_gain <= 1.15 or metaphor_rate < 0.70 \
-            or hub_suppression < 2.0 or p95_geometry_ms >= 5.0 or p95_end_to_end_ms >= 35.0:
+    if (recall_at_3 < 1.0 or recall_at_3 < baseline_recall_at_3
+            or dpp_gain <= 1.15 or metaphor_rate < 0.70
+            or hub_suppression < 2.0 or hub_top5_suppression < 1.25 or not hub_rank_improved
+            or p95_geometry_ms >= 5.0 or p95_end_to_end_ms >= 35.0):
         emit(dict(status="hard_gate_failed", metrics=metrics))
         return 5
     emit(dict(status="all_hard_gates_passed", metrics=metrics))
