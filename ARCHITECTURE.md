@@ -16,19 +16,19 @@ LilithBridge 连接着三样东西：**桌面上活生生的游戏角色（Lilit
 
 ```mermaid
 flowchart LR
-    U["玩家输入"] --> I["输入提交与请求归属<br/>NativeInputField / DialogueRequest"]
+    U["玩家文字 / 本地语音输入 (SenseVoice)"] --> I["输入提交与请求归属<br/>NativeInputField / DialogueRequest"]
     I --> S["本轮材料装配与边界校验<br/>ContextBuilder / MaterialSelection / B1ReadableView"]
-    D["本机双账本档案库<br/>事实原话 · B1连续性 · 反思笔记 · 关系理解"] --> S
-    W["独立 Python 进程（可选）<br/>BGE 几何语义召回（白化 / CSLS / DPP / 火花）"] -. "异步索引 / 有界查询" .-> S
+    D["本机双账本档案库<br/>事实原话 · B1连续性 · M1合卷留签 · 关系理解"] --> S
+    W["独立 Python 进程（可选）<br/>X_exp×X_abs 双子空间几何（白化 / CSLS / DPP / 跨桥火花）"] -. "异步索引 / 有界查询" .-> S
     X["外部感官侧车（实验性·默认关闭）<br/>SensorySidecarClient"] -. "离线静默降级" .-> S
     S --> M["云端 LLM 生成<br/>静态前缀 + 锚定窗口 + 动态尾段 + 按需重访工具"]
-    M --> P["流式气泡与动作交付<br/>NativeBubblePresenter / ActionExecutor"]
+    M --> P["流式气泡 × 48kHz 本地语音锁步交付<br/>NativeBubblePresenter / TextToSpeechCoordinator / ActionExecutor"]
     P -->|"只记真实显示到屏幕的部分"| D
-    D -. "对话间隙 / 合适契机" .-> R["后台异步反思<br/>普通反思 · B1 事后回顾 · 按日梳理"]
-    R -->|"形成 · 修订 · 分支 · 温和收起"| D
+    D -. "对话间隙 / 合适契机" .-> R["后台异步反思<br/>去教条反思 · B1 事后回顾 · 按日梳理"]
+    R -->|"形成 · 修订 · 分支 · 温和留签"| D
 ```
 
-这个结构决定了几个很实际的特性：**日常聊天几乎总是一步直答**，不必每轮强制走完工具链或等后台做总结；你可以随时发新话**打断**她还没说完的气泡；可选的本地小模型放在独立进程里负责跨越词面的联想与找旧事，就算未开启或一时繁忙，主对话照样顺畅进行。
+这个结构决定了几个很实际的特性：**日常聊天几乎总是一步直答**，不必每轮强制走完工具链或等后台做总结；你可以随时发新话或开麦**打断**她还没说完的气泡；可选的本地语义与离线语音均在受 Job Object 托管的独立子进程里运行，就算未安装或一时繁忙，主对话照样顺畅进行，退出游戏零残留。
 
 ---
 
@@ -68,7 +68,8 @@ LilithBridge 在工程上把**屏幕呈现**与**历史记忆**彻底拆开：
 LilithBridge 严格把“找线索”和“做判断”拆给两层：
 1. **几何语义 + 词面多路宽召回**：
    - **词面检索**（[`MemoryStore.Experiences.cs`](src/LilithBridge/MemoryStore.Experiences.cs)）精准抓取人名、专有词、时间与明确更正关系，并对旧长文施加平滑长度阻尼，防止一两篇长谈话反复霸占名额；
-   - **可选本地 BGE 几何语义召回**（[`semantic_worker.py`](optional/semantic-worker/semantic_worker.py) + [`SemanticRecallWorker.cs`](src/LilithBridge/SemanticRecallWorker.cs)）在独立进程里运行 `bge-small-zh-v1.5`，引入特征白化、CSLS 校准、DPP 多样性去冗余与多维联想火花（Orthogonal / Wormhole / Bridge / Scene Sparks），既避免意思雷同的旧话反复刷屏，也能捞出跨越字面的意外联想。
+   - **可选本地 BGE 双子空间几何召回**（[`semantic_worker.py`](optional/semantic-worker/semantic_worker.py) + [`SemanticRecallWorker.cs`](src/LilithBridge/SemanticRecallWorker.cs)）在独立进程里运行 `bge-small-zh-v1.5`，将记忆投影到**具象经历（`X_exp`）与抽象默契（`X_abs`）双子空间**，分别执行自适应收缩白化、自适应 CSLS 校准、Gram-Schmidt 场景锥新颖度计算、DPP 多样性去冗余与两跳 `BridgeSparks` 跨桥联想（配合全精度 `SemanticWireCodec` 与 `Readings` `DomainRank` 守护），既避免意思雷同的旧话反复刷屏，也能捞出跨越字面的跨天共鸣；
+   - **历史旧档 M1 合卷留签**：对于此前版本沉淀的历史旧笔记与经验教条，通过 [`MemoryStore.Reflections.cs`](src/LilithBridge/MemoryStore.Reflections.cs) 的无损合卷前缀隔离日常闲聊噪声，同时保留显式追问与主动重访入口。
 2. **四重边界校验后交由模型亲判**：
    - **来源与权限**：严格校验可见范围与授权边界（记忆开关、作品语料外发许可、不混淆说话人）；
    - **版本与更正链**：已被玩家明确更正或撤回的原话不会继续充当有效依据；
@@ -112,14 +113,15 @@ LilithBridge 严格把“找线索”和“做判断”拆给两层：
 | 气泡拼合、残稿收敛与 `B1` 发现／投影 | [`B1ReadableView.cs`](src/LilithBridge/B1ReadableView.cs) → [`GeneratedReplyMaterial.cs`](src/LilithBridge/GeneratedReplyMaterial.cs) → [`MemoryStore.B1.Discovery.cs`](src/LilithBridge/MemoryStore.B1.Discovery.cs) → [`MemoryStore.B1.Projection.cs`](src/LilithBridge/MemoryStore.B1.Projection.cs) |
 | `B1` 存储、权限足迹与事后回顾反思 | [`MemoryStore.B1.cs`](src/LilithBridge/MemoryStore.B1.cs) → [`MemoryStore.B1.Storage.cs`](src/LilithBridge/MemoryStore.B1.Storage.cs) → [`MemoryStore.B1.Reconsideration.cs`](src/LilithBridge/MemoryStore.B1.Reconsideration.cs) → [`MemoryStore.B1.ReflectionFlow.cs`](src/LilithBridge/MemoryStore.B1.ReflectionFlow.cs) → [`DeepSeekClient.B1Reflection.cs`](src/LilithBridge/DeepSeekClient.B1Reflection.cs) |
 | 词面检索、长文阻尼、权限范围与更正链 | [`MemoryStore.Experiences.cs`](src/LilithBridge/MemoryStore.Experiences.cs) → [`SourcePermissionScope.cs`](src/LilithBridge/SourcePermissionScope.cs) → [`MemoryStore.SupplyContract.cs`](src/LilithBridge/MemoryStore.SupplyContract.cs) → [`MemoryStore.SourceCorrections.cs`](src/LilithBridge/MemoryStore.SourceCorrections.cs) |
-| 本地 BGE 几何语义召回进程桥接 | [`BridgeController.SemanticRecall.cs`](src/LilithBridge/BridgeController.SemanticRecall.cs) → [`SemanticRecallWorker.cs`](src/LilithBridge/SemanticRecallWorker.cs) → [`semantic_worker.py`](optional/semantic-worker/semantic_worker.py) |
+| 本地 BGE 双子空间几何召回进程桥接 | [`BridgeController.SemanticRecall.cs`](src/LilithBridge/BridgeController.SemanticRecall.cs) → [`SemanticRecallWorker.cs`](src/LilithBridge/SemanticRecallWorker.cs) → [`semantic_worker.py`](optional/semantic-worker/semantic_worker.py) |
+| 本地离线语音（SenseVoice STT + 48kHz Qwen3-TTS）与进程树守护 | [`SpeechToTextWorker.cs`](src/LilithBridge/SpeechToTextWorker.cs) · [`TextToSpeechCoordinator.cs`](src/LilithBridge/TextToSpeechCoordinator.cs) → [`ChildProcessJobObject.cs`](src/LilithBridge/ChildProcessJobObject.cs) → [`tts_worker.py`](optional/tts-worker/tts_worker.py) |
 | 模型请求拼装、多协议适配与工具封装 | [`DeepSeekClient.cs`](src/LilithBridge/DeepSeekClient.cs) → [`DeepSeekClient.Tools.cs`](src/LilithBridge/DeepSeekClient.Tools.cs) → [`OpenAIProtocol.cs`](src/LilithBridge/OpenAIProtocol.cs) → [`DialogueMaterialEnvelope.cs`](src/LilithBridge/DialogueMaterialEnvelope.cs) |
 | 屏幕按实交付与临时表达退役 | [`NativeBubblePresenter.cs`](src/LilithBridge/NativeBubblePresenter.cs) → [`BridgeController.Delivery.cs`](src/LilithBridge/BridgeController.Delivery.cs) → [`NativeWorkPlayback.cs`](src/LilithBridge/NativeWorkPlayback.cs) |
 | 普通后台反思、按日梳理与按需重访 | [`BridgeController.ReflectionPreparation.cs`](src/LilithBridge/BridgeController.ReflectionPreparation.cs) → [`MemoryStore.Reflections.cs`](src/LilithBridge/MemoryStore.Reflections.cs) → [`MemoryStore.ExplicitRevisit.cs`](src/LilithBridge/MemoryStore.ExplicitRevisit.cs) |
 | 主动开场与会话场景状态 | [`RuntimeDirector.cs`](src/LilithBridge/RuntimeDirector.cs) → [`BridgeController.Participation.cs`](src/LilithBridge/BridgeController.Participation.cs) → [`SelfPositionView.cs`](src/LilithBridge/SelfPositionView.cs) |
 | 外部感官侧车与微反应节律（实验性） | [`SensorySidecarClient.cs`](src/LilithBridge/SensorySidecarClient.cs) → [`BridgeController.Sensory.cs`](src/LilithBridge/BridgeController.Sensory.cs) → [`MicroReactionDirector.cs`](src/LilithBridge/MicroReactionDirector.cs) |
 | 隔离数据目录、配置与底层存储 | [`DataPaths.cs`](src/LilithBridge/DataPaths.cs) → [`ConfigStore.cs`](src/LilithBridge/ConfigStore.cs) → [`NativeState.cs`](src/LilithBridge/NativeState.cs) |
-| 一体化安装器与兼容性安全门 | [`Installer.Core.cs`](tools/installer-source/src/Installer.Core.cs) → [`HostCapabilities.cs`](tools/installer-source/src/HostCapabilities.cs) → [`PersistentStateCompatibility.cs`](tools/installer-source/src/PersistentStateCompatibility.cs) |
+| 一体化安装器、分卷 VoicePack 直装与安全门 | [`Installer.Core.cs`](tools/installer-source/src/Installer.Core.cs) → [`VoicePackProvisioning.cs`](tools/installer-source/src/VoicePackProvisioning.cs) → [`HostCapabilities.cs`](tools/installer-source/src/HostCapabilities.cs) → [`PersistentStateCompatibility.cs`](tools/installer-source/src/PersistentStateCompatibility.cs) |
 
 ---
 
