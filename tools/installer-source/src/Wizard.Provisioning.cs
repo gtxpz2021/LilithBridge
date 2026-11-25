@@ -11,7 +11,36 @@ namespace LilithSetup
 {
     public static class WizardProvisioning
     {
-        public const string WorkerHash = "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979";
+        public const string WorkerHash = "aa41f9ae6b60a553442aded87d054da026fc7f20cdc06d4b774e041726411f0c";
+        public static readonly string[] PreviousWorkerHashes = new[] {
+            "6ef8145e129c4399150367df4a6f41490349203c00eab898a0948eb6725d4036",
+            "1840abe925f29e85cc2cdf4aab60246b7632dfb2af0f3df6e7bed5dbd287cdc0",
+            "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979"
+        };
+        public static bool IsKnownWorkerHash(string hash)
+        {
+            return hash == WorkerHash || PreviousWorkerHashes.Contains(hash, StringComparer.OrdinalIgnoreCase);
+        }
+        public static bool IsKnownPreviousWorkerFile(string path)
+        {
+            if (String.IsNullOrEmpty(path) || !File.Exists(path)) return false;
+            SetupCore.NoReparse(path);
+            return PreviousWorkerHashes.Contains(SetupCore.FileHash(path), StringComparer.OrdinalIgnoreCase);
+        }
+        public static void CopyOrUpgradeWorker(string source, string destination, string hash)
+        {
+            SetupCore.NoReparse(source); SetupCore.NoReparse(destination); SetupCore.Require(SetupCore.FileHash(source) == hash, "LBWIZ_BUNDLED_FILE_CHANGED");
+            if (File.Exists(destination))
+            {
+                string current = SetupCore.FileHash(destination);
+                if (current == hash) return;
+                SetupCore.Require(PreviousWorkerHashes.Contains(current, StringComparer.OrdinalIgnoreCase), "LBWIZ_EXISTING_COMPONENT_CHANGED");
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)); string temp = destination + ".part"; SetupCore.NoReparse(temp);
+            using (var input = File.OpenRead(source)) using (var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None)) { input.CopyTo(output); output.Flush(true); }
+            SetupCore.Require(SetupCore.FileHash(temp) == hash, "LBWIZ_COPY_INTEGRITY_FAILED");
+            if (File.Exists(destination)) File.Replace(temp, destination, null); else File.Move(temp, destination);
+        }
         public static string PathIn(string root, string relative)
         { string path = SetupCore.SafePath(relative, root); SetupCore.Require(SetupCore.Inside(root, path, false), "LBWIZ_PATH_ESCAPES_ROOT"); SetupCore.NoReparse(path); return path; }
         public static void CopyVerified(string source, string destination, string hash)
@@ -145,8 +174,19 @@ namespace LilithSetup
         public static string DeployWorker(string package, string components)
         {
             string worker = PathIn(components, "worker/semantic_worker.py");
-            CopyVerified(PathIn(package, "optional/semantic-worker/semantic_worker.py"), worker, WorkerHash);
+            CopyOrUpgradeWorker(PathIn(package, "optional/semantic-worker/semantic_worker.py"), worker, WorkerHash);
             CopyVerified(PathIn(package, "optional/semantic-worker/model-manifest.json"), Path.Combine(Path.GetDirectoryName(worker), "model-manifest.json"), SetupCore.ManifestHash); return worker;
+        }
+        public static bool UpgradeKnownWorkerInPlace(string package, string workerPath)
+        {
+            if (!IsKnownPreviousWorkerFile(workerPath)) return false;
+            string bundledWorker = PathIn(package, "optional/semantic-worker/semantic_worker.py");
+            if (!File.Exists(bundledWorker)) return false;
+            string manifest = Path.Combine(Path.GetDirectoryName(workerPath), "model-manifest.json");
+            SetupCore.NoReparse(manifest);
+            if (!File.Exists(manifest) || SetupCore.FileHash(manifest) != SetupCore.ManifestHash) return false;
+            CopyOrUpgradeWorker(bundledWorker, workerPath, WorkerHash);
+            return true;
         }
     }
 }

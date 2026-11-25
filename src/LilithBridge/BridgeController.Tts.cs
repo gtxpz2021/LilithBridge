@@ -33,10 +33,26 @@ internal sealed partial class BridgeController
     internal bool SuppressesNativeReplyVoice =>
         _config.TtsEnabled && _ttsWorker is { Ready: true };
 
+    internal bool HasInstalledTtsRuntime()
+    {
+        try
+        {
+            string dataRoot = _config.DataDirectory.Length > 0 ? _config.DataDirectory : DataPaths.Root();
+            string script = Path.IsPathRooted(_config.TtsWorkerScript)
+                ? _config.TtsWorkerScript
+                : Path.Combine(dataRoot, _config.TtsWorkerScript);
+            return File.Exists(script);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     internal string DescribeTtsMenuLabel()
     {
         if (!_config.TtsEnabled)
-            return "语音播报：关";
+            return HasInstalledTtsRuntime() ? "语音播报：关" : "";
         if (_ttsWorker == null)
             return "语音播报：开（待启动）";
         if (_ttsWorker.Ready)
@@ -154,8 +170,11 @@ internal sealed partial class BridgeController
             CancelTtsSpeech("native_game_voice");
         }
 
-        _ttsPlayer.Tick(transform, _ttsCoordinator, _config.TtsVolume, _config.TtsSyncGameVoiceVolume);
-        SyncNativeBubbleDismissForTts();
+        if (_config.TtsEnabled || _ttsPlayer.HasActiveClip || _ttsCoordinator.HasActiveOrQueued)
+        {
+            _ttsPlayer.Tick(transform, _ttsCoordinator, _config.TtsVolume, _config.TtsSyncGameVoiceVolume);
+            SyncNativeBubbleDismissForTts();
+        }
     }
 
     /// <summary>

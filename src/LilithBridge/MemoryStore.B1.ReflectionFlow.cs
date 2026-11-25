@@ -183,7 +183,8 @@ internal sealed partial class MemoryStore
             {
                 foreach (var c in semantic.Candidates.Where(c => c.Kind == "b1"
                     && c.Score >= MinB1SemanticScore
-                    && (c.Rank <= 0 || c.Rank <= MaxB1SemanticGlobalRank)))
+                    && ((c.DomainRank > 0 ? c.DomainRank : c.Rank) <= 0
+                        || (c.DomainRank > 0 ? c.DomainRank : c.Rank) <= MaxB1SemanticGlobalRank)))
                 {
                     if (!semanticScores.TryGetValue(c.EventId, out double prev) || c.Score > prev)
                         semanticScores[c.EventId] = c.Score;

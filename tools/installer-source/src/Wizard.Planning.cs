@@ -23,7 +23,7 @@ namespace LilithSetup
                 if (options.Runtime || options.Model)
                 {
                     var current = SetupCore.Locate(context, snapshot, "");
-                    try { SetupCore.ValidateRuntimeFiles(current); runtimeReady = SetupCore.FileHash(current.Worker) == WizardProvisioning.WorkerHash; } catch (SetupException) { }
+                    try { SetupCore.ValidateRuntimeFiles(current); runtimeReady = WizardProvisioning.IsKnownWorkerHash(SetupCore.FileHash(current.Worker)); } catch (SetupException) { }
                     try { new ModelValidator(Path.Combine(options.PackageRoot, "model-manifest.json")).Verify(current.Model, progress); modelReady = true; } catch (SetupException) { }
                 }
             }

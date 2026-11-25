@@ -40,6 +40,7 @@ internal sealed class TextToSpeechPlayer : IDisposable
 
     internal string PlayingUtteranceId => _playingUtteranceId;
     internal int PlayingBubbleIndex => _playingBubbleIndex;
+    internal bool HasActiveClip => _activeClip != null;
 
     internal void EnsureCreated(Transform owner)
     {

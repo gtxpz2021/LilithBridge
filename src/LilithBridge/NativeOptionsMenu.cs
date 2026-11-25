@@ -76,18 +76,24 @@ internal sealed class NativeOptionsMenu
         _status.color=error==null?Muted:new Color(1,.71f,.53f,1);
         _reviewButton.gameObject.SetActive(ReviewContextModes.Normalize(config.ReviewContextMode)==ReviewContextModes.Request);
         _sharedButton.gameObject.SetActive(config.SharedActivityEnabled);
-        _ttsButton.gameObject.SetActive(_onToggleTts!=null);
-        RefreshTtsLabel(_ttsLabelProvider?.Invoke() ?? (config.TtsEnabled ? "语音播报：开" : "语音播报：关"));
+        string ttsText=_ttsLabelProvider?.Invoke() ?? (config.TtsEnabled ? "语音播报：开" : "");
+        _ttsButton.gameObject.SetActive(_onToggleTts!=null&&!string.IsNullOrWhiteSpace(ttsText));
+        if(_ttsButton.gameObject.activeSelf)_ttsLabel.text=ttsText;
         RefreshReview(_reviewAuthorized);RefreshLayout();
     }
     public void BindTts(Action? toggleTts,Func<string>? labelProvider)
     {
         _onToggleTts=toggleTts;_ttsLabelProvider=labelProvider;
-        _ttsButton.gameObject.SetActive(_onToggleTts!=null);
-        RefreshTtsLabel(_ttsLabelProvider?.Invoke() ?? (_config.TtsEnabled ? "语音播报：开" : "语音播报：关"));
-        RefreshLayout();
+        RefreshTtsLabel(_ttsLabelProvider?.Invoke() ?? (_config.TtsEnabled ? "语音播报：开" : ""));
     }
-    public void RefreshTtsLabel(string label){_ttsLabel.text=string.IsNullOrWhiteSpace(label)?"语音播报：关":label;}
+    public void RefreshTtsLabel(string label)
+    {
+        bool show=_onToggleTts!=null&&!string.IsNullOrWhiteSpace(label);
+        bool changed=_ttsButton.gameObject.activeSelf!=show;
+        _ttsButton.gameObject.SetActive(show);
+        if(show)_ttsLabel.text=label;
+        if(changed)RefreshLayout();
+    }
     public void RefreshReview(bool authorized){_reviewAuthorized=authorized;_reviewLabel.text=authorized?"回看：已允许本轮":"回看：允许本轮";}
     public void RefreshLayout()
     {

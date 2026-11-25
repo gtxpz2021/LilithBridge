@@ -26,7 +26,7 @@ namespace LilithSetup
             @"BepInEx\interop\Assembly-CSharp.dll", @"BepInEx\interop\Il2Cppmscorlib.dll", @"BepInEx\interop\Il2CppSystem.dll",
             @"BepInEx\interop\UnityEngine.dll", @"BepInEx\interop\UnityEngine.CoreModule.dll", @"BepInEx\interop\UnityEngine.UI.dll",
             @"BepInEx\interop\Unity.TextMeshPro.dll", @"BepInEx\interop\UnityEngine.UIModule.dll", @"BepInEx\interop\UnityEngine.IMGUIModule.dll", @"BepInEx\interop\UnityEngine.TextRenderingModule.dll",
-            @"BepInEx\interop\UnityEngine.InputLegacyModule.dll", @"BepInEx\interop\UnityEngine.ImageConversionModule.dll", @"BepInEx\interop\UnityEngine.Physics2DModule.dll",
+            @"BepInEx\interop\UnityEngine.InputLegacyModule.dll", @"BepInEx\interop\UnityEngine.ImageConversionModule.dll", @"BepInEx\interop\UnityEngine.AudioModule.dll", @"BepInEx\interop\UnityEngine.Physics2DModule.dll",
             @"BepInEx\interop\spine-csharp.dll", @"BepInEx\interop\spine-unity.dll", @"BepInEx\interop\BehaviorDesigner.Runtime.dll"
         };
         public static InstallManifest Load(string packageRoot)

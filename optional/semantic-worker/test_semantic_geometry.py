@@ -256,6 +256,67 @@ class SemanticGeometryTests(unittest.TestCase):
             expected = float(np.searchsorted(ordered, value, side='right') / len(ids))
             self.assertAlmostEqual(reply['doc_quantiles'][eid], expected, delta=1e-5)
 
+    def test_two_subspace_csls_immunity_and_dpp_purity(self):
+        rng = np.random.default_rng(20261125)
+        base_vecs = [unit(rng.standard_normal(16).astype(np.float32)) for _ in range(40)]
+        exp_rows = {f'ev{i}': {**row(v), 'kind': 'utterance', 'lifecycle': 'active'}
+                    for i, v in enumerate(base_vecs)}
+        msg_vec = unit(base_vecs[0] * 0.85 + base_vecs[1] * 0.15)
+        exp_rows['derived/message/message/m0'] = {**row(msg_vec), 'kind': 'message', 'lifecycle': 'active'}
+
+        pure_engine = WORKER.SemanticGeometryEngine()
+        pure_iso = pure_engine.ensure(exp_rows)
+        pure_rk_ev0 = float(pure_iso['r_k'][pure_iso['id_to_idx']['ev0']])
+
+        # Cluster 12 derived notes/lessons/readings/generated_replies tightly around ev0.
+        mixed_rows = dict(exp_rows)
+        for j in range(12):
+            jitter = unit(base_vecs[0] + 0.002 * (j + 1) * base_vecs[2])
+            kind = ('note', 'lesson', 'reading', 'generated_reply')[j % 4]
+            mixed_rows[f'derived/{kind}/d{j}'] = {
+                **row(jitter), 'kind': kind, 'lifecycle': 'active'
+            }
+
+        mixed_engine = WORKER.SemanticGeometryEngine()
+        mixed_iso = mixed_engine.ensure(mixed_rows)
+        mixed_rk_ev0 = float(mixed_iso['r_k'][mixed_iso['id_to_idx']['ev0']])
+        self.assertAlmostEqual(pure_rk_ev0, mixed_rk_ev0, places=6)
+
+        reply = mixed_engine.query(mixed_rows, base_vecs[0], [], query_event_id='now')
+        dpp_ids = reply['geometry']['dpp_selected_ids']
+        self.assertTrue(dpp_ids)
+        self.assertIn('derived/message/message/m0', dpp_ids)
+        for eid in dpp_ids:
+            self.assertIn(WORKER._infer_kind(eid, mixed_rows[eid]), ('utterance', 'message'))
+
+    def test_settled_notes_excluded_from_x_abs_bridge_relays(self):
+        dimension = 8
+        eye = np.eye(dimension, dtype=np.float32)
+        recent = rows_for([eye[6], eye[7], eye[6], eye[7]], prefix='recent')
+        targets = rows_for([eye[2], eye[3], -eye[2], -eye[3], eye[1], -eye[1],
+                            unit(eye[1] + eye[4]), unit(eye[1] - eye[4]),
+                            unit(-eye[2] + eye[4]), unit(-eye[3] + eye[4]), -eye[0]], prefix='target')
+        settled_abstracts = {
+            'derived/note/shelved_via': {**row(unit(eye[0] + eye[2])), 'kind': 'note', 'lifecycle': 'settled'},
+            'derived/note/other1': {**row(-eye[0]), 'kind': 'note', 'lifecycle': 'active'},
+            'derived/note/other2': {**row(-eye[0]), 'kind': 'note', 'lifecycle': 'active'},
+            'derived/lesson/other3': {**row(-eye[0]), 'kind': 'lesson', 'lifecycle': 'active'},
+            'derived/note/other4': {**row(-eye[0]), 'kind': 'note', 'lifecycle': 'active'},
+            'derived/lesson/other5': {**row(-eye[0]), 'kind': 'lesson', 'lifecycle': 'active'},
+        }
+        rows_settled = {**recent, **targets, **settled_abstracts}
+        res_settled = WORKER.SemanticGeometryEngine().query(
+            rows_settled, eye[0], list(recent), query_event_id='current')
+        self.assertEqual([s for s in res_settled['bridge_sparks']
+                          if s['bridge_via'] == 'derived/note/shelved_via'], [])
+
+        # Re-activating the same note immediately restores its bridge eligibility.
+        rows_settled['derived/note/shelved_via']['lifecycle'] = 'active'
+        res_active = WORKER.SemanticGeometryEngine().query(
+            rows_settled, eye[0], list(recent), query_event_id='current')
+        self.assertTrue(any(s['bridge_via'] == 'derived/note/shelved_via'
+                            for s in res_active['bridge_sparks']))
+
     def test_legacy_backward_compatibility(self):
         # The geometry block is optional and isolated behind an exact True flag.
         # No fields are appended to the legacy reply unless that branch executes.

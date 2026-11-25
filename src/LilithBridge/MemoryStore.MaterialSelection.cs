@@ -118,7 +118,8 @@ internal sealed partial class MemoryStore
                     .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal));
             foreach (var hit in semantic!.Candidates)
             {
-                if (hit.Rank > 0 && hit.Rank > MaxReadingSemanticRank) continue;
+                int effectiveRank = hit.DomainRank > 0 ? hit.DomainRank : hit.Rank;
+                if (effectiveRank > 0 && effectiveRank > MaxReadingSemanticRank) continue;
                 if (hit.Kind == "reading")
                 {
                     if (!candById.TryGetValue(hit.EventId, out var cand)) continue;

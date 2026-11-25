@@ -117,7 +117,8 @@ internal sealed partial class MemoryStore
         // A B1 entry sitting at global rank #231 or #456 is anisotropic background buzz,
         // not a genuine hit—even if its raw cosine clears 0.45–0.60. Legacy/mock callers
         // that omit Rank (<= 0) keep passing when their Score clears the floor.
-        if (!explicitLookup && candidate.Rank > MaxB1SemanticGlobalRank) return false;
+        int effectiveRank = candidate.DomainRank > 0 ? candidate.DomainRank : candidate.Rank;
+        if (!explicitLookup && effectiveRank > MaxB1SemanticGlobalRank) return false;
         return true;
     }
 

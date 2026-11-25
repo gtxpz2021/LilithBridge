@@ -6,15 +6,86 @@ using System.Text.Json;
 namespace LilithBridge;
 
 internal sealed record SemanticIndexRecord(string EventId, string Text, string Role, string Origin, string Delivery,
-    string Kind="utterance",string Version="")
+    string Kind="utterance",string Version="",string Lifecycle="active")
 {
     private string? _textHash;
     [System.Text.Json.Serialization.JsonIgnore]
     internal string? KnownTextHash { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     internal string TextHash => _textHash ??= KnownTextHash ?? MemoryStore.SemanticTextHash(Text);
-    internal string WireId=>Kind=="utterance"?EventId:"derived/"+Kind+"/"+EventId;
+    internal string WireId=>SemanticWireCodec.Encode(Kind, EventId);
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal string SyncFingerprint => TextHash + "|" + Kind + "|" + Lifecycle;
     internal SemanticDomain Domain=>Kind switch {"b1"=>SemanticDomain.B1,"note" or "lesson" or "reading"=>SemanticDomain.Thoughts,_=>SemanticDomain.Events};
+}
+
+internal static class SemanticWireCodec
+{
+    internal static string Encode(string kind, string cleanId)
+    {
+        if (string.IsNullOrEmpty(cleanId)) return "";
+        if (cleanId.StartsWith("derived/", StringComparison.Ordinal)) return cleanId;
+        return kind == "utterance" ? cleanId : "derived/" + kind + "/" + cleanId;
+    }
+
+    internal static string EncodeExperienceId(string cleanUnitOrEventId)
+    {
+        if (string.IsNullOrEmpty(cleanUnitOrEventId)) return "";
+        if (cleanUnitOrEventId.StartsWith("derived/", StringComparison.Ordinal)) return cleanUnitOrEventId;
+        return cleanUnitOrEventId.StartsWith("message/", StringComparison.Ordinal)
+            ? "derived/message/" + cleanUnitOrEventId
+            : cleanUnitOrEventId;
+    }
+
+    internal static string Decode(string wireId, out string kind)
+    {
+        if (string.IsNullOrEmpty(wireId)) { kind = "utterance"; return ""; }
+        if (wireId.StartsWith("derived/", StringComparison.Ordinal))
+        {
+            int slash = wireId.IndexOf('/', 8);
+            if (slash > 8)
+            {
+                kind = wireId[8..slash];
+                return wireId[(slash + 1)..];
+            }
+        }
+        kind = wireId.StartsWith("message/", StringComparison.Ordinal) ? "message" : "utterance";
+        return wireId;
+    }
+
+    internal static string DecodeExperienceId(string wireId) => Decode(wireId, out _);
+
+    internal static void DecodeBridgeVia(string rawVia, out string kind, out string cleanId)
+    {
+        kind = "";
+        cleanId = "";
+        if (string.IsNullOrEmpty(rawVia)) return;
+        string candidate = rawVia;
+        int colon = candidate.IndexOf(':');
+        if (colon > 0 && candidate[..colon] is "b1" or "note" or "lesson" or "generated_reply")
+        {
+            kind = candidate[..colon];
+            candidate = candidate[(colon + 1)..];
+        }
+        if (candidate.StartsWith("derived/", StringComparison.Ordinal))
+        {
+            int slash = candidate.IndexOf('/', 8);
+            if (slash > 8)
+            {
+                kind = candidate[8..slash];
+                cleanId = candidate[(slash + 1)..];
+                return;
+            }
+        }
+        cleanId = candidate;
+    }
+
+    internal static string NormalizeBridgeVia(string rawVia)
+    {
+        DecodeBridgeVia(rawVia, out string kind, out string cleanId);
+        if (cleanId.Length == 0) return "";
+        return kind.Length > 0 ? kind + ":" + cleanId : cleanId;
+    }
 }
 
 // One private child per Bridge/data root. It owns derived vectors only. The
@@ -175,6 +246,7 @@ internal sealed class SemanticRecallWorker : IDisposable
     internal static object IndexWireRecord(SemanticIndexRecord record,string textHash) => new {
         event_id=record.WireId,text=record.Text,role=record.Role,origin=record.Origin,
         delivery=record.Kind=="generated_reply"&&record.Delivery=="received_public_text"?"received":record.Delivery,
+        kind=record.Kind,lifecycle=record.Lifecycle,
         text_hash=textHash
     };
 
@@ -185,13 +257,13 @@ internal sealed class SemanticRecallWorker : IDisposable
         {
             if(reset){_hashes.Clear();_needFullPrune=true;IndexMirrorKnown=false;}
             _lastSnapshot=snapshot;
-            var hashes=snapshot.ToDictionary(r=>r.WireId,r=>r.TextHash,StringComparer.Ordinal);
+            var hashes=snapshot.ToDictionary(r=>r.WireId,r=>r.SyncFingerprint,StringComparer.Ordinal);
             var changes=snapshot.Where(r=>!_hashes.TryGetValue(r.WireId,out var hash)||hash!=hashes[r.WireId]).ToArray();
             for(int at=0;at<changes.Length;at+=16)
             {
                 token.ThrowIfCancellationRequested();
                 var batch=changes.Skip(at).Take(16).ToArray();
-                var result=await CommandAsync("upsert",new(){["records"]=batch.Select(r=>IndexWireRecord(r,hashes[r.WireId])).ToArray()},token).ConfigureAwait(false);
+                var result=await CommandAsync("upsert",new(){["records"]=batch.Select(r=>IndexWireRecord(r,r.TextHash)).ToArray()},token).ConfigureAwait(false);
                 if(result.GetProperty("status").GetString()!="ok")throw new InvalidDataException("semantic update rejected");
                 _indexDirty=true;
                 foreach(var r in batch)_hashes[r.WireId]=hashes[r.WireId];
@@ -296,10 +368,12 @@ internal sealed class SemanticRecallWorker : IDisposable
             if(request.EnableGeometry)
             {
                 commandData["enable_geometry"]=true;
-                commandData["recent_event_ids"]=request.RecentWireIds??Array.Empty<string>();
+                commandData["recent_event_ids"]=(request.RecentWireIds??Array.Empty<string>())
+                    .Select(SemanticWireCodec.EncodeExperienceId).Where(s=>s.Length>0).ToArray();
                 commandData["scene_text"]=request.SceneText?? "";
-                commandData["probe_event_ids"]=request.ProbeWireIds??Array.Empty<string>();
-                commandData["query_event_id"]=request.QueryWireId?? "";
+                commandData["probe_event_ids"]=(request.ProbeWireIds??Array.Empty<string>())
+                    .Select(SemanticWireCodec.EncodeExperienceId).Where(s=>s.Length>0).ToArray();
+                commandData["query_event_id"]=SemanticWireCodec.EncodeExperienceId(request.QueryWireId?? "");
             }
             var r=await CommandAsync("query",commandData,linked.Token).ConfigureAwait(false);
             linked.Token.ThrowIfCancellationRequested();
@@ -315,15 +389,20 @@ internal sealed class SemanticRecallWorker : IDisposable
             QueryCount++;
             var byWire=request.Snapshot.ToDictionary(x=>x.WireId,StringComparer.Ordinal);
             var candidates=new List<SemanticRecallCandidate>();
+            var domainCounts=new Dictionary<string,int>(StringComparer.Ordinal);
             int rank=0;
             foreach(var c in r.GetProperty("candidates").EnumerateArray())
             {
                 if(!byWire.TryGetValue(c.GetProperty("event_id").GetString()!,out var source)
                     ||(source.Domain&request.Domains)==0||c.GetProperty("text_hash").GetString()!=source.TextHash)continue;
+                int fallbackDomainRank = domainCounts[source.Kind] = domainCounts.GetValueOrDefault(source.Kind) + 1;
+                int domainRank = c.TryGetProperty("domain_rank", out var drEl) && drEl.TryGetInt32(out int dr) && dr > 0
+                    ? dr : fallbackDomainRank;
                 candidates.Add(new(source.EventId,c.GetProperty("text_hash").GetString()!,c.GetProperty("score").GetDouble(),
                     c.GetProperty("chunk_start").GetInt32(),c.GetProperty("chunk_end").GetInt32(),source.Kind,source.Version,++rank,
                     c.TryGetProperty("char_start",out var a)?MemoryStore.SemanticCodePointOffset(source.Text,a.GetInt32()):null,
-                    c.TryGetProperty("char_end",out var b)?MemoryStore.SemanticCodePointOffset(source.Text,b.GetInt32()):null));
+                    c.TryGetProperty("char_end",out var b)?MemoryStore.SemanticCodePointOffset(source.Text,b.GetInt32()):null)
+                { DomainRank = domainRank });
             }
             PreparationTiming.Current?.Value("semantic_event_candidates",candidates.Count(c=>c.Kind is "utterance" or "message"));
             PreparationTiming.Current?.Value("semantic_message_candidates",candidates.Count(c=>c.Kind=="message"));
@@ -336,6 +415,8 @@ internal sealed class SemanticRecallWorker : IDisposable
             var sceneSparks=request.EnableGeometry?ParseGeometrySparks(r,"scene_sparks"):SemanticGeometrySpark.Empty;
             var docSims=request.EnableGeometry?ParseNumberMap(r,"doc_sims"):new Dictionary<string,double>();
             var docQuantiles=request.EnableGeometry?ParseNumberMap(r,"doc_quantiles"):new Dictionary<string,double>();
+            var cleanProbes=(request.ProbeWireIds??Array.Empty<string>())
+                .Select(SemanticWireCodec.DecodeExperienceId).Where(s=>s.Length>0).Distinct(StringComparer.Ordinal).ToArray();
             bool salienceGated=request.EnableGeometry&&r.TryGetProperty("salience_gated",out var gated)&&gated.ValueKind==JsonValueKind.True;
             double salienceZ=request.EnableGeometry&&r.TryGetProperty("salience_z",out var salience)&&salience.TryGetDouble(out double z)?z:0;
             if (_indexDirty) ScheduleBackgroundCommit();
@@ -345,7 +426,7 @@ internal sealed class SemanticRecallWorker : IDisposable
                 Geometry=geometry,SalienceGated=salienceGated,SalienceZ=salienceZ,
                 OrthogonalSparks=orthogonal,WormholeSparks=wormholes,BridgeSparks=bridges,
                 SceneSparks=sceneSparks,DocSims=docSims,DocQuantiles=docQuantiles,
-                ProbeWireIds=request.ProbeWireIds??Array.Empty<string>()};
+                ProbeWireIds=cleanProbes};
         }
         catch(OperationCanceledException)
         {
@@ -364,11 +445,12 @@ internal sealed class SemanticRecallWorker : IDisposable
         if (!reply.TryGetProperty("geometry", out JsonElement geometry) || geometry.ValueKind != JsonValueKind.Object)
             return null;
         var dpp=geometry.TryGetProperty("dpp_selected_ids",out var ids)&&ids.ValueKind==JsonValueKind.Array
-            ? ids.EnumerateArray().Select(v=>v.GetString()?? "").Where(v=>v.Length>0).ToArray():Array.Empty<string>();
+            ? ids.EnumerateArray().Select(v=>SemanticWireCodec.DecodeExperienceId(v.GetString()?? "")).Where(v=>v.Length>0).ToArray():Array.Empty<string>();
         var orthSins=new Dictionary<string,double>(StringComparer.Ordinal);
         if(geometry.TryGetProperty("orth_sins",out var sins)&&sins.ValueKind==JsonValueKind.Object)
             foreach(var property in sins.EnumerateObject())
-                if(property.Value.TryGetDouble(out double value)) orthSins[property.Name]=value;
+                if(property.Value.TryGetDouble(out double value))
+                    orthSins[SemanticWireCodec.DecodeExperienceId(property.Name)]=value;
         static double Number(JsonElement element,string name,double fallback=0)=>element.TryGetProperty(name,out var value)&&value.TryGetDouble(out double parsed)?parsed:fallback;
         return new(Number(geometry,"novelty_eta"),Number(geometry,"tortuosity"),
             Number(geometry,"net_displacement_rad"),Number(geometry,"arc_length_rad"),
@@ -381,12 +463,13 @@ internal sealed class SemanticRecallWorker : IDisposable
         var result=new List<SemanticGeometrySpark>();
         foreach(var item in array.EnumerateArray())
         {
-            string eventId=item.TryGetProperty("event_id",out var id)?id.GetString()?? "":"";
+            string rawEventId=item.TryGetProperty("event_id",out var id)?id.GetString()?? "":"";
+            string eventId=SemanticWireCodec.DecodeExperienceId(rawEventId);
             if(eventId.Length==0) continue;
             string textHash=item.TryGetProperty("text_hash",out var hash)?hash.GetString()?? "":"";
             double score=item.TryGetProperty("score",out var scoreValue)&&scoreValue.TryGetDouble(out double parsedScore)?parsedScore:0;
             double z=item.TryGetProperty("z_score",out var zValue)&&zValue.TryGetDouble(out double parsedZ)?parsedZ:0;
-            string via=item.TryGetProperty("bridge_via",out var viaValue)?viaValue.GetString()?? "":"";
+            string via=SemanticWireCodec.NormalizeBridgeVia(item.TryGetProperty("bridge_via",out var viaValue)?viaValue.GetString()?? "":"");
             double viaScore=item.TryGetProperty("bridge_score",out var viaScoreValue)&&viaScoreValue.TryGetDouble(out double parsedViaScore)?parsedViaScore:0;
             string viaHash=item.TryGetProperty("bridge_via_hash",out var viaHashValue)?viaHashValue.GetString()?? "":"";
             result.Add(new(eventId,textHash,score,z,via,viaScore,viaHash));
@@ -398,7 +481,8 @@ internal sealed class SemanticRecallWorker : IDisposable
         var result=new Dictionary<string,double>(StringComparer.Ordinal);
         if(!reply.TryGetProperty(property,out var map)||map.ValueKind!=JsonValueKind.Object) return result;
         foreach(var item in map.EnumerateObject())
-            if(item.Value.TryGetDouble(out double value)) result[item.Name]=value;
+            if(item.Value.TryGetDouble(out double value))
+                result[SemanticWireCodec.DecodeExperienceId(item.Name)]=value;
         return result;
     }
     private int _backgroundCommitQueued;

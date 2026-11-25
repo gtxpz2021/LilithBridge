@@ -8,6 +8,7 @@ namespace LilithBridge;
 internal sealed record SemanticRecallCandidate(string EventId, string TextHash, double Score,
     int ChunkStart, int ChunkEnd,string Kind="utterance",string Version="",int Rank=0,int? CharStart=null,int? CharEnd=null)
 {
+    internal int DomainRank { get; init; }
     // Preserve the original internal reflection/harness constructor shape while
     // newer worker replies additionally carry exact character hit positions.
     internal SemanticRecallCandidate(string eventId,string textHash,double score,int chunkStart,int chunkEnd,string kind,string version,int rank)
@@ -115,13 +116,16 @@ internal sealed partial class MemoryStore
                     throw new SemanticSnapshotUnavailableException("semantic_b1_snapshot_unreadable");
                 if(doc!=null)retained.AddRange(doc.Entries.Where(e=>B1ManagementState(doc,e.Version) is not
                         ("suppressed" or "withdrawn" or "deleting" or "deleted"))
-                    .Select(e=>new SemanticIndexRecord(e.Version,B1DiscoveryText(e),"assistant","retained","delivered","b1",e.Revision.ToString())));
+                    .Select(e=>new SemanticIndexRecord(e.Version,B1DiscoveryText(e),"assistant","retained","delivered","b1",
+                        e.Revision.ToString(),
+                        doc.Current.GetValueOrDefault(e.LogicalId) == e.Version ? "active" : "superseded")));
             }
             using (PreparationTiming.Measure("sem.snap.reflections"))
             {
                 retained.AddRange(_reflectionNotes.Concat(_reflectionLessons).Concat(_relationshipReadings)
                     .Where(t=>t.LifecycleState is "active" or "settled" or "superseded")
-                    .Select(t=>new SemanticIndexRecord(t.EventId,t.Text,"assistant","retained","delivered",B1Kind(t),SemanticSourceVersion(t))));
+                    .Select(t=>new SemanticIndexRecord(t.EventId,t.Text,"assistant","retained","delivered",B1Kind(t),
+                        SemanticSourceVersion(t),t.LifecycleState)));
             }
         }
         finally{System.Threading.Monitor.Exit(_experienceLock);}
@@ -153,6 +157,32 @@ internal sealed partial class MemoryStore
     }
     private static string SemanticWireIdForUnit(LogicalDialogueUnit unit) =>
         unit.IsMessage ? unit.Key : unit.AnchorEventId;
+
+    internal IReadOnlyList<string> ResolveRecentSemanticUnitIds(IReadOnlyList<MemoryTurn> history,
+        string? excludeUserEventId, Func<string?, int> effectiveCharacters, int maxUnits = 6)
+    {
+        if (history == null || history.Count == 0 || maxUnits <= 0) return Array.Empty<string>();
+        var catalog = GetExperienceLogicalCatalog(scoped: false, dialogueOnly: false);
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var ordered = history.Where(t => t.EventId.Length > 0 && t.EventId != excludeUserEventId
+                && t.DeliveryState is "received" or "delivered" && t.Role is "user" or "assistant")
+            .OrderBy(t => t.Timestamp).ThenBy(t => t.Sequence).ThenBy(t => t.EventId, StringComparer.Ordinal);
+        foreach (var turn in ordered)
+        {
+            if (catalog.FindByEvent(turn.EventId) is { } unit)
+            {
+                if (effectiveCharacters(unit.Text) < 8) continue;
+                string unitId = SemanticWireIdForUnit(unit);
+                if (seen.Add(unitId)) result.Add(unitId);
+            }
+            else if (effectiveCharacters(turn.Text) >= 8 && seen.Add(turn.EventId))
+            {
+                result.Add(turn.EventId);
+            }
+        }
+        return result.Count <= maxUnits ? result.ToArray() : result.TakeLast(maxUnits).ToArray();
+    }
 
     // Request-local lexical prefilter. It uses the same token index and document
     // frequency accounting as the ordinary experience candidate pass, and sends
@@ -207,7 +237,8 @@ internal sealed partial class MemoryStore
         // The original eight-argument internal constructor remains the boundary
         // for harnesses; geometry never needs character offsets for selection.
         string kind = unit.IsMessage ? "message" : "utterance";
-        return new SemanticRecallCandidate(spark.EventId, spark.TextHash, spark.Score, 0, 0, kind, "", 0);
+        string version = unit.IsMessage ? unit.VersionFingerprint : "";
+        return new SemanticRecallCandidate(spark.EventId, spark.TextHash, spark.Score, 0, 0, kind, version, 0);
     }
 
     // M-2: the middle node of a two-hop bridge lives in the whitened, unprefixed
@@ -217,30 +248,52 @@ internal sealed partial class MemoryStore
     private bool SemanticBridgeViaPermitted(SemanticRecallResult result, SemanticGeometrySpark spark)
     {
         if (spark.BridgeVia.Length == 0) return true;
+        SemanticWireCodec.DecodeBridgeVia(spark.BridgeVia, out string viaKind, out string cleanId);
         // generated_reply is never an acceptable bridge node.
-        if (spark.BridgeVia.StartsWith("derived/generated_reply/", StringComparison.Ordinal)) return false;
+        if (viaKind == "generated_reply" || cleanId.Length == 0
+            || spark.BridgeVia.StartsWith("derived/generated_reply/", StringComparison.Ordinal))
+            return false;
         string expectedHash = spark.BridgeViaHash;
         if (expectedHash.Length == 0)
         {
             // Legacy payload without bridge_via_hash: fall back to the candidate
             // copy only for identity, never as the source of permission.
-            var legacy = result.Candidates.FirstOrDefault(c => c.EventId == spark.BridgeVia);
+            var legacy = result.Candidates.FirstOrDefault(c => c.EventId == cleanId || c.EventId == spark.BridgeVia);
             if (legacy == null || legacy.Kind is not ("b1" or "note" or "lesson")) return false;
             expectedHash = legacy.TextHash;
+            if (viaKind.Length == 0) viaKind = legacy.Kind;
         }
-        MemoryTurn? source = null;
-        foreach (string kind in new[] { "b1", "note", "lesson" })
+        string[] kindsToTry = viaKind is "b1" or "note" or "lesson" ? new[] { viaKind } : new[] { "b1", "note", "lesson" };
+        foreach (string kind in kindsToTry)
         {
-            var candidate = B1Turn(kind, spark.BridgeVia);
-            if (candidate != null && SemanticTextHash(candidate.Text) == expectedHash)
+            if (kind == "b1")
             {
-                source = candidate;
-                break;
+                var doc = LoadB1(force: false);
+                var entry = doc?.Entries.FirstOrDefault(e => e.Version == cleanId);
+                if (doc != null && entry != null
+                    && doc.Current.GetValueOrDefault(entry.LogicalId) == entry.Version
+                    && B1ManagementState(doc, entry.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")
+                    && SemanticTextHash(B1DiscoveryText(entry)) == expectedHash
+                    && !IsExperienceSuppressed(entry.Version)
+                    && IsMentionTextAllowed(entry.Text + " " + entry.Scope)
+                    && !SuppressedTextMatches(entry.Text))
+                {
+                    return true;
+                }
+                continue;
+            }
+            var pool = kind == "note" ? _reflectionNotes : _reflectionLessons;
+            var activeTurn = pool.FirstOrDefault(t => t.EventId == cleanId && IsActiveLifecycle(t));
+            var candidate = activeTurn ?? B1Turn(kind, cleanId);
+            if (candidate != null
+                && (string.IsNullOrEmpty(candidate.LifecycleState) || IsActiveLifecycle(candidate))
+                && SemanticTextHash(candidate.Text) == expectedHash)
+            {
+                return !IsExperienceSuppressed(candidate.EventId)
+                    && IsMentionAllowed(candidate) && IsNativeSupplyAllowed(candidate);
             }
         }
-        if (source == null) return false;
-        return !IsExperienceSuppressed(source.EventId)
-            && IsMentionAllowed(source) && IsNativeSupplyAllowed(source);
+        return false;
     }
 
     internal static string SemanticTextHash(string text) => Convert.ToHexString(
@@ -430,11 +483,20 @@ internal sealed partial class MemoryStore
             foreach (var spark in result.OrthogonalSparks.Concat(result.WormholeSparks)
                 .Concat(result.BridgeSparks).Concat(result.SceneSparks))
             {
-                var probe = new SemanticRecallCandidate(spark.EventId, spark.TextHash, spark.Score, 0, 0,
-                    "utterance", "", 0);
-                var unit = catalog.ResolveCandidate(probe);
-                if (unit == null || SemanticWireIdForUnit(unit) != spark.EventId || unit.TextHash != spark.TextHash)
-                    continue;
+                LogicalDialogueUnit? unit;
+                if (spark.EventId.StartsWith("message/", StringComparison.Ordinal))
+                {
+                    unit = catalog.FindByKey(spark.EventId);
+                    if (unit == null || !unit.IsMessage || unit.TextHash != spark.TextHash) continue;
+                }
+                else
+                {
+                    var probe = new SemanticRecallCandidate(spark.EventId, spark.TextHash, spark.Score, 0, 0,
+                        "utterance", "", 0);
+                    unit = catalog.ResolveCandidate(probe);
+                    if (unit == null || SemanticWireIdForUnit(unit) != spark.EventId || unit.TextHash != spark.TextHash)
+                        continue;
+                }
                 if (unit.Timestamp >= recentCut || !Eligible(unit)
                     || unit.Members.All(t => excluded.Contains(t.EventId))
                     || candidates.Any(c => MemorySemantics.AreNearDuplicateUnits(c.Unit, unit))
@@ -467,8 +529,14 @@ internal sealed partial class MemoryStore
                 }
                 foreach (string token in chosen.Unit.MatchingTokens) trace.SparkTokens.Add(token);
                 lock (_sparkExposureLock) _recentSparkExposure[chosen.Unit.Key] = selectionTurn;
-                var via = result.Candidates.FirstOrDefault(c => c.EventId == chosen.Spark.BridgeVia);
-                if (via?.Kind == "b1") trace.LensShiftB1Version = via.EventId;
+                SemanticWireCodec.DecodeBridgeVia(chosen.Spark.BridgeVia, out string chosenViaKind, out string chosenViaId);
+                if (chosenViaKind == "b1" && chosenViaId.Length > 0)
+                    trace.LensShiftB1Version = chosenViaId;
+                else
+                {
+                    var via = result.Candidates.FirstOrDefault(c => c.EventId == (chosenViaId.Length > 0 ? chosenViaId : chosen.Spark.BridgeVia));
+                    if (via?.Kind == "b1") trace.LensShiftB1Version = via.EventId;
+                }
             }
         }
         if (result.RelevancePlan == null && !explicitLookup && !pureFillerQuery

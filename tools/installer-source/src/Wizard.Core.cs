@@ -36,7 +36,7 @@ namespace LilithSetup
     public static class WizardCore
     {
         public const bool PreviewChannel = true;
-        public const int InstallerSchema = 17, SupportedConfigSchema = 1;
+        public const int InstallerSchema = 18, SupportedConfigSchema = 1;
         public static ReleaseUpdate CheckUpdate(CancellationToken cancel)
         {
             TrustedDownloads.UsePlatformTls();
@@ -54,7 +54,8 @@ namespace LilithSetup
             foreach (Dictionary<string, object> release in (object[])wrapped["releases"])
             {
                 if ((bool)release["draft"]) continue;
-                if (release.ContainsKey("prerelease") && (bool)release["prerelease"] != PreviewChannel) continue;
+                bool includePreview = PreviewChannel;
+                if (!includePreview && release.ContainsKey("prerelease") && (bool)release["prerelease"]) continue;
                 string tag = DataJson.String(release, "tag_name", "");
                 SetupCore.Require(System.Text.RegularExpressions.Regex.IsMatch(tag, "^[A-Za-z0-9._-]{1,100}$"), "LBWIZ_RELEASE_TAG_INVALID");
                 var candidates = new List<DownloadSpec>(); var assetIds = new Dictionary<string, long>();
@@ -173,18 +174,43 @@ namespace LilithSetup
                 if (File.Exists(record)) File.Replace(temp, record, null); else File.Move(temp, record);
             }
             Say(report, "plugin", "done", "插件已就绪；已有配置与记忆仍使用原目录", 35);
+            if (!options.Runtime && snapshot.Exists)
+            {
+                try
+                {
+                    var passivePaths = SetupCore.Locate(context, snapshot, "");
+                    if (File.Exists(passivePaths.Python) && WizardProvisioning.UpgradeKnownWorkerInPlace(package, passivePaths.Worker))
+                    {
+                        Say(report, "plugin", "done", "插件与既有本地语义召回脚本已同步更新；配置与记忆保持原位", 36);
+                        snapshot = SetupCore.ReadSnapshot(context.ConfigPath);
+                    }
+                }
+                catch (SetupException) { }
+            }
             string components = "", python = "", worker = "", model = ""; var validator = new ModelValidator(Path.Combine(package, "model-manifest.json"));
-            LocalCheck existingPaths = new LocalCheck(); bool existingRuntime = false, existingModel = false;
+            LocalCheck existingPaths = new LocalCheck(); bool existingRuntime = false, existingRuntimeNeedsWorkerUpgrade = false, existingModel = false;
             if (options.Runtime || options.Model)
             {
                 existingPaths = SetupCore.Locate(context, snapshot, "");
-                try { SetupCore.ValidateRuntimeFiles(existingPaths); existingRuntime = SetupCore.FileHash(existingPaths.Worker) == WizardProvisioning.WorkerHash; } catch (SetupException) { }
+                try
+                {
+                    SetupCore.ValidateRuntimeFiles(existingPaths);
+                    string existingWorkerHash = SetupCore.FileHash(existingPaths.Worker);
+                    existingRuntime = existingWorkerHash == WizardProvisioning.WorkerHash;
+                    existingRuntimeNeedsWorkerUpgrade = !existingRuntime && WizardProvisioning.IsKnownWorkerHash(existingWorkerHash);
+                }
+                catch (SetupException) { }
                 try { validator.Verify(existingPaths.Model, text => Say(report, "model", "working", text, 38)); existingModel = true; } catch (SetupException) { }
             }
             if (options.Runtime)
             {
-                Say(report, "runtime", "working", existingRuntime ? "检查已有召回环境" : "准备私有 Python 与隔离召回环境", 40);
+                Say(report, "runtime", "working", (existingRuntime || existingRuntimeNeedsWorkerUpgrade) ? "检查并同步已有召回环境" : "准备私有 Python 与隔离召回环境", 40);
                 if (existingRuntime) { python = existingPaths.Python; worker = existingPaths.Worker; }
+                else if (existingRuntimeNeedsWorkerUpgrade)
+                {
+                    SetupCore.Require(WizardProvisioning.UpgradeKnownWorkerInPlace(package, existingPaths.Worker), "LBWIZ_EXISTING_COMPONENT_CHANGED");
+                    python = existingPaths.Python; worker = existingPaths.Worker;
+                }
                 else
                 {
                     components = WizardProvisioning.ManagedRuntimeBase(context.DataRoot, options.RuntimeStorageRoot);
@@ -256,6 +282,7 @@ namespace LilithSetup
             if (code == "LBINSTALL_HOST_NeedsInteropConfiguration") return "加载器的接口生成配置存在歧义或使用了未验证的 metadata/interop 路径。请保留原配置和缓存，核对标准生成路径后重新检查；本次未替换插件。";
             if (code == "LBWIZ_CONSOLE_CONFIG_AMBIGUOUS" || code == "LBWIZ_CONSOLE_CONFIG_CHANGED") return "启动日志设置存在重复或已发生变化，已停止自动处理。请保留 BepInEx/config 下的配置与备份，再重新核对；现有游戏存档未修改。";
             if (code == "LBWIZ_RUNTIME_INSTALL_FAILED") return "召回环境未通过检查，配置尚未切换。可重试，或检查系统运行库状态；脱敏技术记录在产品专用环境目录或数据目录的 .setup-checks 中。";
+            if (code == "LBWIZ_EXISTING_COMPONENT_CHANGED") return "检测到本地召回脚本存在非官方手动修改，为保护已有改动未覆盖原文件。请先备份自定义修改或移开该文件后重试。";
             if (code == "LBSETUP_CONFIG_CHANGED_RECHECK") return "配置在操作期间发生变化，本次没有覆盖。点“重新读取”核对后再继续。";
             if (code == "LBSETUP_NEW_SERVICE_REQUIRES_OWN_KEY_OR_EXPLICIT_CLEAR") return "服务地址已经更换。请填写新服务对应的 Key；原服务的 Key 尚未修改，也不会自动带到新服务。";
             if (code == "LBWIZ_RESOURCE_ARCHIVE_HASH" || code == "LBWIZ_RESOURCE_ARCHIVE_CHANGED") return "旁边离线资源ZIP未通过完整性校验，该文件未投入使用。请重新取得完整资源包；现有资料不覆盖。";

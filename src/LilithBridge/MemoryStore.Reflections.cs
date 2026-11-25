@@ -131,6 +131,11 @@ internal sealed partial class MemoryStore
     internal const string ChatNoteHeader = "[你以前留下的想法]";
     internal const string SettledNoteHeader = "[你以前收起的想法记录]";
     internal const string LessonHeader = "[你自己的经验法则]";
+    internal const string EpochShelvedReasonPrefix = "早期旧本子合卷归架";
+    internal static bool IsEpochShelved(MemoryTurn turn) =>
+        string.Equals(turn.LifecycleState, "settled", StringComparison.Ordinal)
+        && !string.IsNullOrEmpty(turn.SettleReason)
+        && turn.SettleReason.StartsWith(EpochShelvedReasonPrefix, StringComparison.Ordinal);
     internal const string ThoughtLifecycleContract = "state=active 表示记录尚未被收起或后继版本取代；state=settled 表示记录曾被收起，时间和理由保留在 settled_at / settle_reason；state=superseded 表示该版本已被后继版本取代，关联见 revises / revised_by。这些是记录生命周期，仅凭状态不能判断此刻是否赞同、正在想或已经不再在意。可以采纳、提出异议、重新考虑，也可以不提起。";
 
     /// <summary>
@@ -515,7 +520,9 @@ internal sealed partial class MemoryStore
                 settled_at = t.SettledAt,
                 settle_reason = t.SettleReason,
                 source_context = DescribeSourceAttribution(t),
-                label = "这条记录曾被收起，时间和理由见 settled_at / settle_reason；可以重新考虑。"
+                label = IsEpochShelved(t)
+                    ? "这条记录标为「早期旧本子合卷归架」，只是换新本子时整卷收在书架上的旧页（并非当时想通否定了它）；若本次交流恰好重逢此事且心意仍成立，可用现在的自然口吻发一条 revises 接续，否则留在书架即可。"
+                    : "这条记录曾被收起，时间和理由见 settled_at / settle_reason；可以重新考虑。"
             })
             ,day_artifacts = dayArtifacts.Select(t => new
             {
@@ -1653,9 +1660,12 @@ internal sealed partial class MemoryStore
                 string[] own=admission.Admits(turn.EventId)?turn.SourceEventIds.Where(supplied.Contains).ToArray():Array.Empty<string>();
                 return (Array.Empty<string>(),own,own,admission.Admits(turn.EventId)?1:0,0,int.MaxValue);
             }
-            var typed = typedScope ? semantic!.Candidates.FirstOrDefault(c => c.Version == SemanticSourceVersion(turn)
+            var rawTyped = typedScope ? semantic!.Candidates.FirstOrDefault(c => c.Version == SemanticSourceVersion(turn)
                 && SemanticCandidateMatches(c, turn, turn.Kind == "reflection.lesson" ? "lesson" : "note")) : null;
-            int typedRank = typed == null ? int.MaxValue : Math.Max(1, typed.Rank);
+            int rawDomainRank = rawTyped == null ? int.MaxValue
+                : Math.Max(1, rawTyped.DomainRank > 0 ? rawTyped.DomainRank : rawTyped.Rank);
+            var typed = rawTyped != null && rawTyped.Score >= 0.50 && rawDomainRank <= 24 ? rawTyped : null;
+            int typedRank = typed == null ? int.MaxValue : rawDomainRank;
             string[] current = turn.SourceEventIds.Where(id => visible.Contains(id) && InScope(id)
                 && (textRelevant || typed != null)).ToArray();
             // A retrieved neighbour is available context, not a direct relevance
@@ -1667,7 +1677,8 @@ internal sealed partial class MemoryStore
             double sourceScore = matched.Select(id => SimilarityCached(query, raw[id].Text)).DefaultIfEmpty().Max();
             return (current, retrieved, matched, score, sourceScore, typedRank);
         }
-        var pool = GetReflectionNotes(int.MaxValue, onObservation).Concat(GetSettledNotes(int.MaxValue))
+        var pool = GetReflectionNotes(int.MaxValue, onObservation)
+            .Concat(GetSettledNotes(int.MaxValue).Where(t => !IsEpochShelved(t)))
             .Where(IsNativeSupplyAllowed).DistinctBy(t => t.EventId).ToList();
         var versions = _reflectionNotes.GroupBy(t => t.EventId, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
@@ -1728,8 +1739,9 @@ internal sealed partial class MemoryStore
         if (chosen.Count == 0 && supplied.Count == 0) return "";
         var lessonPool = GetReflectionLessons(int.MaxValue).Where(IsNativeSupplyAllowed).ToArray();
         MemoryTurn? lesson = null;
-        if (lessonPool.Length > 0)
+        if (lessonPool.Length > 0 && (semantic?.RelevancePlan != null || !MemorySemantics.IsLowInfoGreetingOrFiller(query)))
         {
+            var chosenNoteIds = chosen.Select(n => n.EventId).ToHashSet(StringComparer.Ordinal);
             var queryTokens = ExperienceBodyTokens(query);
             lock (_experienceLock)
             {
@@ -1738,17 +1750,23 @@ internal sealed partial class MemoryStore
                     {
                         var basis = Basis(t);
                         bool explicitIndep = IndependentlyAdmitted(t);
+                        bool citesChosenNote = t.SourceNoteIds.Length > 0 && t.SourceNoteIds.Any(chosenNoteIds.Contains);
+                        bool lexRelevant = IsRelevantRecallCached(query, t.Text);
                         double textSim = SimilarityCached(query, t.Text);
                         int tokenHits = queryTokens.Count == 0 ? 0
                             : ExperienceBodyTokens(t.Text).Count(queryTokens.Contains);
+                        bool grounded = explicitIndep || basis.Matched.Length > 0 || citesChosenNote
+                            || basis.TypedRank <= 12 || lexRelevant || tokenHits >= 2;
                         double basisBoost = (basis.Matched.Length > 0 ? 0.30 : 0d)
+                            + (citesChosenNote ? 0.25 : 0d)
                             + (basis.TypedRank < int.MaxValue ? 0.35 : 0d)
                             + basis.SourceScore * 0.40;
                         double repeatPenalty = lessonPool.Length > 1
                             && _recentChatLessons.Contains(t.EventId, StringComparer.Ordinal) ? -0.35 : 0d;
                         double score = (explicitIndep ? 2.0 : 0d) + textSim * 1.2 + tokenHits * 0.12 + basisBoost + repeatPenalty;
-                        return (Turn: t, Score: score);
+                        return (Turn: t, Grounded: grounded, Score: score);
                     })
+                    .Where(x => x.Grounded)
                     .OrderByDescending(x => x.Score)
                     .ThenBy(x => Rank(x.Turn).Priority)
                     .ThenBy(x => Rank(x.Turn).Rank)

@@ -82,11 +82,7 @@ internal sealed partial class BridgeController
     private IReadOnlyList<string> BuildRecentSemanticWireIds(DialogueRequest owner)
     {
         var history=_memory.GetRequestHistory(_config);
-        return history.Where(t=>t.EventId.Length>0&&t.EventId!=owner.UserEventId
-                &&t.DeliveryState is "received" or "delivered"&&t.Role is "user" or "assistant"
-                &&EffectiveSemanticCharacters(t.Text)>=8)
-            .OrderBy(t=>t.Timestamp).ThenBy(t=>t.Sequence).ThenBy(t=>t.EventId,StringComparer.Ordinal)
-            .TakeLast(6).Select(t=>t.EventId).ToArray();
+        return _memory.ResolveRecentSemanticUnitIds(history, owner.UserEventId, EffectiveSemanticCharacters, 6);
     }
 
     private static string StripSceneTitle(string tail)

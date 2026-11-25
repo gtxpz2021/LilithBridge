@@ -7,7 +7,7 @@ using HarmonyLib;
 
 namespace LilithBridge;
 
-[BepInPlugin("local.lilith.native", "Lilith Native Bridge", "0.4.0")]
+[BepInPlugin("local.lilith.native", "Lilith Native Bridge", "0.4.1")]
 [BepInProcess("Lilith.exe")]
 public sealed class Plugin : BasePlugin
 {
@@ -23,7 +23,7 @@ public sealed class Plugin : BasePlugin
         if (_loaded) return;
         if (_harmony != null || _ownedHost != null)
             throw new InvalidOperationException("Previous LilithBridge cleanup is incomplete");
-        Log.LogInfo("Lilith Native Bridge 0.4.0 loading (sensory sidecar host, geometric semantic recall, B1 cross-session resurrection & retrospective development, semantic relationship readings and transport keep-alive)");
+        Log.LogInfo("Lilith Native Bridge 0.4.1 loading (two-subspace geometric semantic recall, local STT/TTS voice workers, sensory sidecar host, B1 continuity and relationship readings)");
         _harmony = new Harmony("local.lilith.native");
         try
         {

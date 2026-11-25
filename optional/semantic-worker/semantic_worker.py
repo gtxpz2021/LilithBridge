@@ -1,4 +1,4 @@
-"""Private offline JSONL worker with optional unified manifold geometry."""
+"""Private offline JSONL worker with two-subspace (X_exp / X_abs) manifold geometry."""
 from pathlib import Path
 from typing import List, Tuple
 import argparse
@@ -14,6 +14,28 @@ import numpy as np
 
 MODEL_REVISION = '7999e1d3359715c523056ef9478215996d62a620'
 QUERY_PREFIX = '为这个句子生成表示以用于检索相关文章：'
+EXPERIENCE_KINDS = ('utterance', 'message')
+ABSTRACT_BRIDGE_KINDS = ('b1', 'note', 'lesson')
+
+
+def _infer_kind(event_id: str, row: dict = None) -> str:
+    if row is not None:
+        explicit = row.get('kind')
+        if isinstance(explicit, str) and explicit:
+            return explicit
+    if isinstance(event_id, str) and event_id.startswith('derived/'):
+        parts = event_id.split('/', 2)
+        if len(parts) >= 3 and parts[1]:
+            return parts[1]
+    return 'utterance'
+
+
+def _infer_lifecycle(row: dict = None) -> str:
+    if row is not None:
+        explicit = row.get('lifecycle')
+        if isinstance(explicit, str) and explicit:
+            return explicit
+    return 'active'
 
 
 def _norm_rows(mat: np.ndarray) -> np.ndarray:
@@ -41,7 +63,7 @@ def _whiten_tier_d(n_rows: int) -> int:
 
 def _build_iso_state_chunked(raw_vecs: np.ndarray, wire_ids: List[str], k_nn: int = 10,
                              chunk_size: int = 512) -> dict:
-    """Chunked cold build for X_iso, whitening, neighbor densities and identity map."""
+    """Chunked cold build for X_exp, whitening, neighbor densities and identity map."""
     n = int(raw_vecs.shape[0])
     if len(wire_ids) != n or len(set(wire_ids)) != n:
         raise ValueError('geometry row identity mismatch')
@@ -52,7 +74,7 @@ def _build_iso_state_chunked(raw_vecs: np.ndarray, wire_ids: List[str], k_nn: in
         return dict(d=0, mu=np.zeros((dimension,), np.float32),
                     pcs=np.zeros((dimension, 0), np.float32), x_iso=raw_vecs.copy(),
                     top_k_sims=np.zeros((0, 0), np.float32), r_k=np.zeros((0,), np.float32),
-                    id_to_idx=id_to_idx, since_rebuild=0)
+                    id_to_idx=id_to_idx, wire_ids=list(wire_ids), since_rebuild=0)
     raw = _norm_rows(raw_vecs)
     if d == 0:
         mu = np.zeros((dimension,), np.float32)
@@ -78,11 +100,11 @@ def _build_iso_state_chunked(raw_vecs: np.ndarray, wire_ids: List[str], k_nn: in
             top_k_sims[start:end, :k] = part
             r_k[start:end] = np.mean(part, axis=1)
     return dict(d=d, mu=mu, pcs=pcs, x_iso=x_iso, top_k_sims=top_k_sims, r_k=r_k,
-                id_to_idx=id_to_idx, since_rebuild=0)
+                id_to_idx=id_to_idx, wire_ids=list(wire_ids), since_rebuild=0)
 
 
 def _incremental_append_row(iso: dict, eid: str, v_raw: np.ndarray, k_nn: int = 10) -> bool:
-    """Exact O(N) append; False mandates a rebuild, never a duplicate append."""
+    """Exact O(N) append on X_exp; False mandates a rebuild, never a duplicate append."""
     n_old = iso['x_iso'].shape[0]
     if (eid in iso['id_to_idx'] or _whiten_tier_d(n_old + 1) != iso['d']
             or iso['since_rebuild'] >= 40):
@@ -93,6 +115,8 @@ def _incremental_append_row(iso: dict, eid: str, v_raw: np.ndarray, k_nn: int = 
         centered = centered - (centered @ pcs) @ pcs.T
     v_iso = _norm_rows(centered[None, :])[0]
     iso['id_to_idx'][eid] = n_old
+    if 'wire_ids' in iso:
+        iso['wire_ids'].append(eid)
     if n_old == 0:
         iso['x_iso'] = v_iso[None, :]
         iso['top_k_sims'] = np.full((1, 1), -2.0, dtype=np.float32)
@@ -207,39 +231,74 @@ def _greedy_dpp(x_iso: np.ndarray, csls_scores: np.ndarray, wire_ids: List[str],
 
 
 class SemanticGeometryEngine:
-    """In-memory derived geometry only; vectors.npy/index.json remain unchanged."""
+    """Two-subspace derived geometry: X_exp (1:1 lived dialogue) + X_abs (active bridge relays)."""
 
     def __init__(self):
         self.iso = None
+        self.abs_state = None
         self.dirty = True
+        self.abs_dirty = True
 
     @staticmethod
     def _raw(rows: dict, event_id: str) -> np.ndarray:
         return _event_vector(rows[event_id]['vectors'])
 
+    @staticmethod
+    def _project_batch(raw_vecs: np.ndarray, iso: dict) -> np.ndarray:
+        if raw_vecs.shape[0] == 0:
+            return raw_vecs.copy()
+        centered = _norm_rows(raw_vecs) - iso['mu']
+        pcs = iso['pcs']
+        if pcs.shape[1] > 0:
+            centered = centered - (centered @ pcs) @ pcs.T
+        return _norm_rows(centered)
+
     def ensure(self, rows: dict) -> dict:
         if self.iso is None or self.dirty:
-            ids = list(rows.keys())
-            raw = (np.stack([self._raw(rows, eid) for eid in ids]).astype(np.float32)
-                   if ids else np.zeros((0, 512), dtype=np.float32))
-            self.iso = _build_iso_state_chunked(raw, ids)
+            exp_ids = [eid for eid, r in rows.items() if _infer_kind(eid, r) in EXPERIENCE_KINDS]
+            first_dim = (self._raw(rows, next(iter(rows))).shape[0] if rows else 512)
+            raw = (np.stack([self._raw(rows, eid) for eid in exp_ids]).astype(np.float32)
+                   if exp_ids else np.zeros((0, first_dim), dtype=np.float32))
+            self.iso = _build_iso_state_chunked(raw, exp_ids)
             self.dirty = False
+            self.abs_dirty = True
+        if self.abs_state is None or self.abs_dirty:
+            abs_ids = [eid for eid, r in rows.items()
+                       if _infer_kind(eid, r) in ABSTRACT_BRIDGE_KINDS
+                       and _infer_lifecycle(r) == 'active']
+            dim = self.iso['mu'].shape[0]
+            if abs_ids:
+                abs_raw = np.stack([self._raw(rows, eid) for eid in abs_ids]).astype(np.float32)
+                x_abs = self._project_batch(abs_raw, self.iso)
+            else:
+                x_abs = np.zeros((0, dim), dtype=np.float32)
+            self.abs_state = dict(wire_ids=abs_ids, x_abs=x_abs)
+            self.abs_dirty = False
         return self.iso
 
     def after_upsert(self, rows: dict, changed_ids: List[str], overwritten: bool) -> None:
         if not changed_ids:
             return
+        exp_changed = [eid for eid in changed_ids
+                       if eid in rows and _infer_kind(eid, rows[eid]) in EXPERIENCE_KINDS]
+        if len(exp_changed) != len(changed_ids):
+            self.abs_dirty = True
+        if not exp_changed:
+            return
         if self.iso is None or self.dirty or overwritten:
             self.dirty = True
+            self.abs_dirty = True
             return
-        for event_id in changed_ids:
+        for event_id in exp_changed:
             if not _incremental_append_row(self.iso, event_id, self._raw(rows, event_id)):
                 self.dirty = True
+                self.abs_dirty = True
                 return
 
     def after_prune(self, removed: int) -> None:
         if removed:
             self.dirty = True
+            self.abs_dirty = True
 
     @staticmethod
     def _project(v_raw: np.ndarray, iso: dict) -> np.ndarray:
@@ -275,12 +334,12 @@ class SemanticGeometryEngine:
               scene_raw: np.ndarray = None, probe_event_ids: List[str] = None,
               query_event_id: str = '', explicit_lookup: bool = False) -> dict:
         iso = self.ensure(rows)
-        ids = list(rows.keys())
+        exp_ids = iso['wire_ids']
         x_iso = iso['x_iso']
         q_doc = self._project(_event_vector(np.asarray(q_doc_raw, dtype=np.float32)), iso)
-        sims = x_iso @ q_doc if ids else np.zeros((0,), dtype=np.float32)
-        if ids:
-            k_query = min(10, len(ids))
+        sims = x_iso @ q_doc if exp_ids else np.zeros((0,), dtype=np.float32)
+        if exp_ids:
+            k_query = min(10, len(exp_ids))
             r_query = float(np.mean(np.partition(sims, -k_query)[-k_query:]))
             csls = 2.0 * sims - r_query - iso['r_k']
         else:
@@ -313,9 +372,8 @@ class SemanticGeometryEngine:
         else:
             tortuosity = 0.0
         recent_set = set(recent_ids)
-        target_indices = [i for i, eid in enumerate(ids)
-                          if eid not in recent_set and eid != query_event_id
-                          and not eid.startswith('derived/generated_reply/')]
+        target_indices = [i for i, eid in enumerate(exp_ids)
+                          if eid not in recent_set and eid != query_event_id]
         target = np.asarray(target_indices, dtype=int)
         orthogonal = []
         if q_perp is not None and target.size >= 4:
@@ -332,27 +390,27 @@ class SemanticGeometryEngine:
                     z_i = (float(scores[local]) - mu) / std
                     if safe[local] and z_i >= 2.2:
                         idx = int(target[local])
-                        orthogonal.append({**self._metadata(rows, idx, ids, csls[idx]),
+                        orthogonal.append({**self._metadata(rows, idx, exp_ids, csls[idx]),
                                            'orth_score': round(float(scores[local]), 4),
                                            'z_score': round(z_i, 3)})
         wormhole = []
         if not explicit_lookup and target.size:
-            hist_meta = [self._metadata(rows, int(i), ids, csls[int(i)]) for i in target]
+            hist_meta = [self._metadata(rows, int(i), exp_ids, csls[int(i)]) for i in target]
             wormhole = _find_wormhole_sparks(x_iso[target], hist_meta, q_doc,
                                              query_event_id or 'current_query', recent_vecs, recent_ids)
         bridges = []
         bridge_base = (_norm_rows(np.sum(np.stack(recent_vecs), axis=0, keepdims=True))[0]
                        if regime == 'orbiting_loop' and recent_vecs else q_doc)
-        abstract_indices = [i for i, eid in enumerate(ids)
-                            if eid.startswith(('derived/b1/', 'derived/note/', 'derived/lesson/'))]
-        if not explicit_lookup and abstract_indices and target.size:
-            abstract = np.asarray(abstract_indices, dtype=int)
-            abstract_scores = x_iso[abstract] @ bridge_base
+        abs_ids = self.abs_state['wire_ids'] if self.abs_state is not None else []
+        x_abs = self.abs_state['x_abs'] if self.abs_state is not None else np.zeros((0, q_doc.shape[0]), dtype=np.float32)
+        if not explicit_lookup and abs_ids and target.size:
+            abstract_scores = x_abs @ bridge_base
             z_top, _, _ = _salience_z_bg(abstract_scores, top_exclude=10)
             if z_top >= 1.8:
                 for local in np.argsort(-abstract_scores)[:2]:
-                    bridge_idx = int(abstract[local])
-                    via_vec = x_iso[bridge_idx]
+                    bridge_idx = int(local)
+                    bridge_eid = abs_ids[bridge_idx]
+                    via_vec = x_abs[bridge_idx]
                     via_residual = self._residual(via_vec, basis)
                     if np.linalg.norm(via_residual) < 0.12:
                         continue
@@ -364,18 +422,17 @@ class SemanticGeometryEngine:
                     direct_cut = float(np.quantile(sims[target], 0.75))
                     for target_local in np.argsort(-target_scores)[:3]:
                         idx = int(target[target_local])
-                        eid = ids[idx]
-                        if eid.startswith('derived/') or sims[idx] > direct_cut:
+                        if sims[idx] > direct_cut:
                             continue
                         z_i = (float(target_scores[target_local]) - mu) / std
                         if z_i < 1.8:
                             continue
-                        bridges.append({**self._metadata(rows, idx, ids, csls[idx]),
-                                        'bridge_via': ids[bridge_idx],
+                        bridges.append({**self._metadata(rows, idx, exp_ids, csls[idx]),
+                                        'bridge_via': bridge_eid,
                                         # M-2: carry the middle node's own text hash so C# can
                                         # validate it against the active local b1/note/lesson
                                         # record without requiring it in the q_query top-K.
-                                        'bridge_via_hash': rows[ids[bridge_idx]]['text_hash'],
+                                        'bridge_via_hash': rows[bridge_eid]['text_hash'],
                                         'bridge_score': round(float(target_scores[target_local]), 4),
                                         'z_score': round(z_i, 3)})
                         if len(bridges) >= 3:
@@ -398,18 +455,18 @@ class SemanticGeometryEngine:
                         z_i = (float(cone_scores[local]) - mu) / std
                         if z_i >= 2.2:
                             idx = int(target[local])
-                            scene_sparks.append({**self._metadata(rows, idx, ids, csls[idx]),
+                            scene_sparks.append({**self._metadata(rows, idx, exp_ids, csls[idx]),
                                                  'cone_score': round(float(cone_scores[local]), 4),
                                                  'z_score': round(z_i, 3)})
         salience_z, _, _ = _salience_z_bg(csls)
         salience_gated = (not explicit_lookup and salience_z < 2.2 and not orthogonal
                           and not wormhole and not bridges and not scene_sparks)
-        dpp_ids, orth_sins = ([] , {}) if explicit_lookup else _greedy_dpp(x_iso, csls, ids)
+        dpp_ids, orth_sins = ([], {}) if explicit_lookup else _greedy_dpp(x_iso, csls, exp_ids)
         doc_sims = {}
         doc_quantiles = {}
-        if ids:
+        if exp_ids:
             # H-2: only the bounded set C# actually consumes goes over IPC.
-            # The quantile denominator and the sorted distribution stay full-corpus.
+            # The quantile denominator and the sorted distribution stay full X_exp.
             top_csls_indices = np.argsort(-csls)[:24]
             spark_ids = [
                 item['event_id']
@@ -417,12 +474,12 @@ class SemanticGeometryEngine:
                 for item in bucket
                 if 'event_id' in item
             ]
-            top_csls_ids = [ids[int(i)] for i in top_csls_indices]
+            top_csls_ids = [exp_ids[int(i)] for i in top_csls_indices]
             requested = list(dict.fromkeys(
                 (probe_event_ids or [])[:16] + list(dpp_ids) + top_csls_ids + spark_ids
             ))
             ordered = np.sort(sims)
-            total_n = len(ids)
+            total_n = len(exp_ids)
             for eid in requested:
                 idx = iso['id_to_idx'].get(eid)
                 if idx is None:
@@ -526,8 +583,10 @@ def main() -> None:
             a = row['offset']
             b = a + len(row['windows'])
             assert 0 <= a <= b <= len(matrix)
-            rows[row['event_id']] = {'text_hash': row['text_hash'], 'windows': row['windows'],
-                                     'vectors': matrix[a:b].copy()}
+            eid = row['event_id']
+            rows[eid] = {'text_hash': row['text_hash'], 'windows': row['windows'],
+                         'kind': _infer_kind(eid, row), 'role': row.get('role', 'user'),
+                         'lifecycle': _infer_lifecycle(row), 'vectors': matrix[a:b].copy()}
         generation = metadata['index_generation']
         cache_state = 'loaded'
         del matrix, data, metadata
@@ -576,23 +635,41 @@ def main() -> None:
                     if record.get('text_hash', digest) != digest:
                         raise ValueError('source hash mismatch')
                     event_id = record['event_id']
+                    rec_kind = _infer_kind(event_id, record)
+                    rec_role = record.get('role', 'user')
+                    rec_life = _infer_lifecycle(record)
                     if event_id in rows and rows[event_id]['text_hash'] == digest:
+                        existing = rows[event_id]
+                        if (existing.get('kind') != rec_kind or existing.get('role') != rec_role
+                                or existing.get('lifecycle') != rec_life):
+                            existing['kind'] = rec_kind
+                            existing['role'] = rec_role
+                            existing['lifecycle'] = rec_life
+                            changed += 1
+                            changed_ids.append(event_id)
+                            if rec_kind in EXPERIENCE_KINDS:
+                                overwritten = True
                         continue
                     changed += 1
                     changed_ids.append(event_id)
-                    overwritten = overwritten or event_id in rows
+                    if event_id in rows and (_infer_kind(event_id, rows[event_id]) in EXPERIENCE_KINDS
+                                             or rec_kind in EXPERIENCE_KINDS):
+                        overwritten = True
                     if digest in vector_cache:
                         chunks, vectors = vector_cache[digest]
-                        rows[event_id] = {'text_hash': digest, 'windows': chunks, 'vectors': vectors.copy()}
+                        rows[event_id] = {'text_hash': digest, 'windows': chunks,
+                                          'kind': rec_kind, 'role': rec_role, 'lifecycle': rec_life,
+                                          'vectors': vectors.copy()}
                         continue
                     chunks = windows(text)
-                    pending.append((event_id, digest, chunks))
+                    pending.append((event_id, digest, chunks, rec_kind, rec_role, rec_life))
                 if pending:
-                    vectors = encode([c['text'] for _, _, w in pending for c in w])
+                    vectors = encode([c['text'] for _, _, w, _, _, _ in pending for c in w])
                     offset = 0
-                    for event, digest, chunks in pending:
+                    for event, digest, chunks, rec_kind, rec_role, rec_life in pending:
                         cleaned = [{k: v for k, v in c.items() if k != 'text'} for c in chunks]
                         rows[event] = {'text_hash': digest, 'windows': cleaned,
+                                       'kind': rec_kind, 'role': rec_role, 'lifecycle': rec_life,
                                        'vectors': vectors[offset:offset + len(chunks)].copy()}
                         offset += len(chunks)
                         vector_cache[digest] = (cleaned, rows[event]['vectors'])
@@ -626,6 +703,9 @@ def main() -> None:
                 offset = 0
                 for event, row in rows.items():
                     metadata.append(dict(event_id=event, text_hash=row['text_hash'],
+                                         kind=_infer_kind(event, row),
+                                         role=row.get('role', 'user'),
+                                         lifecycle=_infer_lifecycle(row),
                                          windows=row['windows'], offset=offset))
                     parts.append(row['vectors'])
                     offset += len(row['windows'])
@@ -673,8 +753,14 @@ def main() -> None:
                     score = np.max(q_query @ row['vectors'].T, axis=0)
                     best = int(np.argmax(score))
                     query_rows.append(dict(event_id=event, text_hash=row['text_hash'],
+                                           kind=_infer_kind(event, row),
                                            score=float(score[best]), **row['windows'][best]))
                 query_rows.sort(key=lambda r: -r['score'])
+                domain_counts = {}
+                for r_item in query_rows:
+                    rk = r_item['kind']
+                    domain_counts[rk] = domain_counts.get(rk, 0) + 1
+                    r_item['domain_rank'] = domain_counts[rk]
                 queries += 1
                 extra = {}
                 if enable_geometry:
