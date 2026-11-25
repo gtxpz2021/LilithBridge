@@ -111,6 +111,124 @@ _STRONG_BREAKS = frozenset("。！？!?；;")
 _SOFT_BREAKS = frozenset("，,、：:")
 _TRAILING_CLOSERS = frozenset("”’」』）】》\"'~～…")
 _QUOTE_OPENERS = {"“": "”", "‘": "’", "「": "」", "『": "』", '"': '"'}
+_TRAILING_SOFT_PUNCT_RE = re.compile(r"[，,、：:]+$")
+
+
+def normalize_clause_for_synthesis(text: str) -> str:
+    """Close trailing soft breaks ('，', '、', '：') with '。' strictly for TTS synthesis.
+
+    Prevents Qwen3-TTS 12Hz talker from treating mid-sentence bubble splits as unfinished
+    clauses and failing to emit <EOS>, while never mutating in-game display_text.
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    return _TRAILING_SOFT_PUNCT_RE.sub("。", s)
+
+
+def estimate_clause_max_tokens(text: str) -> int:
+    """Compute generous 12Hz codec token ceiling (~5.5 tokens/char + 30) so <EOS> misses cannot run away."""
+    s = (text or "").strip()
+    if not s:
+        return 42
+    ellipsis_bonus = (s.count("……") + s.count("...")) * 10
+    est = int(math.ceil(len(s) * 5.5 + 30 + ellipsis_bonus))
+    return max(42, min(360, est))
+
+
+class _WinJobGuard:
+    """Windows NT Job Object guard (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) for audiocpp_server.exe."""
+
+    def __init__(self) -> None:
+        self._handle: int = 0
+
+    def attach(self, proc: subprocess.Popen) -> bool:
+        if sys.platform != "win32" or proc is None:
+            return False
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+
+            class BASIC_LIMIT(ctypes.Structure):
+                _fields_ = [
+                    ("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", ctypes.c_uint32),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", ctypes.c_uint32),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", ctypes.c_uint32),
+                    ("SchedulingClass", ctypes.c_uint32),
+                ]
+
+            class IO_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("ReadOperationCount", ctypes.c_uint64),
+                    ("WriteOperationCount", ctypes.c_uint64),
+                    ("OtherOperationCount", ctypes.c_uint64),
+                    ("ReadTransferCount", ctypes.c_uint64),
+                    ("WriteTransferCount", ctypes.c_uint64),
+                    ("OtherTransferCount", ctypes.c_uint64),
+                ]
+
+            class EXTENDED_LIMIT(ctypes.Structure):
+                _fields_ = [
+                    ("BasicLimitInformation", BASIC_LIMIT),
+                    ("IoInfo", IO_COUNTERS),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
+                ]
+
+            kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+            kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+            kernel32.SetInformationJobObject.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+            ]
+            kernel32.SetInformationJobObject.restype = ctypes.c_int
+            kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            kernel32.CloseHandle.restype = ctypes.c_int
+
+            job = kernel32.CreateJobObjectW(None, None)
+            if not job:
+                return False
+
+            info = EXTENDED_LIMIT()
+            # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x2000) | JOB_OBJECT_LIMIT_BREAKAWAY_OK (0x0800)
+            info.BasicLimitInformation.LimitFlags = 0x2800
+            if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                kernel32.CloseHandle(job)
+                return False
+
+            proc_handle = int(getattr(proc, "_handle", 0) or 0)
+            if not proc_handle or not kernel32.AssignProcessToJobObject(job, ctypes.c_void_p(proc_handle)):
+                kernel32.CloseHandle(job)
+                return False
+
+            self.close()
+            self._handle = int(job)
+            return True
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        h = self._handle
+        self._handle = 0
+        if h and sys.platform == "win32":
+            try:
+                import ctypes
+
+                ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
+            except Exception:
+                pass
 
 _EMOTION_TO_MOOD: Dict[str, str] = {
     "playful": "playful_teasing",
@@ -809,6 +927,7 @@ class AudioCppServerManager:
 
         self._port = 0
         self._proc: Optional[subprocess.Popen] = None
+        self._job_guard = _WinJobGuard()
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._log_path: Optional[Path] = None
         self._http_lock = threading.Lock()
@@ -884,6 +1003,7 @@ class AudioCppServerManager:
             stderr=subprocess.DEVNULL,
             creationflags=creation_flags,
         )
+        self._job_guard.attach(self._proc)
 
         health_url = f"http://127.0.0.1:{self._port}/health"
         deadline = time.monotonic() + startup_timeout_s
@@ -938,6 +1058,17 @@ class AudioCppServerManager:
         except Exception:
             return 0
 
+    def _recover_wedged_server(self) -> None:
+        """Terminate a wedged/crashed audiocpp_server and respawn cleanly so subsequent turns keep working."""
+        try:
+            self.stop()
+        except Exception:
+            pass
+        try:
+            self.start(startup_timeout_s=45.0)
+        except Exception:
+            pass
+
     def synthesize_24k(
         self,
         text: str,
@@ -948,26 +1079,30 @@ class AudioCppServerManager:
         timeout_s: float = 45.0,
     ) -> Tuple[np.ndarray, int, float]:
         if not self.is_running:
-            raise RuntimeError("audiocpp_server_not_running")
+            self._recover_wedged_server()
+            if not self.is_running:
+                raise RuntimeError("audiocpp_server_not_running")
+
+        synth_text = normalize_clause_for_synthesis(text) or text
+        eff_max_tokens = int(max_tokens) if (max_tokens is not None and max_tokens > 0) else estimate_clause_max_tokens(synth_text)
 
         options: Dict[str, Any] = {
-            "language": resolve_clause_language(text, self._language),
+            "language": resolve_clause_language(synth_text, self._language),
             "temperature": self._temperature,
             "top_p": self._top_p,
             "top_k": self._top_k,
             "repetition_penalty": self._repetition_penalty,
             "subtalker_do_sample": self._sub_do_sample,
+            "max_tokens": eff_max_tokens,
         }
         if self._sub_do_sample:
             options["subtalker_temperature"] = self._sub_temp
             options["subtalker_top_p"] = self._sub_top_p
             options["subtalker_top_k"] = self._sub_top_k
-        if max_tokens is not None and max_tokens > 0:
-            options["max_tokens"] = int(max_tokens)
 
         payload: Dict[str, Any] = {
             "model": MODEL_ID,
-            "input": text,
+            "input": synth_text,
             "response_format": "wav",
             "voice_ref": ref_wav,
             "reference_text": ref_text,
@@ -975,6 +1110,11 @@ class AudioCppServerManager:
         }
         if seed is not None:
             payload["seed"] = int(seed)
+
+        if self._resolved_backend == "cpu":
+            eff_timeout = min(float(timeout_s), max(18.0, eff_max_tokens * 0.25 + 12.0))
+        else:
+            eff_timeout = min(float(timeout_s), max(12.0, eff_max_tokens * 0.12 + 8.0))
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
@@ -985,8 +1125,14 @@ class AudioCppServerManager:
         )
         t0 = time.perf_counter()
         with self._http_lock:
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                wav_bytes = resp.read()
+            try:
+                with urllib.request.urlopen(req, timeout=eff_timeout) as resp:
+                    wav_bytes = resp.read()
+            except urllib.error.HTTPError:
+                raise
+            except (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionError, OSError):
+                self._recover_wedged_server()
+                raise
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         audio, sr = decode_wav_bytes_mono_f32(wav_bytes)
         return audio, sr, elapsed_ms
@@ -1005,6 +1151,7 @@ class AudioCppServerManager:
                         proc.wait(timeout=2.0)
             except Exception:
                 pass
+        self._job_guard.close()
         td = self._temp_dir
         self._temp_dir = None
         if td is not None:

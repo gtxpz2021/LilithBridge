@@ -48,6 +48,7 @@ internal sealed class SpeechToTextWorker : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private TaskCompletionSource<SttWorkerEvent> _handshake = NewHandshake();
     private Process? _process;
+    private ChildProcessJobObject? _jobObject;
     private int _restartUsed;
     private volatile bool _ready;
     private volatile bool _disposed;
@@ -179,6 +180,7 @@ internal sealed class SpeechToTextWorker : IDisposable
 
             _lifetime.Token.ThrowIfCancellationRequested();
             _process = Process.Start(info) ?? throw new IOException("STT worker could not start");
+            _jobObject = ChildProcessJobObject.TryAttach(_process);
             if (_disposed)
             {
                 StopOwnedProcess();
@@ -404,17 +406,16 @@ internal sealed class SpeechToTextWorker : IDisposable
     private void StopOwnedProcess()
     {
         Process? p = Interlocked.Exchange(ref _process, null);
-        if (p == null)
-            return;
+        ChildProcessJobObject? job = Interlocked.Exchange(ref _jobObject, null);
         try
         {
-            if (!p.HasExited)
+            if (p != null && !p.HasExited)
             {
                 try
                 {
                     p.StandardInput.WriteLine("{\"op\":\"shutdown\",\"request_id\":\"dispose\"}");
                     p.StandardInput.Flush();
-                    p.WaitForExit(400);
+                    p.WaitForExit(600);
                 }
                 catch
                 {
@@ -428,7 +429,8 @@ internal sealed class SpeechToTextWorker : IDisposable
         }
         finally
         {
-            try { p.Dispose(); } catch { }
+            try { job?.Dispose(); } catch { }
+            try { p?.Dispose(); } catch { }
         }
     }
 

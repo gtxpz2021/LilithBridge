@@ -19,10 +19,12 @@ internal sealed partial class BridgeController
     private bool _ttsCreationAttempted;
     private string _ttsHeldBubbleKey = "";
     private float _ttsHeldBubbleStartedAt;
+    private float _ttsSilentHoldStartedAt = -1f;
     private float _ttsAudioFinishedAt = -1f;
     private float _ttsLastAdvanceAttemptAt = -1f;
     private bool _ttsAdvancedForBubble;
     private const float MaxNativeBubbleHoldSeconds = 22.0f;
+    private const float MaxSilentBubbleHoldSeconds = 3.2f;
     private const float TtsInterBubbleBreathSeconds = 0.30f;
     private const float TtsFinalBubbleTailSeconds = 1.80f;
     private const float MaxNextBubbleAudioWaitSeconds = 3.0f;
@@ -215,6 +217,7 @@ internal sealed partial class BridgeController
         {
             _ttsHeldBubbleKey = bubbleKey;
             _ttsHeldBubbleStartedAt = now;
+            _ttsSilentHoldStartedAt = -1f;
             _ttsAudioFinishedAt = -1f;
             _ttsLastAdvanceAttemptAt = -1f;
             _ttsAdvancedForBubble = false;
@@ -228,7 +231,10 @@ internal sealed partial class BridgeController
             return false;
 
         if (awaitingAppearance)
+        {
+            _ttsSilentHoldStartedAt = -1f;
             return true;
+        }
 
         bool audioBusy = _ttsCoordinator.ShouldHoldAfterBubble(
             replyKey,
@@ -237,7 +243,24 @@ internal sealed partial class BridgeController
             _ttsPlayer.PlayingUtteranceId,
             _ttsPlayer.PlayingBubbleIndex);
         if (audioBusy)
+        {
+            bool activelyVoiced = _ttsPlayer.IsPlaying
+                || _ttsCoordinator.HasPlayableChunkForBubble(replyKey, bubbleIndex);
+            if (activelyVoiced)
+            {
+                _ttsSilentHoldStartedAt = -1f;
+                return true;
+            }
+            if (_ttsSilentHoldStartedAt < 0f)
+                _ttsSilentHoldStartedAt = now;
+            if (now - _ttsSilentHoldStartedAt >= MaxSilentBubbleHoldSeconds)
+            {
+                CancelTtsSpeech("tts_bubble_stall_timeout");
+                return false;
+            }
             return true;
+        }
+        _ttsSilentHoldStartedAt = -1f;
 
         // Audio finished: keep holding briefly during the crisp breath / final reading tail
         // until SyncNativeBubbleDismissForTts cleanly calls AdvanceDialogue().
@@ -256,6 +279,7 @@ internal sealed partial class BridgeController
                 out bool awaitingAppearance))
         {
             _ttsHeldBubbleKey = "";
+            _ttsSilentHoldStartedAt = -1f;
             _ttsAudioFinishedAt = -1f;
             _ttsLastAdvanceAttemptAt = -1f;
             _ttsAdvancedForBubble = false;
@@ -268,6 +292,7 @@ internal sealed partial class BridgeController
         {
             _ttsHeldBubbleKey = bubbleKey;
             _ttsHeldBubbleStartedAt = now;
+            _ttsSilentHoldStartedAt = -1f;
             _ttsAudioFinishedAt = -1f;
             _ttsLastAdvanceAttemptAt = -1f;
             _ttsAdvancedForBubble = false;
@@ -279,6 +304,30 @@ internal sealed partial class BridgeController
             _ttsPlayer.IsPlaying,
             _ttsPlayer.PlayingUtteranceId,
             _ttsPlayer.PlayingBubbleIndex);
+
+        if (audioBusy && !awaitingAppearance)
+        {
+            bool activelyVoiced = _ttsPlayer.IsPlaying
+                || _ttsCoordinator.HasPlayableChunkForBubble(replyKey, bubbleIndex);
+            if (activelyVoiced)
+            {
+                _ttsSilentHoldStartedAt = -1f;
+            }
+            else
+            {
+                if (_ttsSilentHoldStartedAt < 0f)
+                    _ttsSilentHoldStartedAt = now;
+                if (now - _ttsSilentHoldStartedAt >= MaxSilentBubbleHoldSeconds)
+                {
+                    CancelTtsSpeech("tts_bubble_stall_timeout");
+                    audioBusy = false;
+                }
+            }
+        }
+        else if (awaitingAppearance)
+        {
+            _ttsSilentHoldStartedAt = -1f;
+        }
 
         if (audioBusy || awaitingAppearance)
         {

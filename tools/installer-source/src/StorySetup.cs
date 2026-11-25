@@ -22,9 +22,9 @@ namespace LilithSetup {
   public static string Result(Snapshot snapshot,EditRequest edit){if(!edit.ConfigureStory)return "未选择向导配置随包语料，已有作品资料设置保持。";if(!Applies(snapshot,edit))return "随包文件已核对；已有作品资料选源/开关/许可保持，未按默认选项切换。";return "作品资料路径已配置，本地库已启用并按需读取；无需再手填路径或选库。"+(edit.AllowStoryModelData?"本次仅明确启用作品资料域的模型使用许可；其他总许可与登录不改。":"本次不新增模型使用许可；原作品资料许可保持。")+"ChatGPT由本人游戏内登录，随后点顶部“推荐使用设置”一次知情选择；仅登录不会授权资料发送。旧后台关闭项可用其中“明确开启普通记忆提取与反思工作”；提示需正常重进时照提示操作。";}
  }
  public static class BuildInfo {
-  public const string Build = "0.1.4.24-v0.4.1.release.1";
-  public const string ProductHash = "2a2a26e41bba3776384c710cfc68b6a4685133935912cb37bda17356c3f0f0b4";
-  public const string Caption = "LilithBridge · v0.4.1 (2a2a26e4) · 安装器 .24";
+  public const string Build = "0.1.4.25-v0.4.1.release.2";
+  public const string ProductHash = "310561f95e5b7fdb916e03db90157635214253fd148816d5db7e9b41b1a817ea";
+  public const string Caption = "LilithBridge · v0.4.1 (310561f9) · 一键安装器 .25";
   public static string Feedback(CopyContext context){return "\r\n包构建："+Build+"；包内DLL："+ProductHash+"\r\n本次目标DLL："+context.PluginHash+"\r\n已有日志："+Path.Combine(context.GameRoot,"BepInEx/LogOutput.log")+"；"+Path.Combine(context.DataRoot,"telemetry/v4-native-events.jsonl")+"。反馈请附构建身份、发生时间和最短复现步骤；日志由本人选择，不自动上传，勿公开密钥/认证或整个资料目录。";}
  }
 }

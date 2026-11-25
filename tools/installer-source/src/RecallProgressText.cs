@@ -19,6 +19,10 @@ namespace LilithSetup
                 case "WORKER_CHECK": return "正在启动本地召回验证进程";
                 case "MODEL_LOAD": return "正在核验模型、导入运行库并验证临时合成检索（离线）";
                 case "CHECK_RESULT": return "正在核对检索结果和向量文件";
+                case "VOICE_ENV_CREATE": return "正在创建隔离语音Python环境";
+                case "VOICE_PIP_INSTALL": return "正在安装本地语音运行依赖（ONNX / SenseVoice / WASAPI）";
+                case "VOICE_RUNTIME_IMPORTS": return "正在核验语音推理依赖与硬件加速提供程序";
+                case "VOICE_WORKER_CHECK": return "正在验证本地 TTS 与 STT 语音守护进程握手";
                 default: return null;
             }
         }

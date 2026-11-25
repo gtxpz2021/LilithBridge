@@ -81,6 +81,12 @@ namespace LilithSetup
             var semantic = Map(doc, "semantic_recall", false);
             Strings(semantic, "python_path", "worker_script", "model_path", "index_directory");
             if (semantic != null && semantic.ContainsKey("enabled") && !(semantic["enabled"] is bool)) throw new SetupException("LBSETUP_CONFIG_BAD_TYPE");
+            var tts = Map(doc, "tts", false);
+            Strings(tts, "python_path", "worker_script", "server_exe", "model_path", "lora_path", "refs_manifest", "bwe_model_path", "bwe_device", "backend", "language");
+            if (tts != null && tts.ContainsKey("enabled") && !(tts["enabled"] is bool)) throw new SetupException("LBSETUP_CONFIG_BAD_TYPE");
+            var stt = Map(doc, "stt", false);
+            Strings(stt, "python_path", "worker_script", "model_path", "vad_model_path", "hotkey", "language");
+            if (stt != null && stt.ContainsKey("enabled") && !(stt["enabled"] is bool)) throw new SetupException("LBSETUP_CONFIG_BAD_TYPE");
         }
         public static Dictionary<string, object> EffectiveProvider(Dictionary<string, object> doc)
         {
@@ -167,6 +173,12 @@ namespace LilithSetup
         public bool Exists; public string Digest; public Dictionary<string, object> Document;
     }
     public enum RecallAction { Preserve, Disable, Enable }
+    public sealed class VoiceInstallPatch
+    {
+        public bool Enable = true;
+        public string PythonPath = "";
+        public string TtsModelRelative = "tts-runtime/models/qwen3-tts-12hz-1.7b-lilith-e6-s07-q8_0.gguf";
+    }
     public sealed class EditRequest
     {
         public string ApiKey = "", BaseUrl = "", ModelName = "", ModelOverride = "", PythonOverride = "", WorkerOverride = "";
@@ -174,6 +186,7 @@ namespace LilithSetup
         public string StoryFile = "";
         public RecallAction Recall = RecallAction.Preserve;
         public LocalCheck CheckedLocal;
+        public VoiceInstallPatch Voice;
     }
     public sealed class LocalCheck
     {
@@ -188,7 +201,7 @@ namespace LilithSetup
 
     public static class SetupCore
     {
-        public const string PluginCandidate = "47a9493ae11e34afa8b3b1bb4028308bfa00b029052b00ad1631984f88b9ee44";
+        public const string PluginCandidate = "310561f95e5b7fdb916e03db90157635214253fd148816d5db7e9b41b1a817ea";
         public const string Plugin062 = "0b3d10b4dcea1d35365afb06e77bd2184592c26efa7a4114530ea77a417df353";
         public const string Plugin061 = "1df82a2620b2a62af17458d087c090660c8af690a0e2ae37f0eba2c86301a0f0";
         public const string ModelRevision = "7999e1d3359715c523056ef9478215996d62a620";
@@ -323,6 +336,32 @@ namespace LilithSetup
                     foreach (var pair in new[] { new[] { "python_path", DefaultPython }, new[] { "worker_script", DefaultWorker }, new[] { "model_path", DefaultModel }, new[] { "index_directory", DefaultIndex } })
                         if (!semantic.ContainsKey(pair[0]) || String.IsNullOrWhiteSpace((string)semantic[pair[0]])) semantic[pair[0]] = pair[1];
                 }
+            }
+            if (edit.Voice != null)
+            {
+                var tts = DataJson.Map(doc, "tts", true);
+                tts["enabled"] = edit.Voice.Enable;
+                if (!String.IsNullOrWhiteSpace(edit.Voice.PythonPath)) tts["python_path"] = edit.Voice.PythonPath;
+                tts["worker_script"] = "tts-runtime/tts_worker.py";
+                tts["server_exe"] = "tts-runtime/bin/audiocpp_server.exe";
+                if (!String.IsNullOrWhiteSpace(edit.Voice.TtsModelRelative)) tts["model_path"] = edit.Voice.TtsModelRelative;
+                if (!tts.ContainsKey("lora_path")) tts["lora_path"] = "";
+                tts["refs_manifest"] = "tts-runtime/refs/refs_manifest.json";
+                if (!tts.ContainsKey("bwe_48k")) tts["bwe_48k"] = true;
+                tts["bwe_model_path"] = "tts-runtime/models/flashsr_onnx/model.onnx";
+                if (!tts.ContainsKey("sync_bubble_pacing")) tts["sync_bubble_pacing"] = true;
+                if (!tts.ContainsKey("single_voice_anchor")) tts["single_voice_anchor"] = true;
+
+                var stt = DataJson.Map(doc, "stt", true);
+                stt["enabled"] = edit.Voice.Enable;
+                if (!String.IsNullOrWhiteSpace(edit.Voice.PythonPath)) stt["python_path"] = edit.Voice.PythonPath;
+                stt["worker_script"] = "stt-runtime/stt_worker.py";
+                stt["model_path"] = "stt-runtime/models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17";
+                stt["vad_model_path"] = "stt-runtime/models/silero_vad.onnx";
+                if (!stt.ContainsKey("hotkey")) stt["hotkey"] = "F8";
+                if (!stt.ContainsKey("language")) stt["language"] = "zh";
+                if (!stt.ContainsKey("use_itn")) stt["use_itn"] = true;
+                if (!stt.ContainsKey("builtin_lexicon")) stt["builtin_lexicon"] = true;
             }
             StorySetup.Apply(doc, snapshot, edit); return doc;
         }

@@ -134,6 +134,50 @@ class ProsodyDirectorTests(unittest.TestCase):
         # Explicit configured language always wins
         self.assertEqual(tts_worker.resolve_clause_language("Maybe so.", "zh"), "zh")
 
+    def test_clause_synthesis_closure_and_max_tokens_prevent_eos_runaway(self) -> None:
+        # Exact live runaway trigger from 2026-11-25 17:42:19: trailing comma at bubble split
+        raw_split = "听着挺稳当，不过、细节、这两个字最容易把人吞进去，"
+        self.assertEqual(
+            tts_worker.normalize_clause_for_synthesis(raw_split),
+            "听着挺稳当，不过、细节、这两个字最容易把人吞进去。",
+        )
+        # Terminal strong punctuation, tilde, and ellipsis remain untouched
+        for keep in ("早安呀~", "真的吗？", "念、莉莉丝，计一次；", "……嗯……"):
+            self.assertEqual(tts_worker.normalize_clause_for_synthesis(keep), keep)
+
+        # Dynamic 12Hz max_tokens ceiling stays bounded so <EOS> miss can never run for minutes
+        short_toks = tts_worker.estimate_clause_max_tokens("嗯。")
+        mid_toks = tts_worker.estimate_clause_max_tokens(raw_split)
+        long_toks = tts_worker.estimate_clause_max_tokens("这是一句三十六个字左右的正常测试台词，用来验证最大帧数上限绝对不会失控。")
+        self.assertGreaterEqual(short_toks, 42)
+        self.assertLessEqual(short_toks, 60)
+        self.assertGreaterEqual(mid_toks, 140)
+        self.assertLessEqual(mid_toks, 200)
+        self.assertLessEqual(long_toks, 260)
+
+    def test_win_job_guard_attaches_and_reaps_child_on_close(self) -> None:
+        if sys.platform != "win32":
+            return
+        guard = tts_worker._WinJobGuard()
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            self.assertTrue(guard.attach(child))
+            self.assertIsNone(child.poll())
+            # Closing the job handle triggers JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE immediately
+            guard.close()
+            rc = child.wait(timeout=3.0)
+            self.assertIsNotNone(rc)
+        finally:
+            guard.close()
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=2.0)
+
 
 class FlashSrBweTests(unittest.TestCase):
     def test_pcm16_conversion_fades_and_never_clips(self) -> None:

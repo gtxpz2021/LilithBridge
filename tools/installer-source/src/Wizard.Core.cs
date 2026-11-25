@@ -15,7 +15,7 @@ namespace LilithSetup
         public string ApiKey = "", BaseUrl = ProviderPresets.DeepSeekUrl, ApiModel = ProviderPresets.DefaultModel;
         public bool KeepService = true;
         public bool ConfigureBundledStory, SwitchExistingStory, AllowStoryModelData;
-        public bool Plugin = true, Loader = true, Runtime, Model, Configure = true, EnableRecall, Network = true, DownloadPlugin, Confirm, ProviderEdited;
+        public bool Plugin = true, Loader = true, Runtime = true, Model = true, Configure = true, EnableRecall = true, VoicePack, Network = true, DownloadPlugin, Confirm = true, ProviderEdited;
         public ReleaseUpdate Update;
         internal string RuntimeStorageRoot = "";
         internal bool FromHandoff, LostHandoffDraft;
@@ -27,7 +27,7 @@ namespace LilithSetup
     }
     public sealed class WizardResult
     {
-        public string State, Message, DataRoot, HandoffPlanPath; public bool PluginInstalled, ConfigurationSaved, RecallVerified;
+        public string State, Message, DataRoot, HandoffPlanPath; public bool PluginInstalled, ConfigurationSaved, RecallVerified, VoiceVerified;
     }
     public sealed class ReleaseUpdate
     {
@@ -113,6 +113,7 @@ namespace LilithSetup
             SetupCore.Require(!options.Plugin || !options.DownloadPlugin || options.Update != null, "LBWIZ_CHECK_UPDATE_FIRST");
             SetupCore.Require(!options.ConfigureBundledStory || options.Configure, "LBWIZ_STORY_REQUIRES_CONFIG_SELECTION");
             SetupCore.Require(!options.EnableRecall || (options.Runtime && options.Model && options.Configure), "LBWIZ_RECALL_REQUIRES_COMPONENTS_AND_CONFIG");
+            SetupCore.Require(!options.VoicePack || options.Configure, "LBWIZ_VOICE_REQUIRES_CONFIG_SELECTION");
             var result = new WizardResult(); string game = SetupCore.SafePath(options.GameRoot, null), package = SetupCore.SafePath(options.PackageRoot, null), cache = SetupCore.SafePath(options.CacheRoot, null);
             SetupCore.NoReparse(game); SetupCore.NoReparse(package); SetupCore.NoReparse(cache);
             string manifestRoot = package;
@@ -187,6 +188,18 @@ namespace LilithSetup
                 }
                 catch (SetupException) { }
             }
+            if (!options.VoicePack && snapshot.Exists)
+            {
+                try
+                {
+                    if (VoicePackProvisioning.UpgradeKnownVoiceWorkersInPlace(package, context.DataRoot))
+                    {
+                        Say(report, "plugin", "done", "插件与既有本地语音脚本已同步更新；配置与记忆保持原位", 37);
+                        snapshot = SetupCore.ReadSnapshot(context.ConfigPath);
+                    }
+                }
+                catch (SetupException) { }
+            }
             string components = "", python = "", worker = "", model = ""; var validator = new ModelValidator(Path.Combine(package, "model-manifest.json"));
             LocalCheck existingPaths = new LocalCheck(); bool existingRuntime = false, existingRuntimeNeedsWorkerUpgrade = false, existingModel = false;
             if (options.Runtime || options.Model)
@@ -238,6 +251,16 @@ namespace LilithSetup
                 else { if (components.Length == 0) components = WizardProvisioning.PrivateBase(context.DataRoot); model = WizardProvisioning.InstallModel(package, components, cache, options.OfflineRoot, options.Network, transfer, cancel); }
                 Say(report, "model", "done", "BGE 模型文件核验通过", 80); Receipt(context.DataRoot, "model", "verified");
             }
+            VoiceInstallPatch voicePatch = null;
+            if (options.VoicePack)
+            {
+                Say(report, "voice", "working", "准备莉莉丝本地语音包（TTS 语音播报 + F8 语音输入）", 81);
+                string voiceBase = WizardProvisioning.ManagedRuntimeBase(context.DataRoot, options.RuntimeStorageRoot);
+                voicePatch = VoicePackProvisioning.Install(package, context.DataRoot, voiceBase, cache, options.OfflineRoot, options.Network, snapshot, transfer, text => Say(report, "voice", "working", text, 83), cancel);
+                result.VoiceVerified = true;
+                Say(report, "voice", "done", "本地语音包（TTS + STT）核验通过", 84);
+                Receipt(context.DataRoot, "voice", "verified");
+            }
             LocalCheck checkedLocal = null;
             if (options.Runtime && options.Model)
             {
@@ -247,12 +270,16 @@ namespace LilithSetup
                 Say(report, "verify", "working", "正在核对本地文件与配置版本，尚未提交配置", 90);
                 checkedLocal = SetupCore.CheckLocal(context, snapshot, model, validator, python, worker); result.RecallVerified = true; Say(report, "verify", "done", "本地模型已通过离线合成召回检查", 92);
             }
+            else if (options.VoicePack)
+            {
+                Say(report, "verify", "done", "语音包组件已通过离线完整性与进程握手检查", 92);
+            }
             cancel.ThrowIfCancellationRequested();
             if (options.Configure)
             {
                 Say(report, "config", "working", "核对最终设置并一次保存", 95);
                 cancel.ThrowIfCancellationRequested();
-                var edit = new EditRequest { ConfirmCopy = true, SelectDeepSeek = !options.KeepService, ApiKey = options.KeepService ? "" : options.ApiKey, Recall = RecallAction.Preserve, ConfigureStory = options.ConfigureBundledStory, SwitchExistingStory = options.SwitchExistingStory, AllowStoryModelData = options.AllowStoryModelData, StoryFile = Path.Combine(context.DataRoot,"private-story/first-game.collection.jsonl") };
+                var edit = new EditRequest { ConfirmCopy = true, SelectDeepSeek = !options.KeepService, ApiKey = options.KeepService ? "" : options.ApiKey, Recall = RecallAction.Preserve, ConfigureStory = options.ConfigureBundledStory, SwitchExistingStory = options.SwitchExistingStory, AllowStoryModelData = options.AllowStoryModelData, StoryFile = Path.Combine(context.DataRoot,"private-story/first-game.collection.jsonl"), Voice = voicePatch };
                 var currentSemantic = DataJson.Map(snapshot.Document, "semantic_recall", false); bool alreadyEnabled = DataJson.Get(currentSemantic, "enabled") is bool && (bool)DataJson.Get(currentSemantic, "enabled");
                 if (!options.KeepService && (!snapshot.Exists || options.ProviderEdited)) SetupCore.ApplyChangedProviderText(edit, snapshot, options.BaseUrl, options.ApiModel);
                 bool pathsChanged = (python.Length != 0 && !SetupCore.Same(python, existingPaths.Python)) || (worker.Length != 0 && !SetupCore.Same(worker, existingPaths.Worker)) || (model.Length != 0 && !SetupCore.Same(model, existingPaths.Model));
@@ -263,14 +290,15 @@ namespace LilithSetup
                 }
                 else if (options.EnableRecall) { edit.Recall = RecallAction.Enable; edit.CheckedLocal = checkedLocal; }
                 // No write for an unchanged existing configuration, preserving bytes and backups.
-                if (StorySetup.WouldChange(snapshot, edit) || (!snapshot.Exists && !options.KeepService) || (!options.KeepService && (options.ProviderEdited || options.ApiKey.Length != 0 || DataJson.String(snapshot.Document, "llm_provider", "deepseek") != "deepseek")) || pathsChanged || (options.EnableRecall && !alreadyEnabled))
+                if (StorySetup.WouldChange(snapshot, edit) || VoicePackProvisioning.WouldChange(snapshot, voicePatch) || (!snapshot.Exists && !options.KeepService) || (!options.KeepService && (options.ProviderEdited || options.ApiKey.Length != 0 || DataJson.String(snapshot.Document, "llm_provider", "deepseek") != "deepseek")) || pathsChanged || (options.EnableRecall && !alreadyEnabled))
                 { var saved = SetupCore.SaveWithCommitBoundary(context, snapshot, edit, validator, () => { Say(report, "config", "committing", "正在提交最终配置，此短步骤完成前不能取消", 98); cancel.ThrowIfCancellationRequested(); }); SetupCore.Require(saved.Committed && saved.ReadbackVerified, "LBWIZ_CONFIG_READBACK_NEEDS_REVIEW"); result.ConfigurationSaved = true; }
                 else result.ConfigurationSaved = true;
                 Say(report, "config", "done", "配置已保存；保存不会调用对话 API", 100); Receipt(context.DataRoot, "complete", "verified");
             }
             result.State = "Complete";
             var effective = DataJson.EffectiveProvider(SetupCore.ReadSnapshot(context.ConfigPath).Document); bool hasKey = !String.IsNullOrWhiteSpace(DataJson.String(effective, "api_key", ""));
-            result.Message = LoginGuidance.Completion(options.KeepService, hasKey) + "\r\n" + StorySetup.Result(snapshot, new EditRequest{ConfigureStory=options.ConfigureBundledStory,SwitchExistingStory=options.SwitchExistingStory,AllowStoryModelData=options.AllowStoryModelData,StoryFile=Path.Combine(context.DataRoot,"private-story/first-game.collection.jsonl")}) + BuildInfo.Feedback(context) + "游戏内效果仍需实际启动确认。"; return result;
+            string voiceDone = result.VoiceVerified ? "\r\n本地语音包（莉莉丝 TTS 语音播报 + F8 按住说话）已启用并配置就绪。" : "";
+            result.Message = LoginGuidance.Completion(options.KeepService, hasKey) + voiceDone + "\r\n" + StorySetup.Result(snapshot, new EditRequest{ConfigureStory=options.ConfigureBundledStory,SwitchExistingStory=options.SwitchExistingStory,AllowStoryModelData=options.AllowStoryModelData,StoryFile=Path.Combine(context.DataRoot,"private-story/first-game.collection.jsonl")}) + BuildInfo.Feedback(context) + "游戏内效果仍需实际启动确认。"; return result;
         }
         public static string Explain(Exception error)
         {
@@ -289,7 +317,12 @@ namespace LilithSetup
             if (code == "LBWIZ_RESOURCE_ARCHIVE_SPACE") return "自动解压资源的位置空间不足。请把完整小安装包和资源ZIP放在有足够空间的可写目录后继续。";
             if (code == "LBWIZ_RESOURCE_ARCHIVE_CACHE_CHANGED") return "资源缓存目标发生变化或被占用，原文件保留。请核对后重试。";
             if (code == "LBWIZ_OFFLINE_PACKAGE_INCOMPLETE") return "离线包缺少所选组件的文件。请补齐离线包，或勾选允许从国内镜像或官方来源下载后继续。";
-            if (code == "LBWIZ_NOT_ENOUGH_FREE_SPACE") return "可用空间不足。勾选本地召回时建议预留至少 8 GiB；释放空间后可重新检查。";
+            if (code == "LBWIZ_NOT_ENOUGH_FREE_SPACE") return "可用空间不足。勾选本地召回建议预留 8 GiB，勾选语音包建议额外预留 4 GiB；释放空间后可重新检查。";
+            if (code == "LBWIZ_VOICEPACK_NOT_FOUND") return "尚未找到莉莉丝语音包文件。请把 LilithBridge-VoicePack 分卷（.zip.001/.002…）或语音包 ZIP 放在安装程序同一目录，或点“选语音包…”指定位置。";
+            if (code == "LBWIZ_VOICEPACK_PART_MISSING") return "语音包分卷不完整（例如缺少 .zip.002 等后续分卷）。请把全部分卷下载到同一文件夹后重试。";
+            if (code == "LBWIZ_VOICEPACK_HASH_MISMATCH" || code == "LBWIZ_VOICEPACK_MANIFEST_INVALID") return "语音包文件未通过完整性校验，损坏文件未写入游戏目录。请重新核对语音包分卷完整性后重试。";
+            if (code == "LBWIZ_VOICE_RUNTIME_FAILED") return "本地语音 Python 环境准备未完成，原有配置未改动。请检查网络或确认使用包含离线依赖的完整懒人语音包后重试。";
+            if (code == "LBWIZ_VOICE_REQUIRES_CONFIG_SELECTION") return "启用语音包需要同时勾选“保存所选配置”，以便自动写入语音路径与开关。";
             if (code == "LBWIZ_DOWNLOAD_INTEGRITY_FAILED") return "下载未通过完整性校验，损坏文件已隔离。可重新开始下载，或选择完整离线包。";
             if (code == "LBWIZ_CHECK_UPDATE_FIRST") return "请先点“检查项目更新”取得明确版本，或保留“安装包内的已核验版本”。不会自动改装旧版插件。";
             if (code == "LBWIZ_SELECT_COMPONENT_FIRST") return "请至少选择一个需要准备或保存的组件。";

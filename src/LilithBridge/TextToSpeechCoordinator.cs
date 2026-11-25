@@ -250,8 +250,24 @@ internal sealed class TextToSpeechCoordinator
 
         lock (_gate)
         {
-            if (string.IsNullOrEmpty(_activeUtteranceId)
-                || !string.Equals(ev.UtteranceId, _activeUtteranceId, StringComparison.Ordinal))
+            if (string.IsNullOrEmpty(_activeUtteranceId))
+                return false;
+
+            if (string.Equals(ev.Kind, "error", StringComparison.Ordinal)
+                || string.Equals(ev.Kind, "worker_exited", StringComparison.Ordinal))
+            {
+                if (!string.IsNullOrEmpty(ev.UtteranceId)
+                    && !string.Equals(ev.UtteranceId, _activeUtteranceId, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+                _workerFinishedActive = true;
+                if (_playbackQueue.Count == 0)
+                    _activeUtteranceId = "";
+                return true;
+            }
+
+            if (!string.Equals(ev.UtteranceId, _activeUtteranceId, StringComparison.Ordinal))
                 return false;
 
             if (string.Equals(ev.Kind, "audio_chunk", StringComparison.Ordinal))
@@ -278,8 +294,7 @@ internal sealed class TextToSpeechCoordinator
                 return true;
             }
 
-            if (string.Equals(ev.Kind, "utterance_done", StringComparison.Ordinal)
-                || string.Equals(ev.Kind, "error", StringComparison.Ordinal))
+            if (string.Equals(ev.Kind, "utterance_done", StringComparison.Ordinal))
             {
                 _workerFinishedActive = true;
                 if (_playbackQueue.Count == 0 && ev.Skipped)
@@ -287,6 +302,26 @@ internal sealed class TextToSpeechCoordinator
                 return true;
             }
 
+            return false;
+        }
+    }
+
+    internal bool HasPlayableChunkForBubble(string replyKey, int bubbleIndex)
+    {
+        if (string.IsNullOrEmpty(replyKey) || bubbleIndex < 0)
+            return false;
+        lock (_gate)
+        {
+            if (_activeUtteranceId.Length == 0 || !string.Equals(_activeReplyKey, replyKey, StringComparison.Ordinal))
+                return false;
+            foreach (TtsAudioChunk item in _playbackQueue)
+            {
+                if (string.Equals(item.UtteranceId, _activeUtteranceId, StringComparison.Ordinal)
+                    && (item.BubbleIndex < 0 || item.BubbleIndex <= bubbleIndex))
+                {
+                    return true;
+                }
+            }
             return false;
         }
     }
