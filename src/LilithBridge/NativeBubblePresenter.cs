@@ -21,6 +21,33 @@ internal static partial class NativeBubblePresenter
     private static bool _retrying;
     private static float _retryUntil;
     private static float _editingPausedAt = -1f;
+    private static float _ttsHoldStartedAt = -1f;
+    private static bool _awaitingFirstTtsAudio;
+    private static float _ttsPreShowUntil;
+    private static string _ttsTrackedReplyKey = "";
+    private static int _ttsTrackedBubbleIndex = -1;
+    private static bool _ttsTrackedHasMoreChunks;
+    private static bool _ttsTrackedAwaitingAppearance;
+    private const float MaxTtsBubbleHoldSeconds = 12.0f;
+    private const float MaxTtsFirstBubbleWaitSeconds = 5.5f;
+    private const float TtsSyncedInterBubblePauseSeconds = 0.12f;
+
+    internal static bool TryGetActiveBubbleForTts(out string replyKey, out int bubbleIndex, out bool hasMoreChunks, out bool awaitingAppearance)
+    {
+        replyKey = _ttsTrackedReplyKey;
+        bubbleIndex = _ttsTrackedBubbleIndex;
+        hasMoreChunks = _ttsTrackedHasMoreChunks;
+        awaitingAppearance = _ttsTrackedAwaitingAppearance;
+        return replyKey.Length > 0 && bubbleIndex >= 0 && !_awaitingFirstTtsAudio;
+    }
+
+    internal static void ClearTtsTrackedBubble()
+    {
+        _ttsTrackedReplyKey = "";
+        _ttsTrackedBubbleIndex = -1;
+        _ttsTrackedHasMoreChunks = false;
+        _ttsTrackedAwaitingAppearance = false;
+    }
     private sealed record PendingAppearance(ApiResult Reply, int Index, string Text, bool First,
         LilithActionType? Action, LilithActionType? NativeAction, NativeAppearanceWait Wait);
     private static PendingAppearance? _appearance;
@@ -170,12 +197,20 @@ internal static partial class NativeBubblePresenter
         delivery.MarkQueued(plan);
         TraceDelivery("ai.delivery_queued", reply, delivery, "", "");
         if(Pending.Count==0){CompleteWithoutNewBubble(reply);return;}
+        BridgeController.Instance?.PrefetchTtsForReply(reply, plan, _startChunkIndex);
+        if (BridgeController.Instance?.ShouldDeferFirstBubbleForTts(reply, _startChunkIndex) == true)
+        {
+            _awaitingFirstTtsAudio = true;
+            _ttsPreShowUntil = Time.unscaledTime + MaxTtsFirstBubbleWaitSeconds;
+            return;
+        }
         if (!ShowNextChunk(true) && ReferenceEquals(_activeReply, reply))
             ScheduleRetry();
     }
 
     public static bool OnChunkFinished()
     {
+        ClearTtsTrackedBubble();
         if (StopCancelledOwner()) return false;
         if (_appearance is { } unseen)
         {
@@ -188,9 +223,13 @@ internal static partial class NativeBubblePresenter
             return _chunkIndex > 0 && Pending.Count > 0;
         if (Pending.Count > 0)
         {
-            // Reading rhythm: a bubble that stopped mid-sentence is followed almost
-            // immediately; one that ended a sentence gets a fuller pause.
-            _nextChunkAt = Time.unscaledTime + BubbleChunks.PauseAfter(_lastShown) / 1000f;
+            // When TTS bubble sync is active, the player already had a natural breath while
+            // reading the previous bubble, so keep the blank transition crisp (0.12s).
+            // When TTS is OFF, preserve 100% original PauseAfter rhythm.
+            float pauseSec = BridgeController.Instance?.IsTtsBubbleSyncActive == true
+                ? TtsSyncedInterBubblePauseSeconds
+                : BubbleChunks.PauseAfter(_lastShown) / 1000f;
+            _nextChunkAt = Time.unscaledTime + pauseSec;
             return true;
         }
         ClearActive();
@@ -215,7 +254,24 @@ internal static partial class NativeBubblePresenter
         if (_editingPausedAt >= 0f)
         {
             if (_retrying) _retryUntil += Math.Max(0f, Time.unscaledTime - _editingPausedAt);
+            if (_awaitingFirstTtsAudio) _ttsPreShowUntil += Math.Max(0f, Time.unscaledTime - _editingPausedAt);
             _editingPausedAt = -1f;
+        }
+        if (_awaitingFirstTtsAudio)
+        {
+            if (Pending.Count == 0 || _activeReply == null)
+            {
+                _awaitingFirstTtsAudio = false;
+                return;
+            }
+            bool ready = BridgeController.Instance?.IsBubbleAudioReadyForDisplay(_activeReply, _startChunkIndex) ?? true;
+            if (!ready && Time.unscaledTime < _ttsPreShowUntil)
+                return;
+            _awaitingFirstTtsAudio = false;
+            ApiResult? launching = _activeReply;
+            if (!ShowNextChunk(true) && ReferenceEquals(_activeReply, launching))
+                ScheduleRetry();
+            return;
         }
         if (Pending.Count == 0 || _nextChunkAt <= 0f)
             return;
@@ -228,6 +284,15 @@ internal static partial class NativeBubblePresenter
             return;
         if (_retrying && BridgeController.Instance?.CanResumeAiDelivery() == false)
             return;
+        if (!_retrying && _chunkIndex > _startChunkIndex
+            && BridgeController.Instance?.ShouldHoldNextBubbleForTts(_activeReply, _chunkIndex - 1) == true)
+        {
+            if (_ttsHoldStartedAt < 0f)
+                _ttsHoldStartedAt = Time.unscaledTime;
+            if (Time.unscaledTime - _ttsHoldStartedAt < MaxTtsBubbleHoldSeconds)
+                return;
+        }
+        _ttsHoldStartedAt = -1f;
         _nextChunkAt = 0f;
         ApiResult? advancing = _activeReply;
         if (!ShowNextChunk(_chunkIndex == _startChunkIndex) && ReferenceEquals(_activeReply, advancing))
@@ -236,6 +301,7 @@ internal static partial class NativeBubblePresenter
 
     public static void ClearPending(string outcome = "cancelled", string reason = "")
     {
+        ClearTtsTrackedBubble();
         if (_appearance is { } accepted)
         {
             _appearance = null;
@@ -328,6 +394,8 @@ internal static partial class NativeBubblePresenter
         // within one reply the previous bubble should hand over promptly, and a
         // short line needs far less time than a long one.
         float duration = Math.Clamp(1.2f + text.Length * 0.045f, 1.5f, 6f);
+        if (BridgeController.Instance is { } ttsHost)
+            duration = ttsHost.ResolveTtsBubbleDurationSeconds(displayingReply, displayingIndex, text, duration);
         // The original Say overload accepts an action type but does not reliably
         // play the native animation. We keep the motion in ActionExecutor so a
         // single <action> actually reaches controller.PlayLilithAction.
@@ -346,14 +414,24 @@ internal static partial class NativeBubblePresenter
         if (attempt.Outcome == WorkDisplayOutcome.Shown)
         {
             Pending.Dequeue(); _retrying = false; _lastShown = text;
+            _ttsTrackedReplyKey = BridgeController.ResolveTtsReplyKey(displayingReply);
+            _ttsTrackedBubbleIndex = displayingIndex;
+            _ttsTrackedHasMoreChunks = Pending.Count > 0;
+            _ttsTrackedAwaitingAppearance = false;
+            BridgeController.Instance?.ArmTtsBubbleOnAccepted(displayingReply, displayingIndex);
             NotifyShown(text, first, action, nativeAction); return true;
         }
         if (attempt.Outcome == WorkDisplayOutcome.Accepted && displayingReply != null)
         {
             var clock = AppearanceClock();
             _retrying = false; _nextChunkAt = 0;
+            _ttsTrackedReplyKey = BridgeController.ResolveTtsReplyKey(displayingReply);
+            _ttsTrackedBubbleIndex = displayingIndex;
+            _ttsTrackedHasMoreChunks = Pending.Count > 1;
+            _ttsTrackedAwaitingAppearance = true;
             _appearance = new(displayingReply, displayingIndex, text, first, action, nativeAction,
                 new(text, clock.Time, clock.Frame));
+            BridgeController.Instance?.ArmTtsBubbleOnAccepted(displayingReply, displayingIndex);
             NativeEventLog.Trace("native.bubble.accepted", "mod", "lilith", text,
                 "appearance=pending;chunk=" + displayingIndex);
             return true;
@@ -379,6 +457,8 @@ internal static partial class NativeBubblePresenter
             return;
         }
         Pending.Dequeue(); _lastShown = pending.Text;
+        _ttsTrackedHasMoreChunks = Pending.Count > 0;
+        _ttsTrackedAwaitingAppearance = false;
         NotifyShown(pending.Text, pending.First, pending.Action, pending.NativeAction, executeAction);
     }
 
@@ -499,6 +579,9 @@ internal static partial class NativeBubblePresenter
         _retrying = false;
         _retryUntil = 0f;
         _editingPausedAt = -1f;
+        _ttsHoldStartedAt = -1f;
+        _awaitingFirstTtsAudio = false;
+        _ttsPreShowUntil = 0f;
     }
 
     private static void EndDelivery(string outcome, string reason = "", int? abandonedChunks = null)

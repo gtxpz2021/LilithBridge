@@ -25,6 +25,7 @@ internal sealed partial class BridgeController
     private void OpenSharedActivity()
     {
         if (!_config.SharedActivityEnabled || SharedActivityNativeBusy || _b1SelectionWindow.IsOpen) return;
+        CancelSttRecording(restorePrefix: false);
         try
         {
             SharedRuntime.SetEnabled(true);

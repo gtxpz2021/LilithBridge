@@ -41,6 +41,7 @@
     <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(BepInExInteropDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(BepInExInteropDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(BepInExInteropDir)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(BepInExInteropDir)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.Physics2DModule"><HintPath>$(BepInExInteropDir)\UnityEngine.Physics2DModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="spine-csharp"><HintPath>$(BepInExInteropDir)\spine-csharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="spine-unity"><HintPath>$(BepInExInteropDir)\spine-unity.dll</HintPath><Private>false</Private></Reference>

@@ -311,6 +311,8 @@ internal sealed partial class BridgeController
         // to the same interruption. Close its delivery record before display so
         // the unseen tail can never arrive late.
         CancelQueuedReply(reason);
+        if (_config.TtsInterruptOnPlayerInput || !string.Equals(reason, "input_submit", StringComparison.OrdinalIgnoreCase))
+            CancelTtsSpeech(reason);
         if (!_aiSpeechActive && !NativeBubblePresenter.HasPendingReply && !_temporaryNativeEntry)
             return;
         if (_config.SensoryEnabled && (_aiSpeechActive || NativeBubblePresenter.HasPendingReply)
@@ -418,6 +420,7 @@ internal sealed partial class BridgeController
         NativeEventLog.Trace("ai.speech_start", "mod", "lilith", "AI bubble speaking",
             "request_id=" + reply?.RequestId + ";attempt_id=" + reply?.Response.AttemptId
             + ";chunk=" + chunkIndex + ";last_chunk=" + lastChunk);
+        SpeakTtsForBubble(text, reply, chunkIndex);
     }
 
     [HideFromIl2Cpp]
@@ -430,6 +433,7 @@ internal sealed partial class BridgeController
         {
             _aiSpeechActive = false;
             _lastAiSpeechEndAt = Time.unscaledTime;
+            CancelTtsSpeech("delivery_" + outcome);
         }
         if (outcome == "completed" && reply.DialogueRequest != null)
         {

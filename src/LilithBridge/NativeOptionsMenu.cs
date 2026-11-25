@@ -6,22 +6,24 @@ namespace LilithBridge;
 internal sealed class NativeOptionsMenu
 {
     private readonly GameObject _layer;
-    private readonly RectTransform _field,_canvas,_panel,_toggle,_divider,_historyButton,_reviewButton,_sharedButton,_modelsButton;
-    private readonly TMP_Text _font,_title,_status,_thinking,_reviewLabel;
+    private readonly RectTransform _field,_canvas,_panel,_toggle,_divider,_historyButton,_reviewButton,_sharedButton,_ttsButton,_modelsButton;
+    private readonly TMP_Text _font,_title,_status,_thinking,_reviewLabel,_ttsLabel;
     private readonly Image[] _modeImages=new Image[6];
     private readonly TMP_Text[] _modeTexts=new TMP_Text[6];
     private readonly Action<bool> _ownership;
     private readonly Action<string> _select;
     private readonly NativeOpenAISettings _models;
+    private Action? _onToggleTts;
+    private Func<string>? _ttsLabelProvider;
     private BridgeConfig _config=new();
     private string[] _efforts=Array.Empty<string>();
     private float _keysUntil;
     private bool _reviewAuthorized;
     public bool IsOpen=>_layer.activeSelf;
     public bool ConsumesKeyboard=>IsOpen||Time.unscaledTime<_keysUntil;
-    public NativeOptionsMenu(Transform field,Transform canvas,TMP_Text font,Action<string> select,Action history,Action<bool> ownership,Action authorizeReview,Action sharedActivity,Action selection)
+    public NativeOptionsMenu(Transform field,Transform canvas,TMP_Text font,Action<string> select,Action history,Action<bool> ownership,Action authorizeReview,Action sharedActivity,Action selection,Action? toggleTts=null,Func<string>? ttsLabel=null)
     {
-        _field=field.GetComponent<RectTransform>();_canvas=canvas.GetComponent<RectTransform>();_font=font;_ownership=ownership;_select=select;
+        _field=field.GetComponent<RectTransform>();_canvas=canvas.GetComponent<RectTransform>();_font=font;_ownership=ownership;_select=select;_onToggleTts=toggleTts;_ttsLabelProvider=ttsLabel;
         _toggle=Box("OptionsToggle",field,new Vector2(241,0),new Vector2(38,36));
         MakeButton(_toggle,"⋯",()=>{if(IsOpen)Close();else Open();},26);
         var layer=Box("OptionsMenuLayer",canvas,Vector2.zero,Vector2.zero);_layer=layer.gameObject;
@@ -47,6 +49,7 @@ internal sealed class NativeOptionsMenu
         _historyButton=ActionButton("OpenHistory","历史记录",history);
         _reviewButton=Box("ReviewAuthorize",_panel,Vector2.zero,new Vector2(272,34));(_, _reviewLabel)=MakeButton(_reviewButton,"回看：允许本轮",authorizeReview,16);
         _sharedButton=ActionButton("OpenSharedActivity","一起看",sharedActivity);
+        _ttsButton=Box("TtsToggle",_panel,Vector2.zero,new Vector2(272,34));(_,_ttsLabel)=MakeButton(_ttsButton,"语音播报：关",()=>_onToggleTts?.Invoke(),16);
         _models=new NativeOpenAISettings(layer,_font,CloseModels);
         _modelsButton=ActionButton("ModelSettings","模型与资料  ›",()=>{_panel.gameObject.SetActive(false);_models.Open();},false);
         _modelsButton.GetComponent<Image>().color=new Color(.10f,.23f,.28f,1);
@@ -72,13 +75,24 @@ internal sealed class NativeOptionsMenu
         _status.text=error??DialogueProviderOptions.Provider(config)+" · "+(config.IsOpenAI?DialogueProviderOptions.Model(config):DeepSeekModels.Label(config.Model));
         _status.color=error==null?Muted:new Color(1,.71f,.53f,1);
         _reviewButton.gameObject.SetActive(ReviewContextModes.Normalize(config.ReviewContextMode)==ReviewContextModes.Request);
-        _sharedButton.gameObject.SetActive(config.SharedActivityEnabled);RefreshReview(_reviewAuthorized);RefreshLayout();
+        _sharedButton.gameObject.SetActive(config.SharedActivityEnabled);
+        _ttsButton.gameObject.SetActive(_onToggleTts!=null);
+        RefreshTtsLabel(_ttsLabelProvider?.Invoke() ?? (config.TtsEnabled ? "语音播报：开" : "语音播报：关"));
+        RefreshReview(_reviewAuthorized);RefreshLayout();
     }
+    public void BindTts(Action? toggleTts,Func<string>? labelProvider)
+    {
+        _onToggleTts=toggleTts;_ttsLabelProvider=labelProvider;
+        _ttsButton.gameObject.SetActive(_onToggleTts!=null);
+        RefreshTtsLabel(_ttsLabelProvider?.Invoke() ?? (_config.TtsEnabled ? "语音播报：开" : "语音播报：关"));
+        RefreshLayout();
+    }
+    public void RefreshTtsLabel(string label){_ttsLabel.text=string.IsNullOrWhiteSpace(label)?"语音播报：关":label;}
     public void RefreshReview(bool authorized){_reviewAuthorized=authorized;_reviewLabel.text=authorized?"回看：已允许本轮":"回看：允许本轮";}
     public void RefreshLayout()
     {
         int rows=Math.Max(1,(_efforts.Length+2)/3);var actions=new List<RectTransform>{_historyButton};
-        if(_reviewButton.gameObject.activeSelf)actions.Add(_reviewButton);if(_sharedButton.gameObject.activeSelf)actions.Add(_sharedButton);actions.Add(_modelsButton);
+        if(_reviewButton.gameObject.activeSelf)actions.Add(_reviewButton);if(_sharedButton.gameObject.activeSelf)actions.Add(_sharedButton);if(_ttsButton.gameObject.activeSelf)actions.Add(_ttsButton);actions.Add(_modelsButton);
         float height=188+(rows-1)*38+(actions.Count-1)*40;_panel.sizeDelta=new Vector2(304,height);float top=height/2-14;
         Place(_title.rectTransform,0,top-12);Place(_status.rectTransform,0,top-39);Place(_thinking.rectTransform,0,top-68);
         for(int i=0;i<_efforts.Length;i++){_modeImages[i].rectTransform.sizeDelta=new Vector2(_efforts.Length==1?272:82,32);Place(_modeImages[i].rectTransform,_efforts.Length==1?0:-90+i%3*90,top-96-i/3*38);_modeTexts[i].rectTransform.sizeDelta=new Vector2(_efforts.Length==1?244:54,32);}

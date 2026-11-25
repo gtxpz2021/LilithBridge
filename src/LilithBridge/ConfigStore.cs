@@ -1160,6 +1160,8 @@ internal static partial class ConfigStore
                 }
             }
             ReadSensoryConfig(config, root);
+            ReadSttConfig(config, root);
+            ReadTtsConfig(config, root);
         }
         catch
         {

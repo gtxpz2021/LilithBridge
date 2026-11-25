@@ -9,6 +9,7 @@ internal sealed partial class BridgeController
     private void OpenB1Selection()
     {
         if (!_listening || _historyWindow.IsOpen || _sharedWindow.OwnsKeyboard) return;
+        CancelSttRecording(restorePrefix: false);
         try
         {
             // Lazy construction: opening this local entry neither enables B1 nor calls a model.

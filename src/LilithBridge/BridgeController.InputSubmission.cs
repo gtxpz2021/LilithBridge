@@ -30,6 +30,7 @@ internal sealed partial class BridgeController
         // The authorization belongs to the submitted input even when a local
         // memory command or an empty input ends the turn without a model call.
         bool reviewAuthorized = ConsumeReviewAuthorization();
+        CancelSttRecording(restorePrefix: false);
         _listening = false;
         try
         {

@@ -657,11 +657,15 @@ internal static partial class ActionExecutor
             LilithActionType? actionVoice = ActionCatalog.TryParseAction(value);
             if (NumericVoice.IsMatch(value))
             {
+                if (BridgeController.Instance?.SuppressesNativeReplyVoice == true)
+                    return;
                 AudioManager.PlayVoiceBySoundId(value, true);
                 NativeEventLog.Trace("action.voice", "mod", "lilith", value);
             }
             else if (actionVoice.HasValue)
             {
+                if (BridgeController.Instance?.SuppressesNativeReplyVoice == true)
+                    return;
                 AudioManager.PlayActionSEOrVoice(actionVoice.Value, value);
                 NativeEventLog.Trace("action.voice", "mod", "lilith", value);
             }

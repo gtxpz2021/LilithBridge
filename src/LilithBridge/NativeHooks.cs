@@ -433,6 +433,22 @@ internal static class NativeHooks
         }
     }
 
+    [HarmonyPatch(typeof(DialogueManager), "UpdateAutoDismiss", new Type[0])]
+    private static class TtsSyncAutoDismissGate
+    {
+        private static bool Prefix()
+        {
+            try
+            {
+                return BridgeController.Instance?.ShouldSuppressNativeAutoDismissForTts() != true;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+    }
+
     private static void SetTextOptions(Il2CppSystem.Collections.Generic.IReadOnlyList<string> options)
     {
         lock (OptionLock)

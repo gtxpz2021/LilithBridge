@@ -48,6 +48,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     private LilithActionType _lastAction = LilithActionType.None;
     private bool _escapeDown;
     private float _ignoreEnterUntil;
+    private float _ignoreEscapeUntil;
     private string _currentUserText = "";
     private bool _proactiveRequest;
     private float _nextAppCheck;
@@ -123,6 +124,8 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
         _runtimeMemory = NaturalMemory.CreatePipeline(_memory, _config);
         TickSemanticRuntime();
+        TickSttRuntime();
+        TickTtsRuntime();
         NativeEventLog.Trace("memory.natural.initialization", "mod", "system", "natural memory writer initialization",
             "writer=" + _config.MemoryUserWriteEnabled + ";extract_every_turn=" + _config.AutonomousMemoryExtractEveryTurn);
         NativeEventLog.Trace("bridge.start", "mod", "system",
@@ -156,6 +159,8 @@ internal sealed partial class BridgeController : MonoBehaviour
         CancelPendingDialogue();
         DestroySharedActivity();
         StopSemanticRuntime();
+        StopSttRuntime();
+        StopTtsRuntime();
         _sensoryClient.Dispose();
         _activeDialogue?.Dispose();
         _inputField.Destroy();
@@ -198,6 +203,8 @@ internal sealed partial class BridgeController : MonoBehaviour
 
         TickSemanticRuntime();
         TickSensoryRuntime();
+        TickSttRuntime();
+        TickTtsRuntime();
         if (!_systemReady)
             TryBecomeReady();
         if (_systemReady && Time.unscaledTime >= _nextInteractionSubscribe)
@@ -270,9 +277,11 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
         if (_inputField.UiConsumesKeyboard)
         {
+            if (IsSttActive) CancelSttRecording(restorePrefix: false);
             if (escape && gameHasInputFocus) _inputField.CloseMenu();
             return; // Menu Enter/Esc and the closing click never submit the draft.
         }
+        TryHandleSttHotkey(gameHasInputFocus);
         if (enter)
         {
             NativeStateInspector.TrySummonIfHidden("enter");
@@ -296,7 +305,11 @@ internal sealed partial class BridgeController : MonoBehaviour
                 && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
             if (enter && gameHasInputFocus && Time.unscaledTime >= _ignoreEnterUntil && !shiftEnter)
             {
-                if (_inputField.Text.Trim().Length > 0)
+                if (HandleEnterWhileSttActive())
+                {
+                    // Recording ended into the input box for manual review; never auto-submit.
+                }
+                else if (_inputField.Text.Trim().Length > 0)
                 {
                     _inputField.SubmitCurrent();
                 }
@@ -313,7 +326,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             else if (escape && gameHasInputFocus)
                 CancelInput();
         }
-        else if (escape && gameHasInputFocus && TryCancelPendingDelivery("escape"))
+        else if (escape && gameHasInputFocus && Time.unscaledTime >= _ignoreEscapeUntil && TryCancelPendingDelivery("escape"))
         {
             // The shared transition owns the input-independent state change; it
             // covers a pending request, a completed reply waiting for its
@@ -633,6 +646,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             if (active && !_aiSpeechActive && !NativeBubblePresenter.HasPendingReply
                 && node != null && node.id > 0 && _nativeLinkage.ObserveNode(node.id))
             {
+                CancelTtsSpeech("native_dialogue");
                 _lastNativeNodeId = node.id;
                 string role = ResolveNativeSpeaker(node);
                 string action = node.actionType is not (LilithActionType.None or LilithActionType.Idle)
@@ -1603,6 +1617,9 @@ internal sealed partial class BridgeController : MonoBehaviour
                 "native-style TMP input could not be created");
             return;
         }
+        _inputField.BindSttToggle(ToggleSttRecording);
+        _inputField.BindTtsToggle(ToggleTtsEnabledFromMenu, DescribeTtsMenuLabel);
+        RefreshSttUi();
         // Editing pauses the unseen tail; only a formal submission cancels it.
         _listening = true;
         NativeBubblePresenter.PauseForEditing();
@@ -1622,8 +1639,10 @@ internal sealed partial class BridgeController : MonoBehaviour
 
     private void CancelInput()
     {
+        CancelSttRecording(restorePrefix: false);
         _reviewAuthorization.Reset();
         _listening = false;
+        _ignoreEscapeUntil = Time.unscaledTime + 0.40f;
         _inputField.Hide();
         // Closing an unsubmitted draft preserves the original request identity.
         ActionExecutor.Clear();
@@ -1655,6 +1674,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     private void OpenDialogueHistory()
     {
         if (!_listening) return;
+        CancelSttRecording(restorePrefix: false);
         try
         {
             _historyWindow.Show(transform, _inputField.StyleText, _memory.CaptureDialogueHistory(), CloseDialogueHistory);

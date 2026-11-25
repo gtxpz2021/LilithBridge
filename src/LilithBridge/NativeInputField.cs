@@ -80,13 +80,16 @@ internal sealed partial class NativeInputField
     public bool IsMenuOpen => _menu?.IsOpen == true;
     public void CloseMenu() => _menu?.Close();
     public bool ContainsPointer(Vector3 point) => IsOpen && (RectTransformUtility.RectangleContainsScreenPoint(_root!.GetComponent<RectTransform>(),point,null) || _menu?.ContainsPointer(point)==true
+        || ContainsSttPointer(point)
         || (_failureNotice!=null && _failureNotice.text.Length>0 && RectTransformUtility.RectangleContainsScreenPoint(_failureNotice.rectTransform,point,null)));
 
     public bool IsOpen => _root != null && _root.activeSelf;
     // Same monitor viewport and CanvasScaler as the status canvas. Reserve any
     // host failure notice above the draft so the request status cannot cover it.
     internal RectTransform? RequestStatusAnchor => IsOpen ? _root!.GetComponent<RectTransform>() : null;
-    internal float RequestStatusTopPadding => _failureNotice != null && _failureNotice.text.Length > 0 ? 70f : 10f;
+    internal float RequestStatusTopPadding =>
+        (_failureNotice != null && _failureNotice.text.Length > 0 ? 70f : 10f)
+        + (HasVisibleSttNotice ? 36f : 0f);
     public string Text => _input?.text ?? "";
 
     public void EnsureFocus()
@@ -156,6 +159,7 @@ internal sealed partial class NativeInputField
         if (EventSystem.current != null)
             EventSystem.current.SetSelectedGameObject(null);
         _menu?.Close(false);
+        SetDictationReadOnly(false);
         _root.SetActive(false);
         _wantsFocus = false;
         Input.imeCompositionMode = IMECompositionMode.Auto;
@@ -165,6 +169,7 @@ internal sealed partial class NativeInputField
     {
         _monitorLease.Clear();
         _menu?.Dispose();
+        DestroySttControls();
         if (_canvasRoot != null)
             UnityEngine.Object.Destroy(_canvasRoot);
         _root = null;
@@ -350,6 +355,7 @@ internal sealed partial class NativeInputField
                 mode=>_onModeSelected?.Invoke(mode),()=>_onOpenHistory?.Invoke(),
                 owns=>{_wantsFocus=!owns;if(owns)_input?.DeactivateInputField();else Activate();},
                 ()=>AuthorizeReviewFromMenu(), () => _onOpenSharedActivity?.Invoke(), () => _onOpenB1Selection?.Invoke());
+            CreateSttControls(fieldGo, text);
         }
         catch (Exception error)
         {
@@ -362,6 +368,16 @@ internal sealed partial class NativeInputField
         if (error != null) _modeError = error.Length == 0 ? null : error;
         _menu?.Refresh(config,_modeError);
         _menu?.RefreshReview(_reviewAuthorized);
+    }
+
+    public void BindTtsToggle(Action? onToggleTts, Func<string>? labelProvider)
+    {
+        _menu?.BindTts(onToggleTts, labelProvider);
+    }
+
+    public void RefreshTtsMenuLabel(string label)
+    {
+        _menu?.RefreshTtsLabel(label);
     }
 
     private void AuthorizeReviewFromMenu()

@@ -85,6 +85,7 @@ internal sealed partial class BridgeController
             owner.WaitStatus.MarkFirstShown();
             NativeEventLog.Trace("work.bubble.appeared", "mod", "lilith", playback.Active!.Text,
                 "whole_bubble=true;player_read=unknown");
+            SpeakTtsForTemporaryBubble(playback.Active!.Text, owner.Id);
         }
         if (playback.Work.Outcome is "display_unknown" or "display_unavailable" or "source_changed")
             CancelPendingDialogue(reason: playback.Work.Outcome);
