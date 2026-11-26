@@ -3,8 +3,8 @@
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 541,
-      "sha256": "388a761dc09a6036d688184348a4a8516791ef9759f0d0bdde3d515738f827c8"
+      "bytes": 1187,
+      "sha256": "f4e242f526c291872a947586224bc5a7252a03eb403188d714f185aee1f89b1f"
     },
     {
       "path": ".gitignore",
@@ -13,13 +13,13 @@
     },
     {
       "path": "ARCHITECTURE.md",
-      "bytes": 13312,
-      "sha256": "93ae603ac8789de8719cce35e589f1e3637792f2375159df074fb2a333d1ddb5"
+      "bytes": 18230,
+      "sha256": "34ac0c367d30e5faccbd9766b931bb228ee6a72988653c66241ac29c30d1c125"
     },
     {
       "path": "BUILD-IDENTITY.txt",
-      "bytes": 1669,
-      "sha256": "c74d437705bae8fe939ca510fd6ba16c40f045a3da3eede9d885e4a55da185e5"
+      "bytes": 1765,
+      "sha256": "774c742eecbfe08f13282e12189be6bbd461d82f8c1f6a4152916b1dd0c368fc"
     },
     {
       "path": "BUILD.md",
@@ -28,13 +28,13 @@
     },
     {
       "path": "CANDIDATE-VALIDATION.md",
-      "bytes": 664,
-      "sha256": "f7510479ad74110c60f88e1800929f6ee6b810595404aee323ef81ca66107140"
+      "bytes": 729,
+      "sha256": "46abcfa3c0be8128ae8e25260862b47aecfc2c0ee89d248c608fb6883e68f81e"
     },
     {
       "path": "CANDIDATE.json",
-      "bytes": 1669,
-      "sha256": "c74d437705bae8fe939ca510fd6ba16c40f045a3da3eede9d885e4a55da185e5"
+      "bytes": 1765,
+      "sha256": "774c742eecbfe08f13282e12189be6bbd461d82f8c1f6a4152916b1dd0c368fc"
     },
     {
       "path": "DEEPSEEK-SETUP-REVIEW.zh-CN.md",
@@ -48,8 +48,8 @@
     },
     {
       "path": "FEEDBACK.zh-CN.md",
-      "bytes": 1232,
-      "sha256": "6f43e6f0632458fd3d4aba73394537be0fdc6bd5fb9c65453160df21da8aecb6"
+      "bytes": 1225,
+      "sha256": "56ca73576a872c64c33709afb530e65308e378ef658082554c52b94d154cf4ec"
     },
     {
       "path": "INSTALL-CHAIN.zh-CN.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "NETWORK-CANDIDATE.md",
-      "bytes": 12279,
-      "sha256": "7688300cac010d075734bbd1d0e5963c583208f9b962a17cd8e56107bfb22a6d"
+      "bytes": 10644,
+      "sha256": "5fd8c681639e06c2390f670695a0fa5657760fd3bfb97f44cadcaa9418766711"
     },
     {
       "path": "NETWORK-DIAGNOSTIC.md",
@@ -88,8 +88,8 @@
     },
     {
       "path": "NORMAL-USE.zh-CN.md",
-      "bytes": 7152,
-      "sha256": "759b5f4ae3d12231ca78de64d7346243fb2e338127074eee60968c1303e1182a"
+      "bytes": 9119,
+      "sha256": "072f42026e744c79dde71f66938300073e69c74e84465101b996a1740a780c77"
     },
     {
       "path": "Optional-Recall.ps1",
@@ -98,18 +98,18 @@
     },
     {
       "path": "QUICK-START.md",
-      "bytes": 1073,
-      "sha256": "6e964121f22e59352d14cd4c4ca707d972ec0c4da4885c70043d028b4264db0f"
+      "bytes": 1294,
+      "sha256": "2a6418c3de7627db51064cc048a20fe090c448a14535995f4040b39c13c50bc1"
     },
     {
       "path": "README-LOCAL-RESEARCH.txt",
-      "bytes": 12279,
-      "sha256": "7688300cac010d075734bbd1d0e5963c583208f9b962a17cd8e56107bfb22a6d"
+      "bytes": 10644,
+      "sha256": "5fd8c681639e06c2390f670695a0fa5657760fd3bfb97f44cadcaa9418766711"
     },
     {
       "path": "README.md",
-      "bytes": 7343,
-      "sha256": "8de746280a4080cafcf6a50f10219580f9b5758af35723605ad28c8dbdf1b7fa"
+      "bytes": 12766,
+      "sha256": "76b0441cf5d2627c7b4c9d65e247229b06d8713c35f0c9b6a186a7522c393507"
     },
     {
       "path": "RECALL-CHECK-REVIEW.zh-CN.md",
@@ -118,13 +118,13 @@
     },
     {
       "path": "RELEASE-NOTES.zh-CN.md",
-      "bytes": 12204,
-      "sha256": "9a0f2cae7fbf9d867e83582097eef2a11a71aa885ec3d79d8dbe85940b3c1c95"
+      "bytes": 10569,
+      "sha256": "ca7fc1a3508647e7405037fd8463954d5570fa11b47979dd7c95ef220e0f9f5c"
     },
     {
       "path": "SOURCE-IDENTITY.json",
-      "bytes": 1669,
-      "sha256": "c74d437705bae8fe939ca510fd6ba16c40f045a3da3eede9d885e4a55da185e5"
+      "bytes": 1765,
+      "sha256": "774c742eecbfe08f13282e12189be6bbd461d82f8c1f6a4152916b1dd0c368fc"
     },
     {
       "path": "SOURCE-MATERIALS.json",
@@ -158,8 +158,8 @@
     },
     {
       "path": "UPGRADE-COMPATIBILITY.zh-CN.md",
-      "bytes": 2611,
-      "sha256": "6cc78794014a8c24bcdab4ee38b5cc933df7aeb483d959b4b9ce58b9fbe707a4"
+      "bytes": 3241,
+      "sha256": "3c056f3b88911a13cd19cf525c90f95d5a7c7b2fb529f1d32642dfea4e46da76"
     },
     {
       "path": "Verify-Package.ps1",
@@ -183,8 +183,8 @@
     },
     {
       "path": "config.example.json",
-      "bytes": 922,
-      "sha256": "218e650f52e7e09d4727616bc01d47102184bd3da5e5c8fada6c6bd967d36026"
+      "bytes": 2619,
+      "sha256": "5d1a62ee969c9209234fbb055029aa4fe82ebba0d5176ef76380a60ded59029c"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -284,7 +284,7 @@
     {
       "path": "optional/semantic-worker/INTEGRATION.md",
       "bytes": 2307,
-      "sha256": "542e8aab93a0893420493f56fbb551eb953365028a3778f44e8b447f3175bc7c"
+      "sha256": "9671228d45ea47631133b4027608a0d62484bbb8a70e338d3614367b2e1c0aed"
     },
     {
       "path": "optional/semantic-worker/MODEL-ACQUISITION.md",
@@ -313,23 +313,73 @@
     },
     {
       "path": "optional/semantic-worker/semantic_worker.py",
-      "bytes": 35651,
-      "sha256": "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979"
+      "bytes": 39965,
+      "sha256": "aa41f9ae6b60a553442aded87d054da026fc7f20cdc06d4b774e041726411f0c"
     },
     {
       "path": "optional/semantic-worker/test_semantic_ab_bench.py",
-      "bytes": 22158,
-      "sha256": "d5ac97be66496752de921d357351e1860976bfe8181385f7890bb71bf3cdb85c"
+      "bytes": 25609,
+      "sha256": "10b493926a0d3054b654b2052d926735172229cf8201f8069fab77b5454f0960"
     },
     {
       "path": "optional/semantic-worker/test_semantic_geometry.py",
-      "bytes": 13910,
-      "sha256": "cd402d7bc885b49e9b20124ad36f2639a7f490e200ba462b3619903af0eefa54"
+      "bytes": 17523,
+      "sha256": "2b79b1fac099e70a88d8e72d57d64b19d1520d73cedd09726973099b9689cdce"
     },
     {
       "path": "optional/semantic-worker/verify_model_files.py",
       "bytes": 1425,
       "sha256": "21b735cc9645b1f90d483a11d11268daf56b701a660751f4cd959160b3aa5a37"
+    },
+    {
+      "path": "optional/stt-worker/README.md",
+      "bytes": 2367,
+      "sha256": "94be98c90d6c98c96f23ff56e579aecb68d4ae86412194ca434732eb2c95c053"
+    },
+    {
+      "path": "optional/stt-worker/download_model.py",
+      "bytes": 4878,
+      "sha256": "ad52c176d0ccd50f7ab6df5866687e11b604550077e17a57c742080de6cbba3f"
+    },
+    {
+      "path": "optional/stt-worker/model-manifest.json",
+      "bytes": 1106,
+      "sha256": "628b6a8967201275a6750bc8f0e04d99cd8dd3ace4b0774494c10abda75d2acf"
+    },
+    {
+      "path": "optional/stt-worker/stt_worker.py",
+      "bytes": 55435,
+      "sha256": "424ba08d9870ab5a3f7ec5e1988900be274122f1fc39de46215b1bccd18b3e54"
+    },
+    {
+      "path": "optional/stt-worker/test_stt_worker.py",
+      "bytes": 19396,
+      "sha256": "abb96e2bbeb53523e0ad0f42cc0ae3f3bc003f63bb8cc96f2b3fbb68127dd9f3"
+    },
+    {
+      "path": "optional/stt-worker/verify_model_files.py",
+      "bytes": 1818,
+      "sha256": "29a20db36bba867c437300a74012f2dabee9f99eead01d9c81141f2a08ddf4a7"
+    },
+    {
+      "path": "optional/tts-worker/README.md",
+      "bytes": 1840,
+      "sha256": "32347e2ed394c5d80408dfc958fabd8624c8e01b0127a0bed5f1a6c9e79ca40d"
+    },
+    {
+      "path": "optional/tts-worker/test_tts_worker.py",
+      "bytes": 21980,
+      "sha256": "b3751d14a6847dc71b43734ad7a57bd98b8874470e7f7b7a3a2aed2bc4638454"
+    },
+    {
+      "path": "optional/tts-worker/tts_worker.py",
+      "bytes": 68092,
+      "sha256": "43922a80eec1658bd1cd3eed6261f93763ca339f7c11801110a94a9c7f261ec4"
+    },
+    {
+      "path": "optional/tts-worker/verify_runtime_files.py",
+      "bytes": 4733,
+      "sha256": "670ad8af6dfceed227d767dd6a393a3a1740fcd9fcaa25483e5d1cddbe88a49e"
     },
     {
       "path": "release/preview-20261101-rc3.json",
@@ -368,8 +418,8 @@
     },
     {
       "path": "src/LilithBridge/ActionExecutor.cs",
-      "bytes": 25583,
-      "sha256": "d74e4ab958b85de83e34428ac15a144256c79fc1e1fb54ff9343d49bf9d17881"
+      "bytes": 25809,
+      "sha256": "e6d855750602a095983282c769d9856a742f7ba740c2a392dcc2eee21376bc20"
     },
     {
       "path": "src/LilithBridge/ActionPathDiagnostic.cs",
@@ -438,8 +488,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.B1Selection.cs",
-      "bytes": 1363,
-      "sha256": "696fcc314e89884e95f2e4f89ade314cb17f00d5296997d06f744cc03c02f8e3"
+      "bytes": 1414,
+      "sha256": "7376a9804c9e977fe1ba521ad187e2c8cab663860de59cf41d38a1edf2a019ef"
     },
     {
       "path": "src/LilithBridge/BridgeController.BackgroundWrites.cs",
@@ -453,8 +503,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.Delivery.cs",
-      "bytes": 27398,
-      "sha256": "897f100b6509387d4357a32113ab5a7315e2bef65db965fba0e5c96134076510"
+      "bytes": 27668,
+      "sha256": "685fb971d0e8418d5c1a04978238e228dd9986a1f5ce9084f14a52311864227b"
     },
     {
       "path": "src/LilithBridge/BridgeController.DisplayHandoff.cs",
@@ -478,8 +528,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.InputSubmission.cs",
-      "bytes": 4563,
-      "sha256": "d01c40fd7073030ab6a5aaa4e56afcb0c62dfbb8d7b7e2c585e5146d3c601f75"
+      "bytes": 4614,
+      "sha256": "3db5cdfa2dbe8005cd766281c7fa6ccc9d84d7d331275d4c4e6ae48c4a3df12c"
     },
     {
       "path": "src/LilithBridge/BridgeController.MemoResult.cs",
@@ -558,8 +608,8 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.SemanticRecall.cs",
-      "bytes": 21033,
-      "sha256": "13131ef67ce214bd77f92d467de938525b48f2b05c6d1d4bb98650d11c4af418"
+      "bytes": 20747,
+      "sha256": "62a1f2abbe38a00f63a21a8b2d665777437e152b9bfb4eee37fb8f00248a1bb9"
     },
     {
       "path": "src/LilithBridge/BridgeController.Sensory.cs",
@@ -568,8 +618,13 @@
     },
     {
       "path": "src/LilithBridge/BridgeController.SharedActivity.cs",
-      "bytes": 5538,
-      "sha256": "c51ba32731ccd0828cccc4d0ed6cbf558d78e2682603b5600a061a779217df2f"
+      "bytes": 5589,
+      "sha256": "a137912c99b31b9ad66a5444dd9348dbc22f3b9a21976f3719d5134cf602446c"
+    },
+    {
+      "path": "src/LilithBridge/BridgeController.Stt.cs",
+      "bytes": 11500,
+      "sha256": "8a4cc97511fe7ed8e84d53f3aa5e682ed02e16bfad7ed0f25d17a82ac717aa6c"
     },
     {
       "path": "src/LilithBridge/BridgeController.Submission.cs",
@@ -577,14 +632,19 @@
       "sha256": "1bdbbcc662c476491e23ab22c310a3b0085cb3c4e115bdc65fc75fc67e419104"
     },
     {
+      "path": "src/LilithBridge/BridgeController.Tts.cs",
+      "bytes": 26606,
+      "sha256": "143afe9d617c24f5da6b6d125831f564db10f79e71f85aab76764e01d60f4ef9"
+    },
+    {
       "path": "src/LilithBridge/BridgeController.Work.cs",
-      "bytes": 6169,
-      "sha256": "30bd2e754a8992d86c4441a1b3bb0d5259f18122de5ae610a15ed413cbfb7952"
+      "bytes": 6243,
+      "sha256": "beb0a31d9fdfc5e5e05808d5d0108deed0dcc557c9e73cf82dc92e7578bf872d"
     },
     {
       "path": "src/LilithBridge/BridgeController.cs",
-      "bytes": 147779,
-      "sha256": "8dec42be836d765d7cc0f1dba9ec5963852e7c6e9edfa28a05e827ef00e0df39"
+      "bytes": 148710,
+      "sha256": "6a6ea7e96627089da7815fd39482d76d03d70e0659501390a23866ac9ea9eba1"
     },
     {
       "path": "src/LilithBridge/BubbleChunks.cs",
@@ -627,6 +687,11 @@
       "sha256": "a8d13c6a44e182eff44416ea00f81939d57d499b453f592783f4465713c4e92c"
     },
     {
+      "path": "src/LilithBridge/ChildProcessJobObject.cs",
+      "bytes": 4095,
+      "sha256": "be4447bb36124c828e8ff185d61698bbc74ab1346f8734917405f6dfa57fea32"
+    },
+    {
       "path": "src/LilithBridge/ClaimObservation.cs",
       "bytes": 3015,
       "sha256": "c55fbbfd6beb7d719c476fab753c84d9d5d7b64ee60d6770e47a568903dfdef2"
@@ -657,9 +722,19 @@
       "sha256": "492f027bf330db25e1fe93d449c5317ea625a259f3ba598d623b60038da00ecc"
     },
     {
+      "path": "src/LilithBridge/ConfigStore.Stt.cs",
+      "bytes": 4732,
+      "sha256": "824721522cdb1ec576e94128d85a7ed0ea81a20cc28c5117fe008e7a8ba724a0"
+    },
+    {
+      "path": "src/LilithBridge/ConfigStore.Tts.cs",
+      "bytes": 10461,
+      "sha256": "6832c8f7ba7811e3618e316914e6f6fcd0e22f45abf2033c53c5eb866826e33f"
+    },
+    {
       "path": "src/LilithBridge/ConfigStore.cs",
-      "bytes": 76280,
-      "sha256": "465ef5f06abf4501e8ba843d1c78e78bbb74d90ee92dfaa50b750cc167601330"
+      "bytes": 76364,
+      "sha256": "f5c329b4fd67f60db7097606267fca4935c1382c29d04637c54413d2134b71cb"
     },
     {
       "path": "src/LilithBridge/ContextBuilder.cs",
@@ -853,8 +928,8 @@
     },
     {
       "path": "src/LilithBridge/DeepSeekClient.cs",
-      "bytes": 131896,
-      "sha256": "47a9e3cfc81e784b67527dc73166a803b951e8f6c2a9cbf105728940e137119c"
+      "bytes": 132657,
+      "sha256": "c387d4efd5808764f3e60701f8b843fc4e8827858f3af7f871383382cf67cc93"
     },
     {
       "path": "src/LilithBridge/DeepSeekModels.cs",
@@ -1008,8 +1083,8 @@
     },
     {
       "path": "src/LilithBridge/LilithBridge.csproj",
-      "bytes": 4779,
-      "sha256": "875e08a5b3a5bec09fec024792e52e4c8084e6893a1c7c50e846a2ee735c5bcd"
+      "bytes": 4935,
+      "sha256": "dd0f68cc5582843b02ff33109bdc77aedef0cfdb51de2c02a147b502e58f510b"
     },
     {
       "path": "src/LilithBridge/LilithSceneEvent.cs",
@@ -1078,8 +1153,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.B1.Discovery.cs",
-      "bytes": 14719,
-      "sha256": "cefe3c4c34c23bb655ea8460e8bf3697339721af169daf6c2e3eb70ba4323e94"
+      "bytes": 14813,
+      "sha256": "27a26741e7ccc485a8b4ceecb8c7c9e2d9b5700c4d6db822f7a2b40f9e4028b3"
     },
     {
       "path": "src/LilithBridge/MemoryStore.B1.ExactReview.cs",
@@ -1118,8 +1193,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.B1.ReflectionFlow.cs",
-      "bytes": 29689,
-      "sha256": "2dc6ac037b1769f5b83164d2f724db8897c208e4d5726f927944e636424586c5"
+      "bytes": 29786,
+      "sha256": "1b58f5a71e97788bc92e87e5653d3d7cb0d64abef3ab77be259a70ee6f67214f"
     },
     {
       "path": "src/LilithBridge/MemoryStore.B1.Review.cs",
@@ -1213,8 +1288,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.MaterialSelection.cs",
-      "bytes": 12722,
-      "sha256": "e93c99cc61edf440a2a76426f90c43394ba51df9664d89907c30f803ab6fcd76"
+      "bytes": 12817,
+      "sha256": "fa16193ef220f428a9e21f00178b2873d3a5c5aec30f5db84e08296d49b360b7"
     },
     {
       "path": "src/LilithBridge/MemoryStore.MentionBoundaries.cs",
@@ -1308,8 +1383,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.Reflections.cs",
-      "bytes": 112665,
-      "sha256": "e991431caa655e97a7fb7f8f73336af360360c6baa16d0be711c669c5a2d63e0"
+      "bytes": 114403,
+      "sha256": "233285cff8ce7c50124a82d555e0ffe9623ddca160194515b834ea74f3c76239"
     },
     {
       "path": "src/LilithBridge/MemoryStore.Review.cs",
@@ -1333,8 +1408,8 @@
     },
     {
       "path": "src/LilithBridge/MemoryStore.SemanticRecall.cs",
-      "bytes": 42588,
-      "sha256": "508bd53c245afaf71eb25418ccc7d3dc41e251c23c32c855cd2e27c9109f1005"
+      "bytes": 46500,
+      "sha256": "2bfd0904405c640d1bbe66e0a9bb281afab6d7d5b3d954e20ad98f356e96d27e"
     },
     {
       "path": "src/LilithBridge/MemoryStore.SemanticRuntime.cs",
@@ -1418,8 +1493,8 @@
     },
     {
       "path": "src/LilithBridge/NativeBubblePresenter.cs",
-      "bytes": 29726,
-      "sha256": "4e9413361ee06a044682db938e5216c5fa9050a79498f964900e19a294c1459e"
+      "bytes": 33934,
+      "sha256": "93e7ad5fa3648542b281a04810ec74b47c31db0adc22d1552d1e8d1372338e96"
     },
     {
       "path": "src/LilithBridge/NativeClockFields.cs",
@@ -1433,8 +1508,8 @@
     },
     {
       "path": "src/LilithBridge/NativeHooks.cs",
-      "bytes": 27154,
-      "sha256": "806f3057b83e99063ee4347a5c6f69c0827a4612568cbc787513e3f1221264c7"
+      "bytes": 27584,
+      "sha256": "39b0be6db41d57f33e06a3eb8f490fab6a047667b31e351035838cf1ea20e0ba"
     },
     {
       "path": "src/LilithBridge/NativeIdleAnimation.cs",
@@ -1447,14 +1522,19 @@
       "sha256": "5049dccb4551caf18380123827bb497e6026d8b661aa5063a66e45143f4f1972"
     },
     {
+      "path": "src/LilithBridge/NativeInputField.Stt.cs",
+      "bytes": 7993,
+      "sha256": "df048202ee8a71206264fb26744fc80db96d71a23c20b411dbb4e9c77aa3f6a6"
+    },
+    {
       "path": "src/LilithBridge/NativeInputField.Submission.cs",
       "bytes": 553,
       "sha256": "eb60122a36873563638431fbbca37657ff273c8280973a9e5a28e0194355dd8c"
     },
     {
       "path": "src/LilithBridge/NativeInputField.cs",
-      "bytes": 19606,
-      "sha256": "791788404d0827692dafa97e79ab096c5510082e418254009e7618fd8170e2e3"
+      "bytes": 20072,
+      "sha256": "971cfe871599af3e25a56f27e0587c3a8bb4859e67300e6987233c89df237bf9"
     },
     {
       "path": "src/LilithBridge/NativeInteractionSubscriber.cs",
@@ -1518,8 +1598,8 @@
     },
     {
       "path": "src/LilithBridge/NativeOptionsMenu.cs",
-      "bytes": 9761,
-      "sha256": "8d0114c064670cdfe541367a723537535f09b28b3a1a6b15666a2ca8d6ae6df9"
+      "bytes": 11051,
+      "sha256": "1b61fd3ea3853abba4baf2b552abe490a0ecf6586d59fadd445e5b062c54bc56"
     },
     {
       "path": "src/LilithBridge/NativePoseGate.cs",
@@ -1653,8 +1733,8 @@
     },
     {
       "path": "src/LilithBridge/Plugin.cs",
-      "bytes": 4565,
-      "sha256": "8ccad89605d49742e9563bf1dfaf9c39aa849f2bb72f3bf3c6f219d128e48a44"
+      "bytes": 4532,
+      "sha256": "1289e48738d0d6a1261063d995eb015b08531a3fffed8ccaa044fde9fdc8d649"
     },
     {
       "path": "src/LilithBridge/PreparationTiming.cs",
@@ -1923,8 +2003,8 @@
     },
     {
       "path": "src/LilithBridge/SemanticRecallWorker.cs",
-      "bytes": 29320,
-      "sha256": "f77347b76cf1ebc4e66f2b0b3fca44e434e7998082b2b5fb8bee2c177d8140cd"
+      "bytes": 33179,
+      "sha256": "ca151882da27ba8a472d6f969084a4586faf3443b607d210fe8ad799e57aa66f"
     },
     {
       "path": "src/LilithBridge/SemanticRequestMaterial.cs",
@@ -1977,6 +2057,16 @@
       "sha256": "8618bd8c4f0ddc1a5e8e1ddc424568b1eaed8e39e91a7a30670a0ff839dee97a"
     },
     {
+      "path": "src/LilithBridge/SpeechToTextSession.cs",
+      "bytes": 6046,
+      "sha256": "f30e87c6c7b96e7073f94480c5db519acb4cdfd3ef9bf22f21a28663a831f3a1"
+    },
+    {
+      "path": "src/LilithBridge/SpeechToTextWorker.cs",
+      "bytes": 16111,
+      "sha256": "b4c8eb23008a40879486996e4ae78b09324b326159f660bd81377f2749f447c6"
+    },
+    {
       "path": "src/LilithBridge/SteamOfflineGuard.cs",
       "bytes": 1950,
       "sha256": "c62f941e1787ab13429607669a692864554ba188ef0c9a8afc3c3dec82c29e85"
@@ -2000,6 +2090,21 @@
       "path": "src/LilithBridge/SystemPromptSlim.cs",
       "bytes": 7690,
       "sha256": "d0932c6a3a086ef0db6717a200bc3c5ebb09d1172c4f7ae5dc34dba2b8d8f5fe"
+    },
+    {
+      "path": "src/LilithBridge/TextToSpeechCoordinator.cs",
+      "bytes": 16027,
+      "sha256": "f1820dbcd4703702e87e422b84cb4160ea67ba40f43d87a303bea2087f4db164"
+    },
+    {
+      "path": "src/LilithBridge/TextToSpeechPlayer.cs",
+      "bytes": 6973,
+      "sha256": "641bbbced821d1a6c14c73e38092e8bde8d454a54b3b3f3db8753066463e1cda"
+    },
+    {
+      "path": "src/LilithBridge/TextToSpeechWorker.cs",
+      "bytes": 21558,
+      "sha256": "bb2eacae2c34aff9741e74f0b1c804eb1f9078fbee6b543ff2229dfd0fbf2bb4"
     },
     {
       "path": "src/LilithBridge/ThoughtOperationHistory.cs",
@@ -2072,6 +2177,11 @@
       "sha256": "5c45a66a3989bb2f142bc1af4cc7e204e6b4c3e4d2349db573c96125b1e5d804"
     },
     {
+      "path": "tools/installer-source/Build-VoicePack.py",
+      "bytes": 8866,
+      "sha256": "666d0dd9d9b1ce8974858f380226d7d04c2378daea49f8806426b71533c25244"
+    },
+    {
       "path": "tools/installer-source/MAINTENANCE.zh-CN.md",
       "bytes": 3788,
       "sha256": "f8a429e9357041d29c5f9a98b58fb32e944228242b6cf9cb0ccd0e527ede19b0"
@@ -2083,13 +2193,13 @@
     },
     {
       "path": "tools/installer-source/launcher/Bootstrap.cs",
-      "bytes": 11493,
-      "sha256": "1d461aeb82e332715bd49bb8fdd34a9af39b8cff3d5cf05e577b025d02a3e453"
+      "bytes": 11505,
+      "sha256": "710bf6fce835cdead36f21aa71b295a8cef1733a62780ec27bc727362c8bfb30"
     },
     {
       "path": "tools/installer-source/launcher/PayloadIdentity.g.cs",
       "bytes": 203,
-      "sha256": "19b3903d3896eca0d42b8d255b406fe67c08ceb6e32f3e27573630d18e669565"
+      "sha256": "d4c7a65bf7b099647b19650216f1c6517926177529b5617a6b825a1e3bf3396a"
     },
     {
       "path": "tools/installer-source/launcher/README.md",
@@ -2108,8 +2218,8 @@
     },
     {
       "path": "tools/installer-source/release-profile.json",
-      "bytes": 2374,
-      "sha256": "1a34d4232579f7a51e7103fb20c320cbbf1d1ea0d14a00789d2f48e8eb1a6f74"
+      "bytes": 2396,
+      "sha256": "173e160c9b3690f5c8c85274642688a215f957141386d5ca308af54692f8bb07"
     },
     {
       "path": "tools/installer-source/src/BundledStory.cs",
@@ -2133,8 +2243,8 @@
     },
     {
       "path": "tools/installer-source/src/Installer.Core.cs",
-      "bytes": 45566,
-      "sha256": "d568bff5c81fae08b33e5d37acd09e3be1b02bc9f551db22e6b3de4efbdf7590"
+      "bytes": 45614,
+      "sha256": "7e24b1d8f766fe733d3c140ca359ec48ee7482cc4a81ded839aaaf81e321e5a5"
     },
     {
       "path": "tools/installer-source/src/Installer.Form.cs",
@@ -2173,13 +2283,13 @@
     },
     {
       "path": "tools/installer-source/src/PersistentStateCompatibility.cs",
-      "bytes": 5460,
-      "sha256": "2d4fc047c91cd3ab0123e4a948285cee9b74fb028bbe4a1888278f23be283332"
+      "bytes": 5542,
+      "sha256": "d5745f42a02e2e3a763f515e3299ce3de4d7a55cc7556c672103850ee069fe7c"
     },
     {
       "path": "tools/installer-source/src/Program.cs",
       "bytes": 2266,
-      "sha256": "165526ee7202f95143df1476ae7ae7b77706dc5d6751c6e900959434a421a3df"
+      "sha256": "4bb5b1439c49cb72d7c4ebb4f1f0ce9555be2b3524e8fb90d074dcef3db96afd"
     },
     {
       "path": "tools/installer-source/src/ProviderPresets.cs",
@@ -2188,18 +2298,18 @@
     },
     {
       "path": "tools/installer-source/src/RecallProgressText.cs",
-      "bytes": 1444,
-      "sha256": "92fcf73a6dba1e217dac1b3bd5b29104728fa8cc40f798fb117f928bc137e898"
+      "bytes": 1880,
+      "sha256": "e36f0ea076cbb5622d0a710b8beb7e44a139eb11400871e1917b5a234c97eb16"
     },
     {
       "path": "tools/installer-source/src/ReflectionWorkCompatibility.cs",
-      "bytes": 23031,
-      "sha256": "c0dfedbb109409835910c422932dcb6ba8e5b49e312c66b1d7fca62a80148afc"
+      "bytes": 23237,
+      "sha256": "7b6136e0313fe37480278f42ee8db9980c6142d7d014aab52c98a825d94488d7"
     },
     {
       "path": "tools/installer-source/src/Setup.Core.cs",
-      "bytes": 33848,
-      "sha256": "29ef606b30382c32056fb66e333455cef9d7178b093f45317109e82c002b8c10"
+      "bytes": 36144,
+      "sha256": "8a7bc1c49438706baf90b68073b5fabb213937f37bd7cc7d35560219e1695b57"
     },
     {
       "path": "tools/installer-source/src/Setup.FileIdentity.cs",
@@ -2213,8 +2323,8 @@
     },
     {
       "path": "tools/installer-source/src/StorySetup.cs",
-      "bytes": 4976,
-      "sha256": "cd107422a13d8f0bd49d6b33631e8648e0b2a255cbf0ec72e26e3d0cc73f5cae"
+      "bytes": 4986,
+      "sha256": "5cc7640c3196cd8a67c73f43d5c053f97ceed5c0d18d6ba5e8e48e0635252ce7"
     },
     {
       "path": "tools/installer-source/src/TrustedDownloads.cs",
@@ -2222,29 +2332,34 @@
       "sha256": "5562352b6596a6c2d40a2614981730d09d1f3c8bae89b7bc41a4375f9c971d0d"
     },
     {
+      "path": "tools/installer-source/src/VoicePackProvisioning.cs",
+      "bytes": 36956,
+      "sha256": "43112e4b0ba79744a15ade6d3d87431cebf803158997ff064b3938bcb0bb3666"
+    },
+    {
       "path": "tools/installer-source/src/Wizard.Core.cs",
-      "bytes": 31178,
-      "sha256": "f58ab2cf9b7fe6f8d202ef765b3a6dad40dc191c656334679f832e9df84a54e9"
+      "bytes": 35950,
+      "sha256": "5ea0cd6d83faefb56f21ca098785ae927c901ea147f7082b07be0cc648b12256"
     },
     {
       "path": "tools/installer-source/src/Wizard.Form.cs",
-      "bytes": 31842,
-      "sha256": "2b9c8d4d69a55b86c652390367168184c54615326f382c487708107a3feda532"
+      "bytes": 37388,
+      "sha256": "e20cda1b32d348127da74d051d5d9e65c664fb6a48cee80f198d4c9350024bea"
     },
     {
       "path": "tools/installer-source/src/Wizard.Planning.cs",
-      "bytes": 6283,
-      "sha256": "960212900e070048ce445dde96f087960c77a8e10c0cec9e962662d40454c748"
+      "bytes": 7671,
+      "sha256": "e26e376fc3df885b629a9b3d55ab6cf7f47808867c8071c409c08d97e89733a6"
     },
     {
       "path": "tools/installer-source/src/Wizard.Provisioning.cs",
-      "bytes": 13151,
-      "sha256": "4d0dba64cb1e156d3864cd2c2fdf73f725811848453372c4b3cea07772b28b4b"
+      "bytes": 15859,
+      "sha256": "e4cd991bdda253cda930131f3cd4ddc54b357834c1f8db63f0bc257dbcfc6b74"
     },
     {
       "path": "tools/installer-source/src/Wizard.Session.cs",
-      "bytes": 3626,
-      "sha256": "1545b9a9122714f0b758845f4953f23acba89c0b98696958c1e56b70023dcd34"
+      "bytes": 3724,
+      "sha256": "8d2e870473a77d6068c9f947914dabaa2fa0a96167fcea9d3669f22a837f7d45"
     },
     {
       "path": "tools/installer-source/src/app.manifest",
@@ -2268,8 +2383,8 @@
     },
     {
       "path": "tools/setup/install-manifest.json",
-      "bytes": 5839,
-      "sha256": "8cc01e44072939a6a0bc0d048e39ffdd1ff843ac236f4ebc342631214d6578c9"
+      "bytes": 6107,
+      "sha256": "0397f8cfcc896c7c0573b96c1e8724981b832ca5f86b19d256d2bfdda6909f70"
     },
     {
       "path": "tools/setup/loader-files.json",
@@ -2314,7 +2429,7 @@
     {
       "path": "tools/setup/optional-recall/verify_local_recall.py",
       "bytes": 5100,
-      "sha256": "b26af80f179ba63a14e5e322c78d7361c70426ecc04f8b75fd6a62f9f083a3cb"
+      "sha256": "f942f56153d46d6e2893b3368699171ccc397e5c750c213b6c88539c987e2a88"
     },
     {
       "path": "tools/setup/optional-recall/verify_runtime.py",
@@ -2329,7 +2444,7 @@
     {
       "path": "tools/setup/optional/semantic-worker/INTEGRATION.md",
       "bytes": 2307,
-      "sha256": "542e8aab93a0893420493f56fbb551eb953365028a3778f44e8b447f3175bc7c"
+      "sha256": "9671228d45ea47631133b4027608a0d62484bbb8a70e338d3614367b2e1c0aed"
     },
     {
       "path": "tools/setup/optional/semantic-worker/MODEL-ACQUISITION.md",
@@ -2358,13 +2473,43 @@
     },
     {
       "path": "tools/setup/optional/semantic-worker/semantic_worker.py",
-      "bytes": 35651,
-      "sha256": "684462f4735d21511b4188018f269de68bcf1de644967b727a0733d811d54979"
+      "bytes": 39965,
+      "sha256": "aa41f9ae6b60a553442aded87d054da026fc7f20cdc06d4b774e041726411f0c"
     },
     {
       "path": "tools/setup/optional/semantic-worker/verify_model_files.py",
       "bytes": 1425,
       "sha256": "21b735cc9645b1f90d483a11d11268daf56b701a660751f4cd959160b3aa5a37"
+    },
+    {
+      "path": "tools/setup/optional/stt-worker/model-manifest.json",
+      "bytes": 1106,
+      "sha256": "628b6a8967201275a6750bc8f0e04d99cd8dd3ace4b0774494c10abda75d2acf"
+    },
+    {
+      "path": "tools/setup/optional/stt-worker/stt_worker.py",
+      "bytes": 55435,
+      "sha256": "424ba08d9870ab5a3f7ec5e1988900be274122f1fc39de46215b1bccd18b3e54"
+    },
+    {
+      "path": "tools/setup/optional/stt-worker/verify_model_files.py",
+      "bytes": 1818,
+      "sha256": "29a20db36bba867c437300a74012f2dabee9f99eead01d9c81141f2a08ddf4a7"
+    },
+    {
+      "path": "tools/setup/optional/tts-worker/tts_worker.py",
+      "bytes": 68092,
+      "sha256": "43922a80eec1658bd1cd3eed6261f93763ca339f7c11801110a94a9c7f261ec4"
+    },
+    {
+      "path": "tools/setup/optional/tts-worker/verify_runtime_files.py",
+      "bytes": 4733,
+      "sha256": "670ad8af6dfceed227d767dd6a393a3a1740fcd9fcaa25483e5d1cddbe88a49e"
+    },
+    {
+      "path": "tools/setup/optional/voice-runtime/voice_runtime_setup.py",
+      "bytes": 8447,
+      "sha256": "6adfa34aa04fff030f2ccb1b453ab28f4be8734ff6ac9d169f4e2f0e8de9584d"
     },
     {
       "path": "tools/setup/story/README.md",
