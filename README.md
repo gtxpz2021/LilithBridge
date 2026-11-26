@@ -11,7 +11,7 @@
 
 LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》](https://store.steampowered.com/app/4643090/?l=schinese)的非官方开源 MOD。它把游戏里的莉莉丝、云端大语言模型，以及一套从第一性原理重做的**本机连续性记忆架构 × 双子空间语义几何 × 离线 48kHz 双向语音系统**接在一起——不是往桌宠里硬塞一个套壳聊天框，而是让每一次真实说出口的交流、随时插嘴的打断、闲暇时的反复琢磨与跨天联想，都沉淀为真正连续的长期陪伴。
 
-[**安装与使用指南**](NORMAL-USE.zh-CN.md) · [**3 步快速开始**](QUICK-START.md) · [**v0.4.1 更新说明**](RELEASE-NOTES.zh-CN.md) · [**架构入门**](ARCHITECTURE.md) · [**升级兼容边界**](UPGRADE-COMPATIBILITY.zh-CN.md) · [**问题反馈**](FEEDBACK.zh-CN.md)
+[**安装与使用指南**](NORMAL-USE.zh-CN.md) · [**3 步快速开始**](QUICK-START.md) · [**v0.4.1 更新说明**](RELEASE-NOTES.zh-CN.md) · [**架构入门**](ARCHITECTURE.md) · [**升级兼容边界**](UPGRADE-COMPATIBILITY.zh-CN.md) · [**AI 助手接手与二创指南**](AGENTS.md) · [**问题反馈**](FEEDBACK.zh-CN.md)
 
 ---
 
@@ -90,6 +90,6 @@ LilithBridge 是桌面伴侣游戏[《不/存在的莉莉丝》](https://store.s
 - [**安装与使用（NORMAL-USE）**](NORMAL-USE.zh-CN.md)：首次一键安装、分卷语音包使用、模型配置、无损升级与排查表。
 - [**本版更新说明（RELEASE-NOTES）**](RELEASE-NOTES.zh-CN.md)：`v0.4.1` 完整体验变化、架构升级明细与发布产物校验。
 - [**升级与回退边界（UPGRADE-COMPATIBILITY）**](UPGRADE-COMPATIBILITY.zh-CN.md)：老用户无损升级、原地热更脚本与安全回退说明。
-- [**本地依赖说明（DEPENDENCIES）**](docs/DEPENDENCIES.md) · [**技术附录（TECHNICAL-NOTES）**](docs/TECHNICAL-NOTES.md) · [**反馈与脱敏指南（FEEDBACK）**](FEEDBACK.zh-CN.md) · [**GitHub Issues**](https://github.com/gtxpz2021/LilithBridge/issues)
+- [**本地依赖说明（DEPENDENCIES）**](docs/DEPENDENCIES.md) · [**技术附录（TECHNICAL-NOTES）**](docs/TECHNICAL-NOTES.md) · [**AI 助手排障与二创指南（AGENTS）**](AGENTS.md) · [**反馈与脱敏指南（FEEDBACK）**](FEEDBACK.zh-CN.md) · [**GitHub Issues**](https://github.com/gtxpz2021/LilithBridge/issues)
 
 核心插件源码位于 [`src/LilithBridge/`](src/LilithBridge/)，可选召回与语音 Worker 位于 [`optional/`](optional/)，一体化单文件安装器与分卷打包源码位于 [`tools/installer-source/`](tools/installer-source/)。

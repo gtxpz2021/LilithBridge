@@ -2,6 +2,9 @@
 
 遇到无法排查的问题时，欢迎提交到 [GitHub Issues](https://github.com/gtxpz2021/LilithBridge/issues)。
 
+> [!TIP]
+> **如果你平时使用 AI 编程助手（DeepSeek Harness / OpenAI Codex / Claude Code / Cursor 等）**：可以直接把仓库根目录或 Release 页面下载的 [**AGENTS.md（AI 助手排查、调优与二创指南）**](AGENTS.md) 喂给你的 Agent，它就能按内置手册自动帮你定位环境故障、调优参数、本地重编修复，并生成符合脱敏规范的诊断报告或 PR。
+
 ## 提交前请带上这几项信息
 
 1. **版本身份**：在 Release 页面下载的 EXE/DLL 版本（例如 `v0.4.1 · 310561f9`），可通过 `BepInEx\LogOutput.log` 开头确认。
