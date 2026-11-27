@@ -69,13 +69,13 @@ internal sealed class TextToSpeechPlayer : IDisposable
         if (_disposed)
             return;
 
-        float effectiveVol = ResolveEffectiveVolume(volume, syncGameVoiceVolume, out bool muted, out var mixerGroup);
+        float effectiveVol = ResolveEffectiveVolume(volume, syncGameVoiceVolume, out bool muted);
         if (_source != null)
         {
             try
             {
-                if (mixerGroup != null && _source.outputAudioMixerGroup != mixerGroup)
-                    _source.outputAudioMixerGroup = mixerGroup;
+                if (_source.outputAudioMixerGroup != null)
+                    _source.outputAudioMixerGroup = null;
                 _source.mute = muted;
                 _source.volume = effectiveVol;
             }
@@ -102,27 +102,32 @@ internal sealed class TextToSpeechPlayer : IDisposable
         if (Time.unscaledTime < _nextPlayAllowedAt)
             return;
 
+        // Check volume/mute BEFORE dequeuing so transient mute frames never discard synthesized audio chunks.
+        if (muted || effectiveVol <= 0.001f)
+            return;
+
         if (!coordinator.TryDequeuePlayable(out TtsAudioChunk? next) || next == null)
         {
             coordinator.NotifyPlaybackIdle();
             return;
         }
 
-        if (muted || effectiveVol <= 0.001f)
-            return;
-
-        PlayChunk(owner, next, effectiveVol, muted, mixerGroup);
+        PlayChunk(owner, next, effectiveVol, muted);
     }
 
-    private static float ResolveEffectiveVolume(
+    internal static float ResolveEffectiveVolume(
         float configMultiplier,
         bool syncGameVoiceVolume,
-        out bool muted,
-        out UnityEngine.Audio.AudioMixerGroup? mixerGroup)
+        out bool muted)
     {
-        muted = false;
-        mixerGroup = null;
         float mult = Math.Clamp(configMultiplier, 0f, 1.5f);
+        if (mult <= 0.001f)
+        {
+            muted = true;
+            return 0f;
+        }
+
+        muted = false;
         if (!syncGameVoiceVolume)
             return Math.Clamp(mult, 0f, 1f);
 
@@ -131,18 +136,21 @@ internal sealed class TextToSpeechPlayer : IDisposable
             AudioSource? gameVoice = AudioManager.instance?.source_Voice;
             if (gameVoice != null)
             {
-                muted = gameVoice.mute;
-                mixerGroup = gameVoice.outputAudioMixerGroup;
-                return Math.Clamp(gameVoice.volume * mult, 0f, 1f);
+                // Keep LilithBridge TTS isolated from gameVoice.outputAudioMixerGroup (prevents mixer
+                // double-attenuation and muted-bus blackholes), and if the player muted native short
+                // click-barks in game settings while explicitly enabling TTS, fall back to mult * 0.85f.
+                if (!gameVoice.mute && gameVoice.volume > 0.05f)
+                    return Math.Clamp(gameVoice.volume * mult, 0.15f, 1f);
+                return Math.Clamp(mult * 0.85f, 0.15f, 1f);
             }
         }
         catch
         {
         }
-        return Math.Clamp(mult * 0.7f, 0f, 1f);
+        return Math.Clamp(mult * 0.85f, 0f, 1f);
     }
 
-    private void PlayChunk(Transform owner, TtsAudioChunk chunk, float volume, bool muted, UnityEngine.Audio.AudioMixerGroup? mixerGroup)
+    private void PlayChunk(Transform owner, TtsAudioChunk chunk, float volume, bool muted)
     {
         EnsureCreated(owner);
         if (_source == null || chunk.Samples.Length == 0 || chunk.SampleRate <= 0)
@@ -173,14 +181,16 @@ internal sealed class TextToSpeechPlayer : IDisposable
             _activeClip = clip;
             _playingUtteranceId = chunk.UtteranceId;
             _playingBubbleIndex = chunk.BubbleIndex;
-            if (mixerGroup != null)
-                _source.outputAudioMixerGroup = mixerGroup;
+            if (_source.outputAudioMixerGroup != null)
+                _source.outputAudioMixerGroup = null;
             _source.mute = muted;
             _source.volume = volume;
             _source.clip = clip;
             _source.Play();
             float durSec = lengthSamples / (float)chunk.SampleRate;
             _expectedEndAt = Time.unscaledTime + durSec + 0.35f;
+            NativeEventLog.Trace("tts.play", "mod", "lilith", "local tts audio playing",
+                $"utt={chunk.UtteranceId};bubble={chunk.BubbleIndex};clause={chunk.ClauseIndex + 1}/{chunk.ClauseCount};dur_ms={chunk.DurationMs};vol={volume:F2}");
         }
         catch (Exception ex)
         {

@@ -90,6 +90,11 @@ internal static class RuntimeProtocol
             builder.AppendLine("Reflect：想安静回看时可输出 <reflect>简短原因</reflect>；若针对特定原话可用 {\"reason\":\"原因\",\"target_event_ids\":[...]}，不显示给玩家，也不必每轮使用。");
         }
 
+        if (allowMemoryCommands && config.AfterbeatEnabled)
+        {
+            builder.AppendLine("Afterbeat：若主回复说完后你还有半句慢半拍的后话想隔几秒再补，可在末尾附 <afterbeat delay=\"3\" action=\"可选动作\" emotion=\"可选表情\">简短后话</afterbeat>；程序会在主气泡播完且桌面安静片刻后再弹出，若玩家先开口则自动收起，平时无需使用。");
+        }
+
         builder.AppendLine("Voice：只有程序提供语音 ID 时才输出 <voice:数字ID>。");
         builder.AppendLine("Output：控制标签不会显示在气泡里，玩家看到的只有莉莉丝的话。");
         return builder.ToString().TrimEnd();

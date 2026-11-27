@@ -177,6 +177,84 @@ internal static class ReplySanitizer
         return IsQuoted(text, index);
     }
 
+    private static readonly string[] LeadingMetaDecisionMarkers =
+    {
+        "程序给", "程序提供", "程序注入", "系统提示",
+        "静默略过", "安静略过", "静默留小纸条", "可选择的参与线索", "参与线索",
+        "我选第", "选择第", "选第一种", "选第二种", "选第三种", "两种安静法",
+        "request_kind", "lilith_program_material", "ExplicitEmptyText",
+    };
+
+    /// <summary>
+    /// Strips leading unquoted meta-decision parentheticals where a non-thinking or
+    /// low-effort model deliberates over program options inside visible prose (e.g.
+    /// "（程序给了静默略过和纸条两种安静法，我选第三种——……） 唔，歌换了一首呀……"),
+    /// while leaving ordinary stage/whisper parentheticals and player-quoted text intact.
+    /// </summary>
+    public static string StripLeadingMetaDecisionParenthetical(string? text, string? playerText = null)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        string working = text;
+        bool strippedAny = false;
+        while (true)
+        {
+            string trimmed = working.TrimStart();
+            if (trimmed.Length < 4 || (trimmed[0] != '（' && trimmed[0] != '('))
+                break;
+
+            char open = trimmed[0];
+            char close = open == '（' ? '）' : ')';
+            int depth = 0;
+            int closeIdx = -1;
+            int scanLimit = Math.Min(trimmed.Length, 240);
+            for (int i = 0; i < scanLimit; i++)
+            {
+                char ch = trimmed[i];
+                if (ch == open) depth++;
+                else if (ch == close)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        closeIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            if (closeIdx < 2)
+                break;
+
+            string inner = trimmed[1..closeIdx];
+            string matchedMarker = "";
+            foreach (string marker in LeadingMetaDecisionMarkers)
+            {
+                if (inner.Contains(marker, StringComparison.Ordinal))
+                {
+                    matchedMarker = marker;
+                    break;
+                }
+            }
+
+            if (matchedMarker.Length == 0)
+                break;
+
+            if (!string.IsNullOrEmpty(playerText)
+                && (playerText.Contains(matchedMarker, StringComparison.Ordinal)
+                    || playerText.Contains(inner, StringComparison.Ordinal)))
+            {
+                break;
+            }
+
+            working = trimmed[(closeIdx + 1)..];
+            strippedAny = true;
+        }
+
+        return strippedAny ? CleanOrphanPunctuation(working) : text;
+    }
+
     public static bool ContainsInternalHeader(string? text) =>
         !string.IsNullOrEmpty(text) && FindHeader(text, 0) != null;
 

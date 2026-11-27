@@ -120,6 +120,8 @@ internal sealed class B1ReadableView
             if (m.Conditions.Length > 0) tags.Add("条件:" + m.Conditions);
             if (m.Relation.Length > 0) tags.Add(Relation(m.Relation) + (m.Target.Length > 0 ? "->" + Target(m.Target) : ""));
             if (includeDiscovery && m.DiscoverySource != null) tags.Add("线索:" + Target(m.DiscoverySource.Key));
+            if (m.SuppliedRanges is { Count: > 0 } sr && sr[0].TotalChars > m.Text.Length)
+                tags.Add($"节选:{sr[0].Offset}..{sr[0].Offset + sr[0].Chars}/{sr[0].TotalChars}");
             return tags.Count > 0 ? "（" + string.Join("；", tags) + "）" : "";
         }
         Host? ResolveHost(B1Material m)

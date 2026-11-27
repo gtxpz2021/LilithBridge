@@ -18,13 +18,14 @@ internal sealed partial class BridgeController
     private bool _ttsDestroyed;
     private bool _ttsCreationAttempted;
     private string _ttsHeldBubbleKey = "";
+    private string _ttsUnstuckBubbleKey = "";
     private float _ttsHeldBubbleStartedAt;
     private float _ttsSilentHoldStartedAt = -1f;
     private float _ttsAudioFinishedAt = -1f;
     private float _ttsLastAdvanceAttemptAt = -1f;
     private bool _ttsAdvancedForBubble;
-    private const float MaxNativeBubbleHoldSeconds = 22.0f;
-    private const float MaxSilentBubbleHoldSeconds = 3.2f;
+    private const float MaxNativeBubbleHoldSeconds = 26.0f;
+    private const float MaxSilentBubbleHoldSeconds = 8.5f;
     private const float TtsInterBubbleBreathSeconds = 0.30f;
     private const float TtsFinalBubbleTailSeconds = 1.80f;
     private const float MaxNextBubbleAudioWaitSeconds = 3.0f;
@@ -171,6 +172,15 @@ internal sealed partial class BridgeController
         {
             CancelTtsSpeech("native_game_voice");
         }
+        else if (!_ttsPlayer.IsPlaying
+            && _ttsCoordinator.HasActiveOrQueued
+            && !_aiSpeechActive
+            && !NativeBubblePresenter.HasPendingReply
+            && _lastAiSpeechEndAt > 0f
+            && Time.unscaledTime - _lastAiSpeechEndAt > 4.0f)
+        {
+            CancelTtsSpeech("orphan_after_bubble_closed");
+        }
 
         if (_config.TtsEnabled || _ttsPlayer.HasActiveClip || _ttsCoordinator.HasActiveOrQueued)
         {
@@ -194,7 +204,7 @@ internal sealed partial class BridgeController
         if (!NativeBubblePresenter.TryGetActiveBubbleForTts(
                 out string replyKey,
                 out int bubbleIndex,
-                out _,
+                out bool hasMoreChunks,
                 out bool awaitingAppearance))
         {
             return false;
@@ -230,6 +240,13 @@ internal sealed partial class BridgeController
         if (_ttsAdvancedForBubble)
             return false;
 
+        if (string.Equals(_ttsUnstuckBubbleKey, bubbleKey, StringComparison.Ordinal)
+            && !_ttsPlayer.IsPlaying
+            && !_ttsCoordinator.HasPlayableChunkForBubble(replyKey, bubbleIndex))
+        {
+            return false;
+        }
+
         if (awaitingAppearance)
         {
             _ttsSilentHoldStartedAt = -1f;
@@ -255,7 +272,7 @@ internal sealed partial class BridgeController
                 _ttsSilentHoldStartedAt = now;
             if (now - _ttsSilentHoldStartedAt >= MaxSilentBubbleHoldSeconds)
             {
-                CancelTtsSpeech("tts_bubble_stall_timeout");
+                UnstickSilentTtsBubble(replyKey, bubbleIndex, hasMoreChunks, bubbleKey);
                 return false;
             }
             return true;
@@ -265,6 +282,19 @@ internal sealed partial class BridgeController
         // Audio finished: keep holding briefly during the crisp breath / final reading tail
         // until SyncNativeBubbleDismissForTts cleanly calls AdvanceDialogue().
         return true;
+    }
+
+    private void UnstickSilentTtsBubble(string replyKey, int bubbleIndex, bool hasMoreChunks, string bubbleKey)
+    {
+        if (!string.Equals(_ttsUnstuckBubbleKey, bubbleKey, StringComparison.Ordinal))
+        {
+            _ttsUnstuckBubbleKey = bubbleKey;
+            NativeEventLog.Trace("tts.bubble_unstick", "mod", "system",
+                "released silent bubble hold without cancelling active synthesis",
+                $"reply={replyKey};bubble={bubbleIndex};more={hasMoreChunks}");
+        }
+        if (hasMoreChunks)
+            _ttsCoordinator.AdvanceMinPlayableBubble(replyKey, bubbleIndex + 1);
     }
 
     private void SyncNativeBubbleDismissForTts()
@@ -279,6 +309,7 @@ internal sealed partial class BridgeController
                 out bool awaitingAppearance))
         {
             _ttsHeldBubbleKey = "";
+            _ttsUnstuckBubbleKey = "";
             _ttsSilentHoldStartedAt = -1f;
             _ttsAudioFinishedAt = -1f;
             _ttsLastAdvanceAttemptAt = -1f;
@@ -296,6 +327,14 @@ internal sealed partial class BridgeController
             _ttsAudioFinishedAt = -1f;
             _ttsLastAdvanceAttemptAt = -1f;
             _ttsAdvancedForBubble = false;
+        }
+
+        if (string.Equals(_ttsUnstuckBubbleKey, bubbleKey, StringComparison.Ordinal)
+            && !hasMoreChunks
+            && !_ttsPlayer.IsPlaying
+            && !_ttsCoordinator.HasPlayableChunkForBubble(replyKey, bubbleIndex))
+        {
+            return;
         }
 
         bool audioBusy = _ttsCoordinator.ShouldHoldAfterBubble(
@@ -319,8 +358,10 @@ internal sealed partial class BridgeController
                     _ttsSilentHoldStartedAt = now;
                 if (now - _ttsSilentHoldStartedAt >= MaxSilentBubbleHoldSeconds)
                 {
-                    CancelTtsSpeech("tts_bubble_stall_timeout");
+                    UnstickSilentTtsBubble(replyKey, bubbleIndex, hasMoreChunks, bubbleKey);
                     audioBusy = false;
+                    if (!hasMoreChunks)
+                        return;
                 }
             }
         }
@@ -479,7 +520,8 @@ internal sealed partial class BridgeController
     [HideFromIl2Cpp]
     internal void ArmTtsBubbleOnAccepted(ApiResult? reply, int chunkIndex)
     {
-        if (!IsTtsBubbleSyncActive || reply == null || NativeStateInspector.IsSleeping || _config.TtsVolume <= 0.001f)
+        if (!_config.TtsEnabled || _ttsDestroyed || _ttsWorker is not { Ready: true }
+            || reply == null || NativeStateInspector.IsSleeping || _config.TtsVolume <= 0.001f)
             return;
         string replyKey = ResolveTtsReplyKey(reply);
         if (string.IsNullOrEmpty(replyKey))
@@ -627,6 +669,8 @@ internal sealed partial class BridgeController
     {
         NativeBubblePresenter.ClearTtsTrackedBubble();
         _ttsHeldBubbleKey = "";
+        _ttsUnstuckBubbleKey = "";
+        _ttsSilentHoldStartedAt = -1f;
         _ttsAudioFinishedAt = -1f;
         _ttsLastAdvanceAttemptAt = -1f;
         _ttsAdvancedForBubble = false;

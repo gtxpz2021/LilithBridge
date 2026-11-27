@@ -26,13 +26,16 @@ internal sealed partial class BridgeController
     private readonly NativeConversationProtection _nativeConversation = new();
     private long _conversationGeneration = 1;
     private bool ConversationBusy => _listening || _historyWindow.IsOpen || _requestPending
-        || _storyRecallInProgress || _memoryRecallInProgress || _queuedReply != null
+        || _storyRecallInProgress || _memoryRecallInProgress || _queuedReply != null || _stagedAfterbeat != null
         || _aiSpeechActive || NativeBubblePresenter.HasPendingReply;
     internal bool ProtectsNativeStarts => _nativeConversation.Observe(Time.unscaledTime,
         ConversationBusy, _config.NativeDialogueAfterAiCooldownSeconds);
     private void ObserveNativeConversation() => _ = ProtectsNativeStarts;
     private void ValidPlayerSubmission()
     {
+        CancelStagedAfterbeat("player_submission");
+        _afterbeatGate.ObservePlayerSubmission(AfterbeatClock(), _config);
+        AcknowledgeProactivePlayerReply(Time.unscaledTime);
         _conversationGeneration++;
         _reflectionActivityObservation.Submitted(ReflectionClock());
         InvalidateB1ReflectionForInput();

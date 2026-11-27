@@ -126,6 +126,13 @@ internal sealed partial class ApiResult
     internal Func<Func<bool>, bool>? SharedDispatch { get; set; }
     internal B1Choice? B1 { get; set; }
     internal bool B1ChoiceProvided { get; set; }
+    internal AfterbeatPlan? Afterbeat { get; set; }
+    internal bool IsAfterbeat { get; set; }
+    internal string AfterbeatParentRequestId { get; set; } = "";
+    internal int AfterbeatChunkOffset { get; set; }
+    internal bool IsProactiveTurn { get; set; }
+    internal string ProactiveCandidateKind { get; set; } = "";
+    internal IReadOnlyList<string>? ProactiveProposalVersions { get; set; }
     public string RequestId { get; set; } = Guid.NewGuid().ToString("N");
     // Request-history ownership mode for this send: bound / unbound / none.
     public string HistoryBoundary { get; set; } = RequestHistoryOwnership.None;
@@ -210,6 +217,7 @@ internal sealed partial class ApiResult
         ReasoningContent = original.ReasoningContent;
         PromptCacheHitTokens = original.PromptCacheHitTokens;
         PromptCacheMissTokens = original.PromptCacheMissTokens;
+        Afterbeat ??= original.Afterbeat;
     }
 
     public void CopyRequestFrom(ApiResult original)
@@ -219,6 +227,9 @@ internal sealed partial class ApiResult
         SelectionCaptureAttempted = original.SelectionCaptureAttempted;
         SendPermission = original.SendPermission;
         GenerationConfig ??= original.GenerationConfig;
+        IsProactiveTurn |= original.IsProactiveTurn;
+        if (ProactiveCandidateKind.Length == 0) ProactiveCandidateKind = original.ProactiveCandidateKind;
+        ProactiveProposalVersions ??= original.ProactiveProposalVersions;
         if (RequestSourcePermission == null)
         {
             RequestSourcePermission = original.RequestSourcePermission;
@@ -286,6 +297,8 @@ internal sealed partial class ApiResult
     public int PromptCacheHitTokens { get; set; }
     public int PromptCacheMissTokens { get; set; }
 }
+
+internal sealed record AfterbeatPlan(string Text, float DelaySeconds, string Action = "", string Emotion = "");
 
 internal sealed class ActionStep
 {
@@ -667,7 +680,7 @@ internal sealed partial class DeepSeekClient : IDisposable
             if (sharedActivitySupply != null) systemPrompt += Environment.NewLine + SharedActivityPrompt.ChatContract;
             if (b1Context.Length > 0) systemPrompt += Environment.NewLine + B1Continuity.Contract
                 + (dialogueRequest?.ReadableB1==null?"":Environment.NewLine+B1ReadableView.Contract);
-            if (!programParticipation && memoResultInput == null)
+            if (memoResultInput == null)
                 systemPrompt += Environment.NewLine + Environment.NewLine + ReplyRecencyAnchor;
             string revisitOfferTail = dialogueRequest != null && dialogueRequest.RevisitActionOffer() is { Length: > 0 } revTargets
                 ? Environment.NewLine + Environment.NewLine + RevisitActionOfferContext(revTargets)
@@ -858,6 +871,8 @@ internal sealed partial class DeepSeekClient : IDisposable
                     ? ProactiveB1Supply.Capture(historyOwner, config, requestIdentity.RequestId,
                         proactiveContinuityQuery, projection.Turns.Where(WillSendHistoryTurn).SelectMany(t => t.Records),
                         cancellationToken) : null;
+                if (proactiveSupply != null)
+                    requestIdentity.ProactiveProposalVersions = proactiveSupply.ProposalVersions;
                 BuildOwnedBaseMessages();
             }
             int materialRevision=dialogueRequest?.SemanticMaterial?.Current?.Revision??0;
@@ -878,18 +893,34 @@ internal sealed partial class DeepSeekClient : IDisposable
                 return new(messages,ExtractRuntimeBlocks(dynamicContext),effectiveHistory,historySummary);
             }
             DialogueGeneration? generation = dialogueRequest?.Generation;
+            bool proactiveThinking = generation == null
+                && string.Equals(requestPurpose, "proactive", StringComparison.Ordinal)
+                && !config.IsOpenAI
+                && (config.DialogueAutoThinkingEnabled
+                    || DialogueGeneration.Normalize(config.DialogueThinkingMode) != "off"
+                    || config.ThinkingEnabled);
+            bool enableThinking = generation?.Thinking ?? (proactiveThinking || config.ThinkingEnabled);
+            int effectiveMaxTokens = generation?.MaxTokens
+                ?? (proactiveThinking
+                    ? Math.Clamp(Math.Min(config.DialogueThinkingMaxTokens, 2048), Math.Max(config.MaxTokens, 1024), 2048)
+                    : config.MaxTokens);
             var payload = new Dictionary<string, object>
             {
                 ["model"] = config.Model,
                 ["messages"] = messages.ToArray(),
                 ["temperature"] = config.Temperature,
-                ["max_tokens"] = generation?.MaxTokens ?? config.MaxTokens,
-                ["thinking"] = new { type = (generation?.Thinking ?? config.ThinkingEnabled) ? "enabled" : "disabled" },
+                ["max_tokens"] = effectiveMaxTokens,
+                ["thinking"] = new { type = enableThinking ? "enabled" : "disabled" },
                 ["stream"] = false
             };
             if (generation is { Thinking: true })
             {
                 payload["reasoning_effort"] = generation.Effort;
+                payload["top_p"] = 1.0;
+            }
+            else if (proactiveThinking)
+            {
+                payload["reasoning_effort"] = DialogueGeneration.Normalize(config.DialogueThinkingMode) == "high" ? "high" : "low";
                 payload["top_p"] = 1.0;
             }
             // The isolated semantic adapter must pass its actual supply trace.
@@ -1258,7 +1289,7 @@ internal sealed partial class DeepSeekClient : IDisposable
         return
             "你是莉莉丝，安静地回看本次提供的经历窗口。utterances 是有来源的原始发言，可能跨天或有间隔；以各条 at 为准，不把整个窗口统称为今天，不补写中间经过。previous_consolidation 是你上一次的整理，recent_thoughts 是你自己的理解，都不能代替玩家原话。\n" +
             "可以做两件事，也可以都不做：\n" +
-            "consolidation（整理）：用两三句话归拢这批材料记下的事、以及还悬着的事；区分发生时间与整理时间，只写输入里出现过的内容，不替玩家下性格或意图的结论。\n" +
+            "consolidation（整理）：用两三句平实短句归拢这批材料里的事、以及还悬着的事（不用破折号抒情升华或“不是…而是…”套话）；区分发生时间与整理时间，只写输入里出现过的内容，不替玩家下性格或意图的结论。\n" +
             // Guarding the exact laundering found in play on 2026-09-20: her own guess
             // was written into the day narrative as a habit of the player's, and that
             // block is injected into later requests, so the guess came back as a fact.
@@ -1340,9 +1371,10 @@ internal sealed partial class DeepSeekClient : IDisposable
             "你可以继续持有、修正或放下想法，也可以写自己的好奇、兴致、小主意、没想通的悬念或私人小癖好（比如突然想试的小点子、没搞明白对方那句话的意思、偏爱某种氛围），不必都归结为下次怎样配合玩家。只在有值得留下的新体会时写简短 note；如果窗口里只是日常寒暄、试麦试音或随口应答，没有值得记一笔的新触动，直接全部填 null 即可，不必硬凑；允许犹豫、留白、悬念或反讽，不必每次总结；可以用“我”或“莉莉丝”自称。修订时自然写出现在仍持有的完整理解。可以自由做当下的心理延伸、联想或事后回味（例如“现在回想起来，当时其实也觉得挺有意思”），只要不虚构现实中没发生过的外部事件或把没说过的话塞进对方嘴里。\n" +
             // User decision 2026-09-20 & 2026-11-15 & 2026-11-18: preserve surfaced_usage / 悬念 / 私人小癖好 / e# invariants,
             // transform lessons into her own live craft/curiosities, and prohibit formulaic "他X时别急着...先...再..." playbooks.
-            "lesson 是你在相处中攒下的互动手艺、好玩的主意或相处门道（比如怎么抛个怪问题、哪种玩笑他接得住、或者你自己下次想试的小点子），由 previous_notes 中的想法支持，以后随时可以推翻或收起。当晚即兴玩过一次的包袱（如临时数数、随口记账、一次性打赌）留在那晚的记忆里回味就够了，不必提炼成以后反复套用的固定剧目。用莉莉丝自己的少女口吻（“我”或“莉莉丝”）写轻快具体的短句，不要写得老气横秋、像在审稿把关或“先晾他半句、交底再夸”，也禁止写成“他 X 时，别急着……先……再……最后……——他爱……”套路脚本、“这样做比那样做更像我自己”的自我剖析句、对称“不是 A，是 B”金句或“下次不要猜、保持克制”之类的自我审查禁令。如果旧 lesson 变成了绑手绑脚的规矩或套路公式，可以用 revises 改写它，或用 settles 和 settle_reason 收起它。\n"
+            "lesson 是你在相处中攒下的互动手艺、好玩的主意或相处门道（比如怎么抛个怪问题、哪种玩笑他吃这一套、或者你自己下次想试的小点子），由 previous_notes 中的想法支持，以后随时可以推翻或收起。当晚即兴玩过一次的包袱（如临时数数、随口记账、一次性打赌）留在那晚的记忆里回味就够了，不必提炼成以后反复套用的固定剧目。用莉莉丝自己的少女口吻（“我”或“莉莉丝”）写轻快具体的短句，不要写得老气横秋、像在审稿把关或“先晾他半句、交底再夸”，也禁止写成“他 X 时，别急着……先……再……最后……”套路脚本、“这样做比那样做更像我自己”的自我剖析句、对称“不是 A，是 B”金句或“下次不要猜、保持克制”之类的自我审查禁令。如果旧 lesson 变成了绑手绑脚的规矩或套路公式，可以用 revises 改写它，或用 settles 和 settle_reason 收起它。\n"
             + "previous_notes 和 previous_lessons 中的 surfaced_usage 只是近来聊天的客观曝光计数（supplied_count 表示被放进聊天背景的次数，used_in_delivered_count 表示回复里真用到了几次），不是成绩单也不是强制指令；你可以自己决定一条总挂着却用不上的旧主意是留着继续观察，还是用 revises 改写法，或用 settles 温和收起。\n"
-            + "relationship 只在你对彼此位置、边界、默契或信任的理解有变化时填写，写具体的事和当下看法（比如“他说我只是程序，可每次我乱编设定他都认真跟着往下接”），平实短句即可，不必替这段关系或他本人下结论。它须由 previous_notes 支持，以后仍可修改。\n" +
+            + "relationship 只在你对彼此位置、边界、默契或信任的理解有变化时填写，写具体的事和当下看法（比如“他说我只是程序，可每次我乱编设定他都认真跟着往下接”），平实短句即可，不必替这段关系或他本人下结论。它须由 previous_notes 支持，以后仍可修改。\n"
+            + "文风铁律：note、lesson、relationship 都用自然平实的口语短句直写，不用破折号总结升华，不写“不是 A，是 B”对称句，也不写“这句我收着/记一笔”记账套话或“是 A 还是 B”设问收尾。\n" +
             "只输出一个完整 JSON 对象，包含 note、lesson、relationship。各项独立判断，没有产物的项用 null，可以全部为空：{\"note\":null,\"lesson\":null,\"relationship\":null}。有内容的项按下例填写对象，正文与来源等字段留在各自对象内，不用字符串代替对象，不把字段铺到顶层，也不在完整对象后追加内容。\n" +
             "结构示例；正文和编号只是占位说明，不可照抄为提案：{\"note\":{\"text\":\"用自己口吻的想法（我或莉莉丝），不超过160字\",\"source_event_ids\":[\"e1\"],\"source_day_ids\":[],\"revises\":\"\",\"settles\":\"\",\"settle_reason\":\"\"},\"lesson\":{\"text\":\"不超过120字，用你自己的口气\",\"source_note_ids\":[\"n1\"],\"revises\":\"\",\"settles\":\"\",\"settle_reason\":\"\"},\"relationship\":{\"text\":\"用自己口吻，不超过120字\",\"source_note_ids\":[\"n1\"],\"revises\":\"\"}}。\n" +
             "输入里已把各类原始编号浓缩为短序号（e1/e2... 表示 utterances.event_id，n1/n2... 表示 previous_notes.note_id，s1/s2... 表示 settled_notes.note_id，l1/l2... 表示 previous_lessons.lesson_id，r1/r2... 表示 previous_readings.reading_id，d1/d2... 表示 day_artifacts.day_id，t1/t2... 表示 revision_targets.target_id；只读历史里的 h1/h2... 不得引用或修改）。引用与修订直接填写这些短序号即可：source_event_ids 填 e#，source_note_ids 填 n#，source_day_ids 填 d#。引用本身不证明理解正确；有正文的 note 至少引用一条原始发言（e#），归拢或梦只能补充。\n" +
@@ -1488,8 +1520,8 @@ internal sealed partial class DeepSeekClient : IDisposable
     private const string ReplyRecencyAnchor =
         "[开口之前]\n" +
         "按莉莉丝此刻轻快鲜活的少女口吻直接接话，不念规则：\n" +
-        "1. 极少用破折号；没真转折不写“不是……，是……”对比句；\n" +
-        "2. 点到就停，不自我解释动机，不在句尾硬加“不躲/不藏着/我不猜”类否定尾缀，也不用“是 A 还是 B？”或“……，还是……？”二选一猜对方。";
+        "1. 别惯性用“唔，XX啊”复述词头开场，极少用破折号，没真转折不写“不是……，是……”对比句，也少说“记一笔/先收下/放进心里”这类记账套话；\n" +
+        "2. 点到就停，不自我解释动机，不在句尾硬挂“不躲/不插嘴/不装懂/我不猜”类否定尾缀，也不用“是 A 还是 B？”二选一猜对方。";
 
     // Retain the ordinary prompt entry point used by existing offline probes.
     private static string BuildSystemPrompt(BridgeConfig config, bool allowStoryRecall = true) =>
@@ -1755,6 +1787,10 @@ internal sealed partial class DeepSeekClient : IDisposable
                 {
                     result.DesktopArrange = desktopArrange.GetString() ?? "";
                 }
+                if (doc.RootElement.TryGetProperty("afterbeat", out JsonElement afterbeatJson))
+                {
+                    result.Afterbeat = ParseJsonAfterbeat(afterbeatJson);
+                }
                 ReadStringList(doc.RootElement, "remember", result.AutonomousMemories);
                 ReadStringList(doc.RootElement, "forget", result.AutonomousMemoryRemovals);
                 ReadStringList(doc.RootElement, "memory_recalls", result.MemoryRecalls);
@@ -1827,6 +1863,7 @@ internal sealed partial class DeepSeekClient : IDisposable
         // here, before either of them can see it (2026-09-20: she echoed
         // "[莉莉丝情绪底层] 有点忍不住想知道更多。" into a bubble).
         result.Text = ReplySanitizer.StripInternalHeaders(result.Text);
+        result.Text = ReplySanitizer.StripLeadingMetaDecisionParenthetical(result.Text, playerText);
         if (result.MemoConfirmationProvided && result.Text.Length == 0)
             result.ExplicitEmptyText = true; // settlement needs no extra model fill
         // Restore layout only when the existing complete parser/sanitizer left
@@ -2049,11 +2086,103 @@ internal sealed partial class DeepSeekClient : IDisposable
             }
         }
 
+        var afterbeats = Regex.Matches(
+            source,
+            @"(?is)<\s*afterbeat(?<attrs>(?:\s+[a-z_]+\s*=\s*(?:""[^""]*""|'[^']*'|[^\s>]+))*)?\s*>(?<body>.*?)<\s*/\s*afterbeat\s*>");
+        foreach (Match match in afterbeats)
+        {
+            if (IsQuotedSyntax(match))
+                continue;
+            AfterbeatPlan? parsedAfterbeat = BuildAfterbeatPlan(match.Groups["attrs"].Value, match.Groups["body"].Value);
+            if (parsedAfterbeat != null && result.Afterbeat == null)
+                result.Afterbeat = parsedAfterbeat;
+            text = text.Replace(match.Value, "");
+            strippedAnyTag = true;
+        }
+
         result.Text = MemoryStore.Clean(text);
         // After the newline folding above, so the spaces that padded a removed
         // tag are seen as one run instead of separate lines.
         if (strippedAnyTag)
             result.Text = ReplySanitizer.CleanOrphanPunctuation(result.Text);
+    }
+
+    private static AfterbeatPlan? ParseJsonAfterbeat(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+            return BuildAfterbeatPlan("", element.GetString() ?? "");
+        if (element.ValueKind != JsonValueKind.Object)
+            return null;
+        string body = element.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String
+            ? t.GetString() ?? "" : "";
+        float delay = 3.0f;
+        if (element.TryGetProperty("delay", out var d) && d.TryGetDouble(out double parsedD))
+            delay = (float)parsedD;
+        else if (element.TryGetProperty("delay_seconds", out var ds) && ds.TryGetDouble(out double parsedDs))
+            delay = (float)parsedDs;
+        string action = element.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.String
+            ? DigestActionTag(a.GetString() ?? "") : "";
+        string emotion = element.TryGetProperty("emotion", out var e) && e.ValueKind == JsonValueKind.String
+            ? (e.GetString() ?? "").Trim() : "";
+        return FinalizeAfterbeatPlan(body, delay, action, emotion);
+    }
+
+    private static AfterbeatPlan? BuildAfterbeatPlan(string rawAttrs, string rawBody)
+    {
+        float delay = 3.0f;
+        string action = "";
+        string emotion = "";
+        if (!string.IsNullOrWhiteSpace(rawAttrs))
+        {
+            foreach (Match attr in Regex.Matches(rawAttrs, @"(?is)([a-z_]+)\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>]+))"))
+            {
+                string key = attr.Groups[1].Value.ToLowerInvariant();
+                string val = (attr.Groups[2].Success ? attr.Groups[2].Value
+                    : attr.Groups[3].Success ? attr.Groups[3].Value
+                    : attr.Groups[4].Value).Trim();
+                if (key is "delay" or "delay_s" or "delay_seconds"
+                    && float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float parsedDelay))
+                    delay = parsedDelay;
+                else if (key == "action" && action.Length == 0)
+                    action = DigestActionTag(val);
+                else if (key == "emotion" && emotion.Length == 0)
+                    emotion = val;
+            }
+        }
+        return FinalizeAfterbeatPlan(rawBody, delay, action, emotion);
+    }
+
+    private static AfterbeatPlan? FinalizeAfterbeatPlan(string rawBody, float delay, string action, string emotion)
+    {
+        if (string.IsNullOrWhiteSpace(rawBody))
+            return null;
+        string body = rawBody;
+        bool strippedInner = false;
+        foreach (Match inner in Regex.Matches(rawBody, @"(?is)<\s*(action|emotion|voice|sound|animation)\s*[:=]\s*([^>]+)>"))
+        {
+            string kind = inner.Groups[1].Value.ToLowerInvariant();
+            string val = inner.Groups[2].Value.Trim().Trim('<', '>', '}', '{', '"', '\'', ' ');
+            if (kind == "action" && action.Length == 0) action = DigestActionTag(val);
+            else if (kind == "emotion" && emotion.Length == 0) emotion = val;
+            body = body.Replace(inner.Value, "");
+            strippedInner = true;
+        }
+        foreach (Match bare in Regex.Matches(body, @"(?is)<\s*([\p{L}_][\p{L}\p{N}_]*)\s*>"))
+        {
+            if (ActionCatalog.TryParseAction(bare.Groups[1].Value) is { } parsedAct)
+            {
+                if (action.Length == 0) action = parsedAct.ToString();
+                body = body.Replace(bare.Value, "");
+                strippedInner = true;
+            }
+        }
+        body = MemoryStore.Clean(body);
+        if (strippedInner)
+            body = ReplySanitizer.CleanOrphanPunctuation(body);
+        body = ReplySanitizer.StripInternalHeaders(body).Trim();
+        if (body.Length is < 1 or > 65)
+            return null;
+        return new AfterbeatPlan(body, Math.Clamp(delay, 1.0f, 12.0f), action, emotion);
     }
 
     private static void AppendSequence(ApiResult result, string value)

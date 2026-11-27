@@ -132,7 +132,8 @@ internal sealed partial class MemoryStore
             if (window == null || window.Count == 0)
             {
                 // Legacy fallback when no dialogue window is supplied: deterministic rotation over Current heads.
-                var candidates = doc.Entries.Where(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version)
+                var candidates = doc.Entries.Where(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
+                        && !IsB1ManagedInactiveState(B1ManagementState(doc, e.Version)))
                     .OrderBy(e => string.CompareOrdinal(e.LogicalId, lastLogicalId) <= 0 ? 1 : 0)
                     .ThenBy(e => e.LogicalId, StringComparer.Ordinal).Take(32);
                 foreach (var entry in candidates)
@@ -155,7 +156,7 @@ internal sealed partial class MemoryStore
                 && t.DeliveryState == "delivered" && !string.IsNullOrWhiteSpace(t.Text)).ToList();
             var windowEventIds = window.Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
             var windowNewB1s = doc.Entries.Where(e => windowEventIds.Contains(e.Packet.UserEventId)
-                && B1ManagementState(doc, e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")).ToList();
+                && !IsB1ManagedInactiveState(B1ManagementState(doc, e.Version))).ToList();
             string userQuery = string.Join(" ", userTurns.Select(t => t.Text)
                 .Concat(windowNewB1s.Select(B1DiscoveryText)));
             string windowQuery = string.Join(" ", userTurns.Select(t => t.Text)
@@ -194,12 +195,12 @@ internal sealed partial class MemoryStore
             var familyBest = new Dictionary<string, (B1Entry Head, double Score, string Channel)>(StringComparer.Ordinal);
             foreach (var e in doc.Entries)
             {
-                if (B1ManagementState(doc, e.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted") continue;
+                if (IsB1ManagedInactiveState(B1ManagementState(doc, e.Version))) continue;
                 // Always resolve to the family's current head and exclude B1 families created inside this very window
                 if (!doc.Current.TryGetValue(e.LogicalId, out string? headVersion) || string.IsNullOrEmpty(headVersion)) continue;
                 var head = FindB1(doc, headVersion);
                 if (head == null || windowEventIds.Contains(head.Packet.UserEventId)
-                    || B1ManagementState(doc, head.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted") continue;
+                    || IsB1ManagedInactiveState(B1ManagementState(doc, head.Version))) continue;
 
                 var tokens = _b1SearchIndex[e.Version];
                 var meaning = _b1MeaningSearchIndex[e.Version];

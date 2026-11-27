@@ -69,6 +69,35 @@ class ProsodyDirectorTests(unittest.TestCase):
         self.assertLessEqual(len(plan2[1][1]), 18)
         self.assertEqual(plan2[-1], (1, "念、莉莉丝，计一次；"))
 
+        # >=24-char single-sentence Bubble 0 without early period peels on quote-safe soft break for fast TTFA on iGPU/CPU
+        plan3 = tts_worker.build_bubble_clause_plan(
+            ["唔，Luv(sic)啊，绕了一圈又回到这一串上来了，真好听呀。"],
+            start_bubble_index=0,
+        )
+        self.assertGreaterEqual(len(plan3), 2)
+        self.assertEqual(plan3[0], (0, "唔，Luv(sic)啊，"))
+        self.assertEqual(tts_worker.normalize_clause_for_synthesis(plan3[0][1]), "唔，Luv(sic)啊。")
+
+    def test_trim_tts_audio_removes_eos_runaway_silence_and_preserves_breath(self) -> None:
+        sr = 24000
+        # 3.2s voiced speech followed by 11.4s <EOS>-miss low-level noise/silence (14.6s total)
+        t_voiced = np.arange(int(3.2 * sr), dtype=np.float32) / sr
+        voiced = 0.22 * np.sin(2.0 * np.pi * 320.0 * t_voiced)
+        tail_hiss = np.full(int(11.4 * sr), 0.0004, dtype=np.float32)
+        runaway = np.concatenate([voiced, tail_hiss])
+        trimmed = tts_worker.trim_tts_audio(runaway, sr)
+        trimmed_sec = trimmed.size / float(sr)
+        self.assertGreaterEqual(trimmed_sec, 3.35)
+        self.assertLessEqual(trimmed_sec, 3.55)
+
+        # Pure zero/near-zero misfire drops cleanly to empty array
+        dead = np.zeros(int(2.0 * sr), dtype=np.float32)
+        self.assertEqual(tts_worker.trim_tts_audio(dead, sr).size, 0)
+
+        # Normal crisp speech without runaway tail stays untouched
+        normal = np.concatenate([voiced, np.zeros(int(0.15 * sr), dtype=np.float32)])
+        self.assertEqual(tts_worker.trim_tts_audio(normal, sr).size, normal.size)
+
     def test_brackets_and_corner_quotes_preserved_as_spoken_text(self) -> None:
         # Adjacent quotes collapse cleanly with single '、' and no '，、' / '、，'
         self.assertEqual(
@@ -194,7 +223,13 @@ class FlashSrBweTests(unittest.TestCase):
         "Requires local FlashSR ONNX and onnxruntime",
     )
     def test_real_flashsr_lossless_crossover_preserves_low_band_and_aligns_zero_lag(self) -> None:
-        bwe = tts_worker.FlashSrBwe(DEFAULT_FLASHSR_ONNX, num_threads=4)
+        avail = set(tts_worker._ort.get_available_providers() or [])
+        has_gpu_ep = bool({"CUDAExecutionProvider", "DmlExecutionProvider"} & avail)
+        bwe = tts_worker.FlashSrBwe(
+            DEFAULT_FLASHSR_ONNX,
+            num_threads=4,
+            device_mode="auto" if has_gpu_ep else "cpu",
+        )
         self.assertTrue(bwe.ready)
         # 1.0s synthetic voiced-like harmonic signal at 24 kHz
         t = np.arange(24000, dtype=np.float32) / 24000.0
@@ -212,8 +247,25 @@ class FlashSrBweTests(unittest.TestCase):
         self.assertAlmostEqual(peak_hz, 440.0, delta=2.0)
         self.assertIn(bwe.provider_name, ("cuda", "dml", "cpu"))
 
+    def test_flashsr_auto_skips_slow_cpu_fallback_when_gpu_unavailable(self) -> None:
+        orig_try = tts_worker.FlashSrBwe._try_build_gpu_session
+        try:
+            tts_worker.FlashSrBwe._try_build_gpu_session = lambda self: (None, "none")  # type: ignore[assignment]
+            bwe = tts_worker.FlashSrBwe(Path(__file__), num_threads=4, device_mode="auto")
+            self.assertFalse(bwe.ready)
+            self.assertEqual(bwe.provider_name, "none")
+            x24 = np.zeros(2400, dtype=np.float32)
+            out, sr, ms, lag = bwe.process_24k(x24)
+            self.assertEqual(sr, 24000)
+            self.assertEqual(out.size, 2400)
+            self.assertEqual(ms, 0.0)
+            self.assertEqual(lag, 0)
+        finally:
+            tts_worker.FlashSrBwe._try_build_gpu_session = orig_try  # type: ignore[assignment]
+
     def test_universal_vulkan_device_selection_across_vendors(self) -> None:
         gb = 1024 ** 3
+        mb = 1024 ** 2
         # Dual-GPU laptop (Intel iGPU index 0 + NVIDIA RTX index 1) -> picks discrete RTX (1)
         devs_dual = [
             {"type": "gpu", "index": 0, "description": "Intel(R) UHD Graphics", "memory": {"free_bytes": 6 * gb, "total_bytes": 8 * gb}},
@@ -221,6 +273,20 @@ class FlashSrBweTests(unittest.TestCase):
             {"type": "cpu", "index": 0, "description": "Intel Core i7"},
         ]
         self.assertEqual(tts_worker.select_best_vulkan_device(devs_dual), 1)
+
+        # Real community hybrid laptop: Ryzen 7 7940H [Radeon 780M] ("igpu", 512MB UMA carveout) + RTX 4050 Laptop ("gpu", 6GB)
+        devs_hybrid_7940h = [
+            {"type": "igpu", "index": 0, "description": "AMD Radeon 780M Graphics", "memory": {"free_bytes": 512 * mb, "total_bytes": 512 * mb}},
+            {"type": "gpu", "index": 1, "description": "NVIDIA GeForce RTX 4050 Laptop GPU", "memory": {"free_bytes": 5 * gb, "total_bytes": 6 * gb}},
+        ]
+        self.assertEqual(tts_worker.rank_vulkan_devices(devs_hybrid_7940h), [1, 0])
+        self.assertEqual(tts_worker.select_best_vulkan_device(devs_hybrid_7940h), 1)
+
+        # Real ultrabook: Intel Iris Xe / Arc or AMD Radeon 780M reported as "igpu" with 1GB UMA carveout -> selected (NOT rejected to CPU!)
+        devs_ultrabook_igpu = [
+            {"type": "igpu", "index": 0, "description": "Intel(R) Iris(R) Xe Graphics", "memory": {"free_bytes": 1024 * mb, "total_bytes": 1024 * mb}},
+        ]
+        self.assertEqual(tts_worker.select_best_vulkan_device(devs_ultrabook_igpu), 0)
 
         # AMD discrete GPU -> picks index 0
         devs_amd = [
@@ -234,7 +300,7 @@ class FlashSrBweTests(unittest.TestCase):
         ]
         self.assertEqual(tts_worker.select_best_vulkan_device(devs_igpu), 0)
 
-        # Software renderer or tiny <3GB VRAM -> returns None (triggers clean CPU fallback)
+        # Software renderer or tiny <=2GB legacy dGPU -> returns None (triggers clean CPU fallback)
         devs_bad = [
             {"type": "gpu", "index": 0, "description": "Microsoft Basic Render Driver", "memory": {"free_bytes": 8 * gb}},
             {"type": "gpu", "index": 1, "description": "Old Tiny GPU", "memory": {"free_bytes": 1 * gb, "total_bytes": 2 * gb}},

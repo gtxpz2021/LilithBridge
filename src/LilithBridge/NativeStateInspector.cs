@@ -155,8 +155,9 @@ internal static class NativeStateInspector
     }
 
     /// <summary>
-    /// True while the original game does its own hiding/performance/pose work
-    /// and mod micro-behavior should wait instead of competing.
+    /// True while the original game is hidden, disappearing, fullscreen-occluded, or asleep
+    /// and mod speech/reflection should wait instead of competing. Resting poses (lying down /
+    /// sofa sitting) are NOT treated as quiet here; physical action callers check IsPoseBlocked directly.
     /// </summary>
     public static bool IsNativeQuietForMod()
     {
@@ -165,7 +166,6 @@ internal static class NativeStateInspector
             || IsDissipatePending
             || IsNeglectHidden
             || IsForegroundFullscreen
-            || IsPoseBlocked
             || IsSleeping;
     }
 
@@ -183,6 +183,7 @@ internal static class NativeStateInspector
         builder.Append(";neglect_hidden=" + IsNeglectHidden);
         builder.Append(";screen_peeking=" + IsScreenPeeking);
         builder.Append(";pose_blocked=" + IsPoseBlocked);
+        builder.Append(";sleeping=" + IsSleeping);
         builder.Append(";music=" + IsMusicPlayerRunning);
         builder.Append(";rival_pet=" + IsRivalPetRunning);
         builder.Append(";foreground_fullscreen=" + IsForegroundFullscreen);

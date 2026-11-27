@@ -166,7 +166,7 @@ namespace LilithSetup
 
     public static class VoicePackProvisioning
     {
-        public const string TtsWorkerHash = "43922a80eec1658bd1cd3eed6261f93763ca339f7c11801110a94a9c7f261ec4";
+        public const string TtsWorkerHash = "7b0701defadd8a1b474dedccb8bda95fd50c35db0dfceab58d55d85d19af241f";
         public const string TtsVerifyHash = "670ad8af6dfceed227d767dd6a393a3a1740fcd9fcaa25483e5d1cddbe88a49e";
         public const string SttWorkerHash = "424ba08d9870ab5a3f7ec5e1988900be274122f1fc39de46215b1bccd18b3e54";
         public const string SttVerifyHash = "29a20db36bba867c437300a74012f2dabee9f99eead01d9c81141f2a08ddf4a7";
@@ -174,7 +174,8 @@ namespace LilithSetup
 
         public static readonly string[] PreviousTtsWorkerHashes = new[]
         {
-            "d87eea09a22aeb34580704332038c31f7d71188e31e927aece90f237b67a42c3"
+            "d87eea09a22aeb34580704332038c31f7d71188e31e927aece90f237b67a42c3",
+            "43922a80eec1658bd1cd3eed6261f93763ca339f7c11801110a94a9c7f261ec4"
         };
         public static readonly string[] PreviousSttWorkerHashes = new string[0];
 

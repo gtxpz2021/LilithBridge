@@ -35,7 +35,7 @@ internal sealed partial class BridgeController
         {
             _sessionState.Mood = MoodKind.Caring;
             _sessionState.MoodReason = "player_crisis_support";
-            extraContext += "[安全优先] 玩家可能正在经历强烈痛苦或危险。先认真接住真实情绪，不玩设定、不评判、不催促；如果需要，鼓励联系可信任的人或心理援助热线。";
+            extraContext += "[安全优先] 玩家可能正在经历强烈痛苦或危险。先认真倾听并陪伴眼前的人，不玩设定、不评判、不催促；如果需要，鼓励联系可信任的人或心理援助热线。";
         }
         if (!_proactiveRequest && text.Length > 0)
         {
@@ -214,6 +214,8 @@ internal sealed partial class BridgeController
         experienceMatching.Dispose();
         nativeDialogueScope.Dispose();
         mentionScope.Dispose();
+        bool isProactiveSubmission = _proactiveRequest;
+        string proactiveSubmissionKind = _activeProactiveKind;
         Task.Run(async () =>
         {
             if (submissionGeneration != _conversationGeneration) return;
@@ -233,6 +235,8 @@ internal sealed partial class BridgeController
                 sharedActivitySupply: sharedSupply, requestSourcePermission: dialogueRequest?.WorkCarryPermission,
                 proactiveContinuityQuery: requestPurpose == "proactive" ? recallQuery : null).ConfigureAwait(false);
             SubmittedMaterialBinding.Apply(result, dialogueRequest, paperSources, memoTarget);
+            result.IsProactiveTurn = isProactiveSubmission;
+            result.ProactiveCandidateKind = proactiveSubmissionKind;
             result.NativeLinkage = nativeAttempt;
             result.ConversationGeneration = conversationGeneration;
             _mainThread.Enqueue(() =>

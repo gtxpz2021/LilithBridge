@@ -18,6 +18,15 @@ internal sealed partial class MemoryStore
     private bool _b1ManagementObservedIdentity;
     private static string B1ManagementState(B1Document doc, string version) =>
         doc.DeletedVersions.Contains(version) ? "deleted" : doc.Management.GetValueOrDefault(version, "");
+    internal static bool IsB1SettledState(string? state) =>
+        !string.IsNullOrEmpty(state) && (state == "settled" || state.StartsWith("settled:", StringComparison.Ordinal));
+    internal static bool IsB1ValidManagementValue(string? state) =>
+        state is "suppressed" or "withdrawn" or "deleting" or "deleted"
+        || (IsB1SettledState(state) && state!.Length <= 420 && !state.Any(c => c is '\r' or '\n' or '\0'));
+    internal static bool IsB1ManagedInactiveState(string? state) =>
+        state is "suppressed" or "withdrawn" or "deleting" or "deleted" || IsB1SettledState(state);
+    internal static string B1SettledReason(string? state) =>
+        state != null && state.StartsWith("settled:", StringComparison.Ordinal) ? state[8..] : "";
 
     // Candidate discovery must not create a B database merely to learn that an
     // old-domain command has no B competitor. Absence is a filesystem result,
@@ -257,6 +266,7 @@ internal sealed partial class MemoryStore
             return new(false, "purge_incomplete", "已停止使用这条判断，但内容清除还没有完成。",
                 ids.Count == 1 ? "b1:" + ids.First() : "");
         }
+        PurgeB1ProactiveExposure(ids);
         // The legacy scrub changes the compatibility fingerprint. Reload the
         // current transaction view rather than writing a stale base snapshot.
         doc = LoadB1(true) ?? doc;

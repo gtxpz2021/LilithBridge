@@ -28,8 +28,8 @@ internal static partial class NativeBubblePresenter
     private static int _ttsTrackedBubbleIndex = -1;
     private static bool _ttsTrackedHasMoreChunks;
     private static bool _ttsTrackedAwaitingAppearance;
-    private const float MaxTtsBubbleHoldSeconds = 12.0f;
-    private const float MaxTtsFirstBubbleWaitSeconds = 3.2f;
+    private const float MaxTtsBubbleHoldSeconds = 16.0f;
+    private const float MaxTtsFirstBubbleWaitSeconds = 1.8f;
     private const float TtsSyncedInterBubblePauseSeconds = 0.12f;
 
     internal static bool TryGetActiveBubbleForTts(out string replyKey, out int bubbleIndex, out bool hasMoreChunks, out bool awaitingAppearance)

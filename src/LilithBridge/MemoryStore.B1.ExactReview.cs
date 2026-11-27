@@ -44,7 +44,11 @@ internal sealed partial class MemoryStore
             // Re-resolve every saved source. Never rebuild missing material from a
             // current source, nor expose a saved excerpt after source deletion.
             var rows = new List<(string Kind, B1Material Material, string Status, string Text)>();
-            rows.Add(("retained_opinion", original, B1ManagementState(doc,version)=="withdrawn"?"withdrawn_historical_only":resolved.Reason, original.Text));
+            string opinionMgmt = B1ManagementState(doc, version);
+            string opinionStatus = opinionMgmt == "withdrawn" ? "withdrawn_historical_only"
+                : IsB1SettledState(opinionMgmt) ? "settled_historical_only"
+                : resolved.Reason;
+            rows.Add(("retained_opinion", original, opinionStatus, original.Text));
             foreach (var saved in entry.Packet.Materials)
             {
                 var now = ResolveB1(saved.Ref with { Purpose="history" }, doc, new());

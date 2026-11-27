@@ -28,7 +28,7 @@ internal sealed partial class DeepSeekClient
                 "Maintaining the prior judgment without a new entry is a complete answer, not failure.";
         string? raw = await SendTextAsync(config, config.ReflectionModel,
             systemPrompt,
-            material, config.ReflectionMaxTokens, 0.2, false, cancellation,
+            material, config.ReflectionMaxTokens, experienceAnchored ? 0.45 : 0.25, false, cancellation,
             "reflection", reflectionDispatch: dispatch, envelopeOverride: envelope, jsonObject: true).ConfigureAwait(false);
         if (cancellation.IsCancellationRequested || raw == null || raw.Length > 32768
             || envelope.Response.Outcome != "accepted" || envelope.IsLocalFallback

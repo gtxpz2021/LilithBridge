@@ -27,6 +27,7 @@ internal sealed record B1Material(B1Ref Ref, string Text, string Scope, DateTime
     // Request-local provenance for a synthesized read-only correction label.
     // Neither rendered data nor a stored source/body dependency.
     [JsonIgnore] internal string ReadOnlyCorrectionRoot { get; init; } = "";
+    [JsonIgnore] internal (int Start, int End)? EpisodeFocusHint { get; init; }
 }
 internal sealed record B1SourceRange(int Offset, int Chars, int TotalChars,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TextBasis = null);
@@ -133,11 +134,11 @@ internal static class B1Continuity
         + "包中保留结果可能从未展示，不能说玩家见过、接受或你以前说过；历史版本不能充当当前事实。"
         + "b1正文不会自动显示，也不产生以后必须补发/追问的义务。正常text继续自然交流，不讲这些字段。";
 
-    public static readonly string Contract = "[可选保留动作 v3] 如形成可重看的判断、区别或问题，可在末尾附 <b1>{\"v\":3,\"text\":\"有限正文\",\"scope\":\"适用范围\",\"nature\":\"inference\",\"about\":[\"对象的source_ref\"],\"sources\":[\"依据的source_ref\"]}</b1>；无需每轮保留，省略或 <b1>null</b1> 表示不保留。"
-        + "只引用本轮实际给出的 source_ref（材料N 或工具标识）；about 选对象（最多" + MaxAboutReferences + "项，无具体对象可用 []），sources 选依据（最多" + MaxSourceReferences + "项）。"
-        + "字符上限：text=" + MaxResultChars + "，scope=" + MaxScopeChars + "，可选 conditions=" + MaxConditionsChars + "。"
-        + "关联已有理解可用 relation(compare/qualify/revises)+target；nature 可为 reported/inference/hypothesis/question。"
-        + "保留结果不自动显示给玩家，也不能当成已确认事实；台词里不提及字段或标签。";
+    public static readonly string Contract = "[可选保留动作 v3] 对话明面上的事实程序已自动归档，不用重复摘抄。只有本轮冒出你自己真正上心、值得以后再看的小念头时，才在回复末尾附 <b1>{\"v\":3,\"text\":\"用你自己的口吻（我或莉莉丝）写具体念头\",\"scope\":\"具体对象与适用范围\",\"conditions\":\"可选适用前提，无则空串\",\"nature\":\"question|hypothesis|inference\",\"about\":[\"可选对象source_ref\"],\"sources\":[\"依据的source_ref\"],\"relation\":\"\",\"target\":\"\"}</b1>；普通闲聊无需每轮保留，直接省略或给 <b1>null</b1>。"
+        + "nature 按实选填：面向眼前物件、故事或现象冒出的怪问题用 question；对他某句话没拿准的小揣测、或自己嘴硬没说破的后觉心意用 hypothesis；两人没说拢的分歧、反例或新摸清的相处门道用 inference（转述原话用 reported）。"
+        + "关联包内旧想法时，并存补充用 qualify、不同角度对照用 compare、推翻替代旧头用 revises，并在 target 填对应旧想法的 source_ref（无关联则 relation 与 target 均填空串）。"
+        + "只引用本轮实际提供的 source_ref（材料N 或工具标识）；about 最多" + MaxAboutReferences + "项（无具体对象填 []），sources 最多" + MaxSourceReferences + "项；上限 text=" + MaxResultChars + "，scope=" + MaxScopeChars + "，conditions=" + MaxConditionsChars + "。"
+        + "不要写“下次先核实别乱猜”之类的自我管束家规或心理分析标签；b1 不会显示给玩家，也不产生日后追问义务，台词里不提这些字段。";
 
     // Small ambient collector only around the synchronous existing context build.
     // It observes the same final supplied list even when recall telemetry is off.
@@ -193,6 +194,7 @@ internal static class B1Continuity
         }
         if (m.DisplayedReplyFragments != null) row["displayed"] = m.DisplayedReplyFragments
             .Where(d => d.Text.Length > 0).Select(d => new { text = d.Text, at = d.At, state = d.Outcome }).ToArray();
+        if (m.SuppliedRanges is { Count: > 0 }) row["supplied_ranges"] = m.SuppliedRanges;
         return row;
     }
 

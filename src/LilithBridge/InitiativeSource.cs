@@ -39,6 +39,23 @@ internal static class InitiativeSource
         string? sensoryProactiveKind,
         string? sensoryProactiveReason,
         string? sensoryInterruptCost)
+        => PickNextFiltered(state, lastScene, unfinishedTopicEnabled, afterIntimateEnabled, lateNightEnabled,
+            returnEnabled, appChangeEnabled, appChangeAllowed, sensoryProactiveKind, sensoryProactiveReason,
+            sensoryInterruptCost, suppressedKinds: null);
+
+    internal static InitiativeCandidate? PickNextFiltered(
+        SessionState state,
+        LastSceneSummary? lastScene,
+        bool unfinishedTopicEnabled,
+        bool afterIntimateEnabled,
+        bool lateNightEnabled,
+        bool returnEnabled,
+        bool appChangeEnabled,
+        bool appChangeAllowed,
+        string? sensoryProactiveKind,
+        string? sensoryProactiveReason,
+        string? sensoryInterruptCost,
+        IReadOnlySet<string>? suppressedKinds)
     {
         var candidates = new List<InitiativeCandidate>();
         bool suppressAmbientByFocus = string.Equals(sensoryInterruptCost, "high_focus", StringComparison.Ordinal);
@@ -123,6 +140,8 @@ internal static class InitiativeSource
         InitiativeCandidate? best = null;
         foreach (InitiativeCandidate candidate in candidates)
         {
+            if (suppressedKinds != null && suppressedKinds.Contains(candidate.Kind))
+                continue;
             if (best == null || candidate.Priority > best.Priority)
                 best = candidate;
         }

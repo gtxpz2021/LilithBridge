@@ -27,7 +27,11 @@ internal static class NormalUseSetup
         // Ordinary continuity is offered by the existing informed user action.
         // Fill missing gates only; explicit current and legacy choices survive.
         Missing(memory, "derived_write_enabled", JsonValue.Create(true)!);
-        Missing(Object(doc, "b1"), "enabled", JsonValue.Create(true)!);
+        var b1 = Object(doc, "b1");
+        Missing(b1, "enabled", JsonValue.Create(true)!);
+        Missing(b1, "reflection_reconsideration_enabled", JsonValue.Create(true)!);
+        Missing(b1, "proactive_read_only_enabled", JsonValue.Create(true)!);
+        Missing(doc, "pacing_preset", JsonValue.Create("balanced")!);
         bool legacyReviewChoice = (doc["meta"] as JsonObject)?.ContainsKey("review_context_mode") == true;
         if (!legacyReviewChoice)
             Missing(Object(doc, "review_context"), "mode", JsonValue.Create(ReviewContextModes.OnDemand)!);

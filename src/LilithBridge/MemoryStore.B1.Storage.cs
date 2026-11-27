@@ -98,7 +98,7 @@ internal sealed partial class MemoryStore
             || doc.Deliveries.Any(d => d == null || string.IsNullOrEmpty(d.StepId) || string.IsNullOrEmpty(d.EventId)
                 || d.RequestId == null || d.Text == null || d.Outcome == null)
             || doc.Deliveries.Select(DeliveryKey).Distinct().Count() != doc.Deliveries.Count
-            || doc.Management.Any(kv => kv.Key.Length == 0 || kv.Value is not ("suppressed" or "withdrawn" or "deleting" or "deleted"))
+            || doc.Management.Any(kv => kv.Key.Length == 0 || !IsB1ValidManagementValue(kv.Value))
             || doc.DeletedVersions.Any(v => string.IsNullOrEmpty(v))
             || doc.DeletedVersions.Distinct().Count() != doc.DeletedVersions.Count
             || doc.ManagementReceipts.Any(r => r == null || string.IsNullOrEmpty(r.OperationId)

@@ -116,9 +116,18 @@ internal sealed partial class MemoryStore
                     throw new SemanticSnapshotUnavailableException("semantic_b1_snapshot_unreadable");
                 if(doc!=null)retained.AddRange(doc.Entries.Where(e=>B1ManagementState(doc,e.Version) is not
                         ("suppressed" or "withdrawn" or "deleting" or "deleted"))
-                    .Select(e=>new SemanticIndexRecord(e.Version,B1DiscoveryText(e),"assistant","retained","delivered","b1",
-                        e.Revision.ToString(),
-                        doc.Current.GetValueOrDefault(e.LogicalId) == e.Version ? "active" : "superseded")));
+                    .Select(e=>
+                    {
+                        string mgmt = B1ManagementState(doc, e.Version);
+                        bool settled = IsB1SettledState(mgmt);
+                        bool isCurrent = !settled && doc.Current.GetValueOrDefault(e.LogicalId) == e.Version;
+                        string lifecycle = settled ? "settled"
+                            : !isCurrent ? "superseded"
+                            : e.Nature is "inference" or "legacy_unspecified" ? "active"
+                            : "retained_non_bridge";
+                        return new SemanticIndexRecord(e.Version,B1DiscoveryText(e),"assistant","retained","delivered","b1",
+                            e.Revision.ToString(), lifecycle);
+                    }));
             }
             using (PreparationTiming.Measure("sem.snap.reflections"))
             {
@@ -272,7 +281,8 @@ internal sealed partial class MemoryStore
                 var entry = doc?.Entries.FirstOrDefault(e => e.Version == cleanId);
                 if (doc != null && entry != null
                     && doc.Current.GetValueOrDefault(entry.LogicalId) == entry.Version
-                    && B1ManagementState(doc, entry.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")
+                    && !IsB1ManagedInactiveState(B1ManagementState(doc, entry.Version))
+                    && entry.Nature is "inference" or "legacy_unspecified"
                     && SemanticTextHash(B1DiscoveryText(entry)) == expectedHash
                     && !IsExperienceSuppressed(entry.Version)
                     && IsMentionTextAllowed(entry.Text + " " + entry.Scope)
@@ -654,32 +664,40 @@ internal sealed partial class MemoryStore
                 break;
             }
         }
-        if (result.RelevancePlan == null && !explicitLookup && selected.Keys.Count < 24)
+        if (result.RelevancePlan == null && !explicitLookup && direct.Count > 0 && selected.Keys.Count < 24)
         {
-            // H-3: walk anchors in selection priority, not oldest-first. A
-            // closer but already-selected/ineligible neighbour must not hide a
-            // still-missing, eligible counterpart on the other side.
+            // H-3 & WP-4: walk direct anchors in selection priority, not oldest-first,
+            // and lift the single-bubble restriction so multi-bubble assistant replies
+            // backfill their triggering user question (and vice versa).
+            var directAnchorUnitKeys = candidates.Where(c => !c.IsSpark).Select(c => c.Unit.Key).ToHashSet(StringComparer.Ordinal);
             bool backfilled = false;
             foreach (var anchor in selected.Values.ToArray())
             {
-                if (anchor.Members.Count != 1) continue;
+                if (!directAnchorUnitKeys.Contains(anchor.Key)) continue;
+                string anchorSourceUserId = anchor.Role == "assistant"
+                    ? anchor.Members.Select(m => m.SourceEventId).FirstOrDefault(id => id.Length > 0) ?? ""
+                    : "";
+                bool IsLinkedCounterpart(LogicalDialogueUnit u) =>
+                    (anchor.Role == "assistant" && anchorSourceUserId.Length > 0 && u.Members.Any(m => m.EventId == anchorSourceUserId))
+                    || (anchor.Role == "user" && u.Role == "assistant" && u.Members.Any(m => m.SourceEventId == anchor.AnchorEventId));
                 var counterparts = catalog.Units
                     .Where(u => u.SessionId == anchor.SessionId
                         && u.Role != anchor.Role
-                        && u.Members.Count == 1
                         && !selected.ContainsKey(u.Key)
                         && Eligible(u)
-                        && Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes) <= 5d)
-                    .OrderBy(u => Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes))
+                        && (IsLinkedCounterpart(u) || Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes) <= 5d))
+                    .OrderBy(u => IsLinkedCounterpart(u) ? 0 : 1)
+                    .ThenBy(u => Math.Abs((u.Timestamp - anchor.Timestamp).TotalMinutes))
                     .ThenBy(u => u.Timestamp);
 
                 foreach (var counterpart in counterparts)
                 {
                     DateTimeOffset first = counterpart.Timestamp < anchor.Timestamp ? counterpart.Timestamp : anchor.Timestamp;
                     DateTimeOffset last = counterpart.Timestamp < anchor.Timestamp ? anchor.Timestamp : counterpart.Timestamp;
-                    bool interposed = catalog.Units.Any(u => u.SessionId == anchor.SessionId
-                        && u.Key != anchor.Key && u.Key != counterpart.Key
-                        && u.Timestamp >= first && u.Timestamp <= last);
+                    bool interposed = !IsLinkedCounterpart(counterpart)
+                        && catalog.Units.Any(u => u.SessionId == anchor.SessionId
+                            && u.Key != anchor.Key && u.Key != counterpart.Key
+                            && u.Timestamp >= first && u.Timestamp <= last);
                     if (interposed || selected.Keys.Count + 1 > 24) continue;
                     // Same 24-unit capacity; never enters trace.Anchors.
                     selected.TryAdd(counterpart.Key, counterpart);

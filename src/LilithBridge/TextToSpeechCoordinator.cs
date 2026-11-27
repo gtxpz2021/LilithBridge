@@ -83,6 +83,7 @@ internal sealed class TextToSpeechCoordinator
     private bool _workerFinishedActive;
     private bool _playbackArmed;
     private int _maxVisibleBubbleIndex = -1;
+    private int _minPlayableBubbleIndex;
 
     internal long Generation
     {
@@ -107,6 +108,11 @@ internal sealed class TextToSpeechCoordinator
     internal int MaxVisibleBubbleIndex
     {
         get { lock (_gate) return _maxVisibleBubbleIndex; }
+    }
+
+    internal int MinPlayableBubbleIndex
+    {
+        get { lock (_gate) return _minPlayableBubbleIndex; }
     }
 
     internal int QueuedChunkCount
@@ -162,6 +168,7 @@ internal sealed class TextToSpeechCoordinator
             _workerFinishedActive = false;
             _playbackArmed = true;
             _maxVisibleBubbleIndex = int.MaxValue;
+            _minPlayableBubbleIndex = 0;
             return _activeUtteranceId;
         }
     }
@@ -181,6 +188,7 @@ internal sealed class TextToSpeechCoordinator
             _workerFinishedActive = false;
             _playbackArmed = false;
             _maxVisibleBubbleIndex = -1;
+            _minPlayableBubbleIndex = 0;
             return _activeUtteranceId;
         }
     }
@@ -196,6 +204,35 @@ internal sealed class TextToSpeechCoordinator
             _playbackArmed = true;
             if (bubbleIndex > _maxVisibleBubbleIndex)
                 _maxVisibleBubbleIndex = bubbleIndex;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Marks earlier bubbles (<paramref name="minBubbleIndex"/>) as already dismissed due to slow synthesis,
+    /// discarding only stale late chunks for past bubbles WITHOUT cancelling synthesis for subsequent bubbles.
+    /// </summary>
+    internal bool AdvanceMinPlayableBubble(string replyKey, int minBubbleIndex)
+    {
+        if (string.IsNullOrEmpty(replyKey) || minBubbleIndex <= 0)
+            return false;
+        lock (_gate)
+        {
+            if (_activeUtteranceId.Length == 0 || !string.Equals(_activeReplyKey, replyKey, StringComparison.Ordinal))
+                return false;
+            if (minBubbleIndex > _minPlayableBubbleIndex)
+                _minPlayableBubbleIndex = minBubbleIndex;
+            while (_playbackQueue.Count > 0)
+            {
+                TtsAudioChunk head = _playbackQueue.Peek();
+                if (!string.Equals(head.UtteranceId, _activeUtteranceId, StringComparison.Ordinal)
+                    || (head.BubbleIndex >= 0 && head.BubbleIndex < _minPlayableBubbleIndex))
+                {
+                    _playbackQueue.Dequeue();
+                    continue;
+                }
+                break;
+            }
             return true;
         }
     }
@@ -221,6 +258,7 @@ internal sealed class TextToSpeechCoordinator
             _workerFinishedActive = false;
             _playbackArmed = true;
             _maxVisibleBubbleIndex = int.MaxValue;
+            _minPlayableBubbleIndex = 0;
             return (_activeUtteranceId, false, oldId);
         }
     }
@@ -237,6 +275,7 @@ internal sealed class TextToSpeechCoordinator
             _workerFinishedActive = true;
             _playbackArmed = false;
             _maxVisibleBubbleIndex = -1;
+            _minPlayableBubbleIndex = 0;
             _playbackQueue.Clear();
             return cancelled;
         }
@@ -272,6 +311,8 @@ internal sealed class TextToSpeechCoordinator
 
             if (string.Equals(ev.Kind, "audio_chunk", StringComparison.Ordinal))
             {
+                if (ev.BubbleIndex >= 0 && ev.BubbleIndex < _minPlayableBubbleIndex)
+                    return false;
                 float[] samples = DecodePcm16Base64(ev.Pcm16Base64);
                 if (samples.Length == 0 || ev.SampleRate <= 0)
                     return false;
@@ -312,12 +353,16 @@ internal sealed class TextToSpeechCoordinator
             return false;
         lock (_gate)
         {
-            if (_activeUtteranceId.Length == 0 || !string.Equals(_activeReplyKey, replyKey, StringComparison.Ordinal))
+            if (_activeUtteranceId.Length == 0
+                || !string.Equals(_activeReplyKey, replyKey, StringComparison.Ordinal)
+                || bubbleIndex < _minPlayableBubbleIndex)
+            {
                 return false;
+            }
             foreach (TtsAudioChunk item in _playbackQueue)
             {
                 if (string.Equals(item.UtteranceId, _activeUtteranceId, StringComparison.Ordinal)
-                    && (item.BubbleIndex < 0 || item.BubbleIndex <= bubbleIndex))
+                    && (item.BubbleIndex < 0 || (item.BubbleIndex >= _minPlayableBubbleIndex && item.BubbleIndex <= bubbleIndex)))
                 {
                     return true;
                 }
@@ -338,7 +383,8 @@ internal sealed class TextToSpeechCoordinator
             while (_playbackQueue.Count > 0)
             {
                 TtsAudioChunk head = _playbackQueue.Peek();
-                if (!string.Equals(head.UtteranceId, _activeUtteranceId, StringComparison.Ordinal))
+                if (!string.Equals(head.UtteranceId, _activeUtteranceId, StringComparison.Ordinal)
+                    || (head.BubbleIndex >= 0 && head.BubbleIndex < _minPlayableBubbleIndex))
                 {
                     _playbackQueue.Dequeue();
                     continue;
@@ -415,8 +461,12 @@ internal sealed class TextToSpeechCoordinator
             return false;
         lock (_gate)
         {
-            if (_activeUtteranceId.Length == 0 || !string.Equals(_activeReplyKey, replyKey, StringComparison.Ordinal))
+            if (_activeUtteranceId.Length == 0
+                || !string.Equals(_activeReplyKey, replyKey, StringComparison.Ordinal)
+                || bubbleIndex < _minPlayableBubbleIndex)
+            {
                 return false;
+            }
 
             if (isPlayerPlaying
                 && string.Equals(playingUtteranceId, _activeUtteranceId, StringComparison.Ordinal)
@@ -428,7 +478,7 @@ internal sealed class TextToSpeechCoordinator
             foreach (TtsAudioChunk item in _playbackQueue)
             {
                 if (string.Equals(item.UtteranceId, _activeUtteranceId, StringComparison.Ordinal)
-                    && item.BubbleIndex >= 0
+                    && item.BubbleIndex >= _minPlayableBubbleIndex
                     && item.BubbleIndex <= bubbleIndex)
                 {
                     return true;

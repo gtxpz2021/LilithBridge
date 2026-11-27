@@ -127,13 +127,13 @@ def normalize_clause_for_synthesis(text: str) -> str:
 
 
 def estimate_clause_max_tokens(text: str) -> int:
-    """Compute generous 12Hz codec token ceiling (~5.5 tokens/char + 30) so <EOS> misses cannot run away."""
+    """Compute generous 12Hz codec token ceiling (~4.7 tokens/char + 24) so <EOS> misses cannot run away."""
     s = (text or "").strip()
     if not s:
         return 42
     ellipsis_bonus = (s.count("……") + s.count("...")) * 10
-    est = int(math.ceil(len(s) * 5.5 + 30 + ellipsis_bonus))
-    return max(42, min(360, est))
+    est = int(math.ceil(len(s) * 4.7 + 24 + ellipsis_bonus))
+    return max(42, min(260, est))
 
 
 class _WinJobGuard:
@@ -464,11 +464,19 @@ def _split_long_sentence_soft(sentence: str, max_chars: int) -> List[str]:
 
 
 def _split_first_bubble_lead(text: str) -> List[str]:
-    """If Bubble 0 contains multiple sentences (>16 chars), peel off a short lead sentence (4..22 chars)
-    so Bubble 0's first audio arrives in ~1.5s while the remainder pipelines in parallel."""
+    """If Bubble 0 contains multiple sentences (>16 chars) or a long opening sentence (>=24 chars),
+    peel off a short lead phrase so Bubble 0's first audio arrives fast while the remainder pipelines."""
     if len(text) <= 16:
         return [text]
+    quote_closer = ""
     for i, ch in enumerate(text):
+        if quote_closer:
+            if ch == quote_closer:
+                quote_closer = ""
+            continue
+        if ch in _QUOTE_OPENERS:
+            quote_closer = _QUOTE_OPENERS[ch]
+            continue
         if 4 <= i <= 22 and ch in _STRONG_BREAKS:
             end = i + 1
             while end < len(text) and (text[end] in _STRONG_BREAKS or text[end] in _TRAILING_CLOSERS):
@@ -478,6 +486,24 @@ def _split_first_bubble_lead(text: str) -> List[str]:
             if len(head) >= 4 and len(tail) >= 6 and not _ONLY_PUNCT_RE.match(head) and not _ONLY_PUNCT_RE.match(tail):
                 return [head, tail]
             break
+
+    # Secondary fast-TTFA peel for >=24-char single-sentence opening bubbles on laptop GPUs / iGPUs / CPUs
+    if len(text) >= 24:
+        quote_closer = ""
+        for i, ch in enumerate(text):
+            if quote_closer:
+                if ch == quote_closer:
+                    quote_closer = ""
+                continue
+            if ch in _QUOTE_OPENERS:
+                quote_closer = _QUOTE_OPENERS[ch]
+                continue
+            if 6 <= i <= 18 and ch in _SOFT_BREAKS:
+                end = i + 1
+                head = text[:end].strip()
+                tail = text[end:].strip()
+                if len(head) >= 6 and len(tail) >= 8 and not _ONLY_PUNCT_RE.match(head) and not _ONLY_PUNCT_RE.match(tail):
+                    return [head, tail]
     return [text]
 
 
@@ -642,11 +668,19 @@ class FlashSrBwe:
     def _try_build_gpu_session(self) -> Tuple[Optional[Any], str]:
         assert _ort is not None and self._onnx_path is not None
         avail = set(_ort.get_available_providers() or [])
+        adapter_ids = list(dict.fromkeys([self._device_id, 0, 1])) if self._device_mode == "auto" else [self._device_id]
         candidates: List[Tuple[str, Any]] = []
         if "CUDAExecutionProvider" in avail:
-            candidates.append(("cuda", ("CUDAExecutionProvider", {"device_id": self._device_id})))
+            for dev_id in adapter_ids:
+                candidates.append(("cuda", ("CUDAExecutionProvider", {"device_id": dev_id})))
         if "DmlExecutionProvider" in avail:
-            candidates.append(("dml", ("DmlExecutionProvider", {"device_id": self._device_id})))
+            for dev_id in adapter_ids:
+                candidates.append(("dml", ("DmlExecutionProvider", {"device_id": dev_id})))
+
+        probe = (0.1 * np.sin(2.0 * np.pi * 440.0 * np.arange(8000, dtype=np.float32) / 16000.0))[None, :]
+        best_sess: Optional[Any] = None
+        best_name = "none"
+        best_ms = float("inf")
 
         for short_name, provider_spec in candidates:
             try:
@@ -664,28 +698,42 @@ class FlashSrBwe:
                 if expected_ep not in active:
                     continue
                 # Startup smoke-test & health check: verify finite output and fast GPU execution
-                probe = (0.1 * np.sin(2.0 * np.pi * 440.0 * np.arange(8000, dtype=np.float32) / 16000.0))[None, :]
                 sess.run(["reconstruction"], {"audio_values": probe})  # compile shader/graph once
                 t0 = time.perf_counter()
                 out = sess.run(["reconstruction"], {"audio_values": probe})[0]
                 probe_ms = (time.perf_counter() - t0) * 1000.0
                 if out.size < 20000 or not bool(np.all(np.isfinite(out))):
                     continue
-                # If an ultra-weak iGPU takes >1200ms for 0.5s audio (slower than CPU), fall back to CPU
-                if self._device_mode == "auto" and probe_ms > 1200.0:
+                if self._device_mode == "auto" and probe_ms > 450.0:
                     continue
-                return sess, short_name
+                if probe_ms <= 120.0:
+                    return sess, short_name
+                if probe_ms < best_ms:
+                    best_ms = probe_ms
+                    best_sess = sess
+                    best_name = short_name
             except Exception:
                 continue
+        if best_sess is not None:
+            return best_sess, best_name
         return None, "none"
 
     def _init_session(self) -> None:
+        if self._device_mode == "cpu":
+            self._sess = self._build_cpu_session()
+            self._provider_name = "cpu"
+            return
         if self._device_mode in ("auto", "gpu"):
             sess, prov = self._try_build_gpu_session()
             if sess is not None:
                 self._sess = sess
                 self._provider_name = prov
                 return
+            # In auto/gpu mode, do NOT silently fall back to CPU FlashSR (~5,800ms per 5s audio);
+            # keep crisp native 24kHz at 0ms extra latency unless the user explicitly sets bwe_device="cpu".
+            self._sess = None
+            self._provider_name = "none"
+            return
         self._sess = self._build_cpu_session()
         self._provider_name = "cpu"
 
@@ -725,13 +773,15 @@ class FlashSrBwe:
             try:
                 sr_out = self._sess.run(["reconstruction"], {"audio_values": x16[None, :]})[0].squeeze(0).astype(np.float32)
             except Exception:
-                # Self-healing fallback: if GPU/DML driver resets mid-game, fall back cleanly to CPU
-                if self._provider_name != "cpu" and self._onnx_path is not None:
+                if self._device_mode == "cpu" and self._provider_name != "cpu" and self._onnx_path is not None:
                     self._sess = self._build_cpu_session()
                     self._provider_name = "cpu"
                     sr_out = self._sess.run(["reconstruction"], {"audio_values": x16[None, :]})[0].squeeze(0).astype(np.float32)
                 else:
-                    raise
+                    # Disable broken GPU BWE session and fall back cleanly to 0ms 24kHz passthrough
+                    self._sess = None
+                    self._provider_name = "none"
+                    return x24.astype(np.float32, copy=False), 24000, 0.0, 0
 
         sr_aligned, lag = _align_signal_fast(orig_48k, sr_out, max_lag=2048)
 
@@ -756,6 +806,38 @@ class FlashSrBwe:
         y48 = y48[: orig_len24 * 2]
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         return y48, 48000, elapsed_ms, lag
+
+
+def trim_tts_audio(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Trim <EOS>-miss runaway trailing silence (>320ms) while preserving natural 240ms breath tails,
+    and drop pure-silence misfires so bubbles never stall on dead audio."""
+    if audio.size == 0 or sr <= 0:
+        return np.zeros(0, dtype=np.float32)
+    y = np.nan_to_num(audio.astype(np.float32, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
+    peak = float(np.max(np.abs(y)))
+    if peak < 1.5e-3:
+        return np.zeros(0, dtype=np.float32)
+
+    hop = max(1, sr // 50)  # 20ms frames
+    n_frames = y.size // hop
+    if n_frames < 25:  # <0.5s audio: leave untouched
+        return y
+
+    framed = y[: n_frames * hop].reshape(n_frames, hop)
+    rms = np.sqrt(np.mean(framed * framed, axis=1))
+    active_rms = float(np.percentile(rms, 95))
+    thr = max(0.0025, min(0.009, active_rms * 0.035))
+    voiced_idx = np.flatnonzero(rms >= thr)
+    if voiced_idx.size == 0:
+        return np.zeros(0, dtype=np.float32) if peak < 0.003 else y
+
+    last_voiced_end = int(voiced_idx[-1] + 1) * hop
+    breath_pad = int(round(sr * 0.24))
+    min_trim_worth = int(round(sr * 0.32))
+    keep_end = min(y.size, last_voiced_end + breath_pad)
+    if y.size - keep_end >= min_trim_worth:
+        return y[:keep_end].copy()
+    return y
 
 
 def float32_to_pcm16_bytes(audio: np.ndarray, sr: int, fade_ms: float = 5.0) -> bytes:
@@ -823,62 +905,78 @@ def _pick_free_local_port() -> int:
 
 
 _SW_RENDERER_HINTS = ("llvmpipe", "swiftshader", "microsoft basic render", "basic render driver", "software")
-_DISCRETE_GPU_HINTS = ("nvidia", "geforce", "rtx", "gtx", "quadro", "radeon rx", "radeon pro", "rx ", "arc ")
-_MIN_VULKAN_GPU_BYTES = int(3.0 * (1024 ** 3))  # Q8_0 1.7B GGUF needs ~3 GiB VRAM/unified RAM
+_DISCRETE_GPU_HINTS = ("nvidia", "geforce", "rtx", "gtx", "quadro", "radeon rx", "radeon pro", "rx ", "arc a", "arc b")
+_IGPU_DESC_HINTS = ("uhd graphics", "iris", "radeon(tm) graphics", "780m", "680m", "890m", "760m", "740m", "vega ")
+_VALID_VULKAN_GPU_TYPES = frozenset(("gpu", "igpu", "dgpu", "discrete_gpu", "integrated_gpu"))
+_MIN_DISCRETE_VULKAN_BYTES = int(2.3 * (1024 ** 3))  # Reject <=2 GiB legacy entry dGPUs; allow 4 GiB+ laptop/desktop dGPUs
+_MIN_IGPU_VULKAN_BYTES = int(256 * (1024 ** 2))      # Vulkan iGPUs share system RAM even when BIOS UMA carveout is 512MB-2GB
 
 
-def select_best_vulkan_device(devices: Sequence[Dict[str, Any]]) -> Optional[int]:
-    """Pick the best Vulkan GPU index across NVIDIA/AMD/Intel GPUs, or None to fall back to CPU."""
-    best_score: Optional[Tuple[int, int, int]] = None
-    best_idx: Optional[int] = None
+def rank_vulkan_devices(devices: Sequence[Dict[str, Any]]) -> List[int]:
+    """Return candidate Vulkan GPU indices ordered best-first (discrete GPUs ahead of iGPUs), excluding software/tiny devices."""
+    scored: List[Tuple[Tuple[int, int, int], int]] = []
     for dev in devices:
         if not isinstance(dev, dict):
             continue
-        if str(dev.get("type") or "").lower() != "gpu":
+        dev_type = str(dev.get("type") or "").strip().lower()
+        if dev_type not in _VALID_VULKAN_GPU_TYPES:
             continue
         desc = str(dev.get("description") or dev.get("name") or "").lower()
         if any(sw in desc for sw in _SW_RENDERER_HINTS):
             continue
+        is_igpu = dev_type in ("igpu", "integrated_gpu") or any(ig in desc for ig in _IGPU_DESC_HINTS)
+        is_discrete = 0 if is_igpu else (1 if any(h in desc for h in _DISCRETE_GPU_HINTS) else 0)
         mem = dev.get("memory") if isinstance(dev.get("memory"), dict) else {}
         free_b = int(mem.get("free_bytes") or 0)
         total_b = int(mem.get("total_bytes") or 0)
         usable_b = max(free_b, total_b)
-        if usable_b > 0 and usable_b < _MIN_VULKAN_GPU_BYTES:
+        min_bytes = _MIN_IGPU_VULKAN_BYTES if is_igpu else _MIN_DISCRETE_VULKAN_BYTES
+        if usable_b > 0 and usable_b < min_bytes:
             continue
         idx = int(dev.get("index", 0) or 0)
-        is_discrete = 1 if any(h in desc for h in _DISCRETE_GPU_HINTS) else 0
         score = (is_discrete, free_b or total_b, -idx)
-        if best_score is None or score > best_score:
-            best_score = score
-            best_idx = idx
-    return best_idx
+        scored.append((score, idx))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    seen: List[int] = []
+    for _, idx in scored:
+        if idx not in seen:
+            seen.append(idx)
+    return seen
 
 
-def probe_vulkan_devices(server_exe: Path, timeout_s: float = 6.0) -> List[Dict[str, Any]]:
-    """Query audiocpp_server --backend vulkan --list-devices --json safely."""
-    try:
-        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        res = subprocess.run(
-            [str(server_exe), "--backend", "vulkan", "--list-devices", "--json"],
-            cwd=str(server_exe.parent),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_s,
-            creationflags=creation_flags,
-        )
-        if res.returncode != 0:
-            return []
-        for line in (res.stdout or "").splitlines():
-            s = line.strip()
-            if s.startswith("{") and '"devices"' in s:
-                parsed = json.loads(s)
-                devs = parsed.get("devices")
-                if isinstance(devs, list):
-                    return devs
-    except Exception:
-        pass
+def select_best_vulkan_device(devices: Sequence[Dict[str, Any]]) -> Optional[int]:
+    """Pick the best Vulkan GPU/iGPU index across NVIDIA/AMD/Intel, or None to fall back to CPU."""
+    ranked = rank_vulkan_devices(devices)
+    return ranked[0] if ranked else None
+
+
+def probe_vulkan_devices(server_exe: Path, timeout_s: float = 18.0) -> List[Dict[str, Any]]:
+    """Query audiocpp_server --backend vulkan --list-devices --json safely (allowing cold Optimus PCIe D3Cold wake)."""
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    for attempt in range(2):
+        try:
+            res = subprocess.run(
+                [str(server_exe), "--backend", "vulkan", "--list-devices", "--json"],
+                cwd=str(server_exe.parent),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_s,
+                creationflags=creation_flags,
+            )
+            if res.returncode == 0:
+                for line in (res.stdout or "").splitlines():
+                    s = line.strip()
+                    if s.startswith("{") and '"devices"' in s:
+                        parsed = json.loads(s)
+                        devs = parsed.get("devices")
+                        if isinstance(devs, list) and devs:
+                            return devs
+        except Exception:
+            pass
+        if attempt == 0:
+            time.sleep(0.4)
     return []
 
 
@@ -1038,13 +1136,11 @@ class AudioCppServerManager:
     def start(self, startup_timeout_s: float = 90.0) -> dict:
         if self._backend == "auto":
             devs = probe_vulkan_devices(self._server_exe)
-            best_idx = select_best_vulkan_device(devs)
-            if best_idx is not None:
+            for cand_idx in rank_vulkan_devices(devs):
                 try:
-                    return self._start_once("vulkan", best_idx, startup_timeout_s)
+                    return self._start_once("vulkan", cand_idx, startup_timeout_s)
                 except Exception:
-                    # Graceful fallback to CPU if Vulkan driver fails to initialize
-                    return self._start_once("cpu", 0, startup_timeout_s)
+                    continue
             return self._start_once("cpu", 0, startup_timeout_s)
         return self._start_once(self._backend, self._device, startup_timeout_s)
 
@@ -1456,6 +1552,9 @@ class TtsWorkerRuntime:
             if self._is_cancelled(task.utterance_id):
                 return
 
+            if not self._fake_tts:
+                audio = trim_tts_audio(audio, sr)
+
             job = _BweJob(
                 utterance_id=task.utterance_id,
                 request_id=task.request_id,
@@ -1501,26 +1600,28 @@ class TtsWorkerRuntime:
             if self._is_cancelled(job.utterance_id):
                 continue
 
-            pcm_bytes = float32_to_pcm16_bytes(audio, sr, fade_ms=5.0)
-            dur_ms = int(round((audio.size / float(sr)) * 1000.0)) if sr > 0 else 0
-            self.emit(
-                {
-                    "event": "audio_chunk",
-                    "request_id": job.request_id,
-                    "utterance_id": job.utterance_id,
-                    "bubble_index": job.bubble_index,
-                    "clause_index": job.clause_index,
-                    "clause_count": job.clause_count,
-                    "mood": job.mood,
-                    "sample_rate": sr,
-                    "channels": 1,
-                    "duration_ms": dur_ms,
-                    "synth_ms": round(job.synth_ms, 1),
-                    "bwe_ms": round(bwe_ms, 1),
-                    "bwe_applied": bwe_applied,
-                    "pcm16_b64": base64.b64encode(pcm_bytes).decode("ascii"),
-                }
-            )
+            if audio.size > 0 and sr > 0:
+                pcm_bytes = float32_to_pcm16_bytes(audio, sr, fade_ms=5.0)
+                dur_ms = int(round((audio.size / float(sr)) * 1000.0))
+                if pcm_bytes and dur_ms > 0:
+                    self.emit(
+                        {
+                            "event": "audio_chunk",
+                            "request_id": job.request_id,
+                            "utterance_id": job.utterance_id,
+                            "bubble_index": job.bubble_index,
+                            "clause_index": job.clause_index,
+                            "clause_count": job.clause_count,
+                            "mood": job.mood,
+                            "sample_rate": sr,
+                            "channels": 1,
+                            "duration_ms": dur_ms,
+                            "synth_ms": round(job.synth_ms, 1),
+                            "bwe_ms": round(bwe_ms, 1),
+                            "bwe_applied": bwe_applied,
+                            "pcm16_b64": base64.b64encode(pcm_bytes).decode("ascii"),
+                        }
+                    )
             if job.is_last_of_task and not self._is_cancelled(job.utterance_id):
                 self.emit(
                     {

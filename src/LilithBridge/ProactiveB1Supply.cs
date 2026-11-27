@@ -19,6 +19,7 @@ internal sealed class ProactiveB1Supply
     private readonly B1Packet _packet;
     private int _invalidated;
     internal string Material { get; }
+    internal IReadOnlyList<string> ProposalVersions { get; }
 
     private ProactiveB1Supply(MemoryStore store, BridgeConfig config, string query,
         B1Packet packet, string material, CancellationToken cancellation)
@@ -29,6 +30,11 @@ internal sealed class ProactiveB1Supply
         _readOnlyGeneration = config.B1ReadOnlyCapabilityGeneration;
         _cancellation = cancellation;
         Material = material;
+        ProposalVersions = packet.Materials
+            .Where(m => m.Ref.Kind == "b1" && m.DependencyRole == "historical_proposal")
+            .Select(m => m.Ref.Version)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     internal static ProactiveB1Supply? Capture(MemoryStore? store, BridgeConfig config,

@@ -1,7 +1,7 @@
 # AGENTS.md — LilithBridge 用户侧 AI 助手排查、调优与二创指南
 
 > **致正在阅读本文档的 AI Coding Agent（DeepSeek Harness / OpenAI Codex / Claude Code / Cursor / Antigravity 等）**：  
-> 你正在协助一位安装了《不/存在的莉莉丝》（*The NOexistenceN of Lilith*）开源伴侣模组 **`LilithBridge`**（当前基线 `v0.4.1 · 310561f9`）的玩家或开发者。  
+> 你正在协助一位安装了《不/存在的莉莉丝》（*The NOexistenceN of Lilith*）开源伴侣模组 **`LilithBridge`**（当前基线 `v0.4.2 · 1be32669`）的玩家或开发者。  
 > 无论你的主人是遇到了**运行环境故障、语音/麦克风异常、模型连接报错**，还是想发挥 **Vibecoding** 能力自己动手调优参数、修复边缘 Bug、魔改新玩法，请先通读本指南——这里有完整的文件地图、日志诊断法、单命令源码编译方式、架构护栏，以及**向官方上游仓库提交脱敏反馈或 PR 的标准流程**。
 
 ---
@@ -30,7 +30,7 @@
   - `<GameDir>\BepInEx\plugins\LilithBridge.dll`（主模组程序集）
   - `<GameDir>\BepInEx\plugins\LilithBridge.data-dir.txt`（可选：若存在，里面写着自定义 `<DataRoot>` 路径；若不存在，默认 `<DataRoot>` 为 `<GameDir>\LilithBridgeData`，极早期老用户可能在 `%APPDATA%\LilithAI`）。
 - **第一现场日志（排障必看前两项）**：
-  1. `<GameDir>\BepInEx\LogOutput.log`：BepInEx 加载日志、Harmony Hook 状态、插件版本号（如 `v0.4.1`）及未捕获异常堆栈。
+  1. `<GameDir>\BepInEx\LogOutput.log`：BepInEx 加载日志、Harmony Hook 状态、插件版本号（如 `v0.4.2`）及未捕获异常堆栈。
   2. `<DataRoot>\telemetry\v4-native-events.jsonl`（或根目录同名文件）：结构化 JSONL 事件流，记录每次 `model.request`、`model.response`、`semantic.query`、`tts.*`、`stt.*`、`api.transport_recovery_*` 的耗时、错误码与缓存命中率（不含密钥）。
 
 ### 1.2 `<DataRoot>`（`LilithBridgeData\`）与隔离 Python 环境分布
@@ -63,18 +63,21 @@
    - **Continue with ChatGPT（网页 OAuth 登录）**：使用订阅额度（与 API Platform 余额无关），在游戏内「认证账户」页重新点击登录刷新凭据即可。
    - **OpenAI 官方 API Key**：走官方 Responses API（`https://api.openai.com/v1`），需确保网络可正常访问 OpenAI 域名。
 
-### 场景 C：本地 TTS 没有声音、合成太慢（核显/低显存）或个别字读音不准
-1. **单独在命令行体检 `tts_worker.py`（最快定位法）**：
-   先从 `config.json` 读取 `tts.python_path`、`tts.worker_script`、`tts.server_exe`、`tts.model_path`、`tts.refs_manifest`（相对路径均相对于 `<DataRoot>` 解析），做一次无损握手测试：
-   ```powershell
-   # 先测纯 Python 与 ONNX 环境是否完好（秒回 {"event": "ready", ...} 即正常）
-   & "<tts.python_path>" -u "<DataRoot>\tts-runtime\tts_worker.py" --test-mode --fake-tts --no-bwe --no-warmup
-   ```
-   若真机加载 `audiocpp_server.exe` 失败，常见原因是系统缺少微软官方 **VC++ 2015–2022 Redistributable (x64)**，或显存被其他大型游戏占满。
-2. **低配 / 核显 / 轻薄本提速调优（直接改 `config.json` 的 `tts` 段，需先退游戏）**：
-   - 将 `"bwe_48k": false`（关闭 24kHz→48kHz 超分，省掉一层 ONNX 推理，24kHz 原声依然清晰）；
-   - 调整 `"threads": 4`（匹配物理大核数，避免超线程争抢）；
-   - 将 `"max_clause_chars": 28`（缩短首句切分字数，让第一泡声音更快出来）；
+### 场景 C：本地 TTS 没有声音、合成太慢（核显/双显卡笔记本/低显存）或个别字读音不准
+1. **先看 `telemetry\v4-native-events.jsonl` 里的三条关键诊断事件**：
+   - `tts.ready`：查看 `backend`（`vulkan` 为 GPU/核显加速，`cpu` 为纯 CPU 兜底）与 `bwe_provider`（`dml`/`cuda` 为显卡 48kHz 超分，`none` 为无超分开销的 24kHz 原声快路径）；
+   - `tts.chunk` 与 `tts.play`：若有 `tts.chunk` 也有 `tts.play`，说明语音已合成并送入 Unity 音频源播放（请检查系统音量合成器中 `Lilith.exe` 是否被静音，或 `config.json` 中 `tts.volume` 是否大于 `0`）。
+   - 也可单独在命令行体检 `tts_worker.py`（从 `config.json` 读取相对 `<DataRoot>` 的路径）：
+     ```powershell
+     # 1) 测纯 Python 环境握手（秒回 {"event": "ready", ...} 即正常）
+     & "<tts.python_path>" -u "<DataRoot>\tts-runtime\tts_worker.py" --test-mode --fake-tts --no-bwe --no-warmup
+     # 2) 查看本机 Vulkan 可见显卡/核显列表（含独显 gpu 与核显 igpu）
+     & "<DataRoot>\tts-runtime\bin\audiocpp_server.exe" --backend vulkan --list-devices --json
+     ```
+     若真机加载 `audiocpp_server.exe` 失败，常见原因是系统缺少微软官方 **VC++ 2015–2022 Redistributable (x64)**，或老旧显卡驱动缺少 Vulkan 运行库。
+2. **双显卡笔记本（如 `RTX 4050 Laptop + Radeon 780M`）/ 核显轻薄本（Intel Iris Xe / Arc / AMD 780M）调优（改 `config.json` 的 `tts` 段，需先退游戏）**：
+   - 新版 `tts_worker.py` 已原生识别 `type: "igpu"` 核显（含 BIOS 仅划分 512MB–2GB 专用显存的统一内存核显）、支持 Optimus 休眠独显冷唤醒并按 `[独显, 核显]` 顺序自动回退，且在无 GPU DirectML 时会自动跳过慢速 CPU 48kHz 超分；
+   - 若在轻薄本省电模式或纯核显下希望首句更快出声，可将 `"bwe_48k": false`（直出 24kHz 原声）、`"threads": 4`、`"max_clause_chars": 26`；若不想让慢速语音拖住气泡翻页，还可设 `"sync_bubble_pacing": false`；
    - 若完全不需要语音，在游戏内设置或 `config.json` 将 `"tts": { "enabled": false }` 关闭即可，主对话 0 影响。
 3. **个别专有名词或多音字读错**：
    无需改代码！直接在 `config.json` 的 `"tts"` -> `"pronunciation_overrides"` 填入同音字映射即可（仅影响送去发声的文本，**绝不会改变屏幕上气泡显示的文字**）：
@@ -169,7 +172,7 @@ Copy-Item "src\LilithBridge\bin\Release\net6.0\LilithBridge.dll" "$pluginDir\Lil
 
 ```powershell
 gh issue create --repo gtxpz2021/LilithBridge `
-  --title "[Agent 排查报告] 简明描述问题现象与模块（v0.4.1）" `
+  --title "[Agent 排查报告] 简明描述问题现象与模块（v0.4.2）" `
   --body-file "./sanitized-issue-body.md"
 ```
 
@@ -178,7 +181,7 @@ gh issue create --repo gtxpz2021/LilithBridge `
 
 ````markdown
 ### 环境与版本
-- **LilithBridge 版本**：v0.4.1 (`310561f9` / 或自编译基于 `<commit>`)
+- **LilithBridge 版本**：v0.4.2 (`1be32669` / 或自编译基于 `<commit>`)
 - **操作系统与硬件**：Windows 10/11 · CPU / GPU 型号（如涉及本地语音或语义召回）
 - **接入方式**：DeepSeek / ChatGPT OAuth / OpenAI / 自定义兼容端点（无需提供具体私有域名或 Key）
 

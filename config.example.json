@@ -4,6 +4,22 @@
     "base_url": "https://example.invalid/v1",
     "model": "YOUR_MODEL_NAME"
   },
+  "pacing_preset": "balanced",
+  "b1": {
+    "enabled": true,
+    "reflection_reconsideration_enabled": true,
+    "proactive_read_only_enabled": true
+  },
+  "dialogue": {
+    "afterbeat": {
+      "enabled": true,
+      "min_turn_gap": 5,
+      "cooldown_seconds": 180,
+      "unanswered_cooldown_seconds": 600,
+      "min_delay_seconds": 2.2,
+      "max_delay_seconds": 4.5
+    }
+  },
   "semantic_recall": {
     "enabled": false,
     "python_path": "semantic-runtime/.venv/Scripts/python.exe",

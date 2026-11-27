@@ -249,7 +249,7 @@ internal sealed class TextToSpeechWorker : IDisposable
             _ = DrainErrorsAsync(_process);
 
             TtsWorkerEvent ready = await _handshake.Task
-                .WaitAsync(TimeSpan.FromSeconds(95), _lifetime.Token)
+                .WaitAsync(TimeSpan.FromSeconds(125), _lifetime.Token)
                 .ConfigureAwait(false);
             LoadMs = watch.Elapsed.TotalMilliseconds;
             ModelId = ready.ModelId;

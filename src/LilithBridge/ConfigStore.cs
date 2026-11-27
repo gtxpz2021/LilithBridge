@@ -101,7 +101,53 @@ internal sealed partial class BridgeConfig
     public bool MetaAutoVision { get; set; } = false;
     public bool AutoActionEnabled { get; set; } = true;
     public bool ProactiveEnabled { get; set; } = true;
+    public string PacingPreset { get; set; } = "balanced";
+    public bool AfterbeatEnabled { get; set; } = true;
+    public int AfterbeatMinTurnGap { get; set; } = 5;
+    public int AfterbeatCooldownSeconds { get; set; } = 180;
+    public int AfterbeatUnansweredCooldownSeconds { get; set; } = 600;
+    public float AfterbeatMinDelaySeconds { get; set; } = 2.2f;
+    public float AfterbeatMaxDelaySeconds { get; set; } = 4.5f;
     public int ProactiveCooldownSeconds { get; set; } = 600;
+    public int ProactiveQuietRecheckSeconds { get; set; } = 90;
+    public float ProactiveUnansweredBackoffMultiplier { get; set; } = 2.5f;
+    public int ProactiveMaxUnansweredBeforeQuietMode { get; set; } = 2;
+
+    internal void ApplyPacingPreset(string? rawPreset)
+    {
+        string normalized = (rawPreset ?? "").Trim().ToLowerInvariant();
+        PacingPreset = normalized is "quiet" or "balanced" or "lively" ? normalized : "balanced";
+        switch (PacingPreset)
+        {
+            case "quiet":
+                AfterbeatMinTurnGap = 8;
+                AfterbeatCooldownSeconds = 420;
+                AfterbeatUnansweredCooldownSeconds = 900;
+                ProactiveCooldownSeconds = 900;
+                ProactiveQuietRecheckSeconds = 150;
+                ProactiveUnansweredBackoffMultiplier = 3.0f;
+                ProactiveMaxUnansweredBeforeQuietMode = 1;
+                break;
+            case "lively":
+                AfterbeatMinTurnGap = 3;
+                AfterbeatCooldownSeconds = 120;
+                AfterbeatUnansweredCooldownSeconds = 360;
+                ProactiveCooldownSeconds = 360;
+                ProactiveQuietRecheckSeconds = 60;
+                ProactiveUnansweredBackoffMultiplier = 2.0f;
+                ProactiveMaxUnansweredBeforeQuietMode = 3;
+                break;
+            default:
+                AfterbeatMinTurnGap = 5;
+                AfterbeatCooldownSeconds = 180;
+                AfterbeatUnansweredCooldownSeconds = 600;
+                ProactiveCooldownSeconds = 600;
+                ProactiveQuietRecheckSeconds = 90;
+                ProactiveUnansweredBackoffMultiplier = 2.5f;
+                ProactiveMaxUnansweredBeforeQuietMode = 2;
+                break;
+        }
+    }
     // A proactive greeting may still continue the current topic while the
     // conversation is warm; after a longer gap it must not inherit it.
     public int ProactiveWarmContinuationSeconds { get; set; } = 180;
@@ -498,6 +544,8 @@ internal static partial class ConfigStore
             if (!File.Exists(path)) return config;
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
             JsonElement root = doc.RootElement;
+            if (root.TryGetProperty("pacing_preset", out var presetProp) && presetProp.ValueKind == JsonValueKind.String)
+                config.ApplyPacingPreset(presetProp.GetString());
             ReadOpenAISelection(config, root);
             ReadChatGPTSelection(config, root);
             string? activeProvider = ReadString(root, "active_provider");
@@ -541,7 +589,10 @@ internal static partial class ConfigStore
                 if (dialogue.TryGetProperty("prompt_cache_history_stride", out var stride)
                     && stride.ValueKind == JsonValueKind.Number && stride.TryGetInt32(out int parsedStride))
                     config.PromptCacheHistoryStride = Math.Clamp(parsedStride, 0, 24);
+                ReadAfterbeatConfig(config, dialogue);
             }
+            if (root.TryGetProperty("proactive", out JsonElement rootProactive) && rootProactive.ValueKind == JsonValueKind.Object)
+                ReadProactiveConfig(config, rootProactive);
             if (root.TryGetProperty("shared_activity", out var sharedActivity) && sharedActivity.ValueKind == JsonValueKind.Object)
                 config.SharedActivityEnabled = ReadBoolean(sharedActivity, "enabled", false);
             if (root.TryGetProperty("session_read_methods", out var methodConfig) && methodConfig.ValueKind == JsonValueKind.Object)
@@ -1044,24 +1095,7 @@ internal static partial class ConfigStore
                 if (meta.TryGetProperty("proactive", out JsonElement proactive)
                     && proactive.ValueKind == JsonValueKind.Object)
                 {
-                    config.ProactiveEnabled =
-                        ReadBoolean(proactive, "enabled", config.ProactiveEnabled);
-                    config.ProactiveOnReturn =
-                        ReadBoolean(proactive, "on_return", config.ProactiveOnReturn);
-                    config.ProactiveOnAppChange =
-                        ReadBoolean(proactive, "on_app_change", config.ProactiveOnAppChange);
-                    config.ProactiveOnLateNight =
-                        ReadBoolean(proactive, "on_late_night", config.ProactiveOnLateNight);
-                    config.ProactiveOnUnfinishedTopic =
-                        ReadBoolean(proactive, "on_unfinished_topic", config.ProactiveOnUnfinishedTopic);
-                    config.ProactiveOnAfterIntimate =
-                        ReadBoolean(proactive, "on_after_intimate", config.ProactiveOnAfterIntimate);
-                    if (proactive.TryGetProperty("cooldown_seconds", out JsonElement cooldown)
-                        && cooldown.TryGetInt32(out int parsedCooldown))
-                    {
-                        config.ProactiveCooldownSeconds =
-                            Math.Clamp(parsedCooldown, 30, 7200);
-                    }
+                    ReadProactiveConfig(config, proactive);
                 }
                 if (meta.TryGetProperty("proactive_after_reply_seconds", out JsonElement afterReply)
                     && afterReply.TryGetInt32(out int parsedAfterReply))
@@ -1210,6 +1244,56 @@ internal static partial class ConfigStore
         {
             config.ThinkingEnabled = thinkingMode.GetString() is "enabled" or "on" or "true";
         }
+    }
+
+    internal static void ReadAfterbeatConfig(BridgeConfig config, JsonElement dialogue)
+    {
+        if (!dialogue.TryGetProperty("afterbeat", out JsonElement afterbeat) || afterbeat.ValueKind != JsonValueKind.Object)
+            return;
+        config.AfterbeatEnabled = ReadBoolean(afterbeat, "enabled", config.AfterbeatEnabled);
+        if (afterbeat.TryGetProperty("min_turn_gap", out JsonElement minGap) && minGap.TryGetInt32(out int parsedGap))
+            config.AfterbeatMinTurnGap = Math.Clamp(parsedGap, 0, 32);
+        if (afterbeat.TryGetProperty("cooldown_seconds", out JsonElement cd) && cd.TryGetInt32(out int parsedCd))
+            config.AfterbeatCooldownSeconds = Math.Clamp(parsedCd, 0, 7200);
+        if (afterbeat.TryGetProperty("unanswered_cooldown_seconds", out JsonElement unansCd) && unansCd.TryGetInt32(out int parsedUnans))
+            config.AfterbeatUnansweredCooldownSeconds = Math.Clamp(parsedUnans, 0, 14400);
+        if (afterbeat.TryGetProperty("min_delay_seconds", out JsonElement minDelay) && minDelay.TryGetDouble(out double parsedMinDelay))
+            config.AfterbeatMinDelaySeconds = (float)Math.Clamp(parsedMinDelay, 1.0, 12.0);
+        if (afterbeat.TryGetProperty("max_delay_seconds", out JsonElement maxDelay) && maxDelay.TryGetDouble(out double parsedMaxDelay))
+            config.AfterbeatMaxDelaySeconds = (float)Math.Clamp(parsedMaxDelay, 1.0, 15.0);
+        if (config.AfterbeatMaxDelaySeconds < config.AfterbeatMinDelaySeconds)
+            config.AfterbeatMaxDelaySeconds = config.AfterbeatMinDelaySeconds;
+    }
+
+    internal static void ReadProactiveConfig(BridgeConfig config, JsonElement proactive)
+    {
+        config.ProactiveEnabled = ReadBoolean(proactive, "enabled", config.ProactiveEnabled);
+        config.ProactiveOnReturn = ReadBoolean(proactive, "on_return", config.ProactiveOnReturn);
+        config.ProactiveOnAppChange = ReadBoolean(proactive, "on_app_change", config.ProactiveOnAppChange);
+        config.ProactiveOnLateNight = ReadBoolean(proactive, "on_late_night", config.ProactiveOnLateNight);
+        config.ProactiveOnUnfinishedTopic = ReadBoolean(proactive, "on_unfinished_topic", config.ProactiveOnUnfinishedTopic);
+        config.ProactiveOnAfterIntimate = ReadBoolean(proactive, "on_after_intimate", config.ProactiveOnAfterIntimate);
+        if (proactive.TryGetProperty("cooldown_seconds", out JsonElement cooldown)
+            && cooldown.TryGetInt32(out int parsedCooldown))
+        {
+            config.ProactiveCooldownSeconds = Math.Clamp(parsedCooldown, 30, 7200);
+        }
+        ReadProactivePacingFields(config, proactive);
+        if (proactive.TryGetProperty("pacing", out JsonElement pacing) && pacing.ValueKind == JsonValueKind.Object)
+            ReadProactivePacingFields(config, pacing);
+    }
+
+    private static void ReadProactivePacingFields(BridgeConfig config, JsonElement source)
+    {
+        if (source.TryGetProperty("quiet_recheck_seconds", out JsonElement quietRecheck)
+            && quietRecheck.TryGetInt32(out int parsedQuiet))
+            config.ProactiveQuietRecheckSeconds = Math.Clamp(parsedQuiet, 15, 3600);
+        if (source.TryGetProperty("unanswered_backoff_multiplier", out JsonElement backoffMult)
+            && backoffMult.TryGetDouble(out double parsedMult))
+            config.ProactiveUnansweredBackoffMultiplier = (float)Math.Clamp(parsedMult, 1.0, 5.0);
+        if (source.TryGetProperty("max_unanswered_before_quiet_mode", out JsonElement maxUnans)
+            && maxUnans.TryGetInt32(out int parsedMaxUnans))
+            config.ProactiveMaxUnansweredBeforeQuietMode = Math.Clamp(parsedMaxUnans, 1, 10);
     }
 
     private static string DataRoot()

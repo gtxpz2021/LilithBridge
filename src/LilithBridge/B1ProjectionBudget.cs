@@ -57,6 +57,17 @@ internal static class B1ProjectionBudget
             int effectiveChars = folded ? Math.Min(decision.TextChars, 64) : decision.TextChars;
             if (chars + effectiveChars > B1Continuity.MaxPacketChars)
             {
+                int remainingChars = B1Continuity.MaxPacketChars - chars;
+                if (!folded && TrySliceEpisodeWindow(unit, remainingChars, out var slicedUnit, out var windowOmissions))
+                {
+                    decision.Outcome = "supplied_episode_window";
+                    materials.AddRange(slicedUnit);
+                    chars += slicedUnit.Sum(m => m.Text.Length);
+                    if (windowOmissions.Count > 0)
+                        packet.Omissions.AddRange(windowOmissions);
+                    packet.Diagnostic = "view_partial_budget";
+                    continue;
+                }
                 decision.Outcome = "body_char_budget";
                 packet.Omissions.Add(new(item.ReplyRoot ?? item.Ref,
                     item.ReplyRunFirst == null ? decision.Outcome : "historical_public_reply_group_body_char_budget"));
@@ -179,5 +190,192 @@ internal static class B1ProjectionBudget
                     unit_key = u.Key, root_key = u.Root, source_keys = u.SourceKeys,
                     text_chars = u.TextChars, outcome = u.Outcome })
             }));
+    }
+
+    private const int MinEpisodeRemainingBudgetChars = 420;
+    private const int MaxSingleEpisodeWindowChars = 900;
+    private const int MinSlicedExcerptChars = 120;
+
+    private static bool IsEpisodeWindowRole(string role) =>
+        role is "original_utterance_candidate" or "historical_public_reply"
+            or "late_public_reply" or "judgment_source" or "related_exchange_user_wording_unbound";
+
+    private static bool TrySliceEpisodeWindow(IReadOnlyList<B1Material> unit, int remainingBudget,
+        out List<B1Material> slicedUnit, out List<B1Omission> omissions)
+    {
+        slicedUnit = new List<B1Material>();
+        omissions = new List<B1Omission>();
+        if (remainingBudget < MinEpisodeRemainingBudgetChars || unit.Count == 0)
+            return false;
+
+        if (unit.Count == 1)
+        {
+            var m = unit[0];
+            if (m.Ref.Kind != "utterance" || m.Text.Length < 900
+                || (!IsEpisodeWindowRole(m.DependencyRole) && m.EpisodeFocusHint == null))
+                return false;
+            if (!TrySliceSentenceWindow(m.Text, m.EpisodeFocusHint, Math.Min(remainingBudget, MaxSingleEpisodeWindowChars),
+                    out int offset, out string excerpt))
+                return false;
+            slicedUnit.Add(m with
+            {
+                Text = excerpt,
+                SuppliedRanges = new[] { new B1SourceRange(offset, excerpt.Length, m.Text.Length, "episode_window_utf16") }
+            });
+            return true;
+        }
+
+        // Multi-bubble delivered reply run: keep a contiguous bubble neighborhood around the hit bubble
+        if (unit.Any(m => m.Ref.Kind != "utterance")
+            || (!unit.Any(m => IsEpisodeWindowRole(m.DependencyRole)) && !unit.Any(m => m.EpisodeFocusHint != null)))
+            return false;
+
+        var ordered = unit.OrderBy(m => ParseBubbleChunkOrder(m.Ref.Version)).ToList();
+        int anchorIdx = ordered.FindIndex(m => m.EpisodeFocusHint != null);
+        if (anchorIdx < 0) anchorIdx = 0;
+
+        int maxWindow = Math.Min(remainingBudget, MaxSingleEpisodeWindowChars);
+        if (ordered[anchorIdx].Text.Length > maxWindow)
+        {
+            var anchorMat = ordered[anchorIdx];
+            if (!TrySliceSentenceWindow(anchorMat.Text, anchorMat.EpisodeFocusHint, maxWindow, out int off, out string sub))
+                return false;
+            slicedUnit.Add(anchorMat with
+            {
+                Text = sub,
+                ReplyRunFirst = null,
+                ReplyRoot = null,
+                SuppliedRanges = new[] { new B1SourceRange(off, sub.Length, anchorMat.Text.Length, "episode_window_utf16") }
+            });
+            foreach (var other in ordered.Where((_, idx) => idx != anchorIdx))
+                omissions.Add(new B1Omission(other.Ref, "episode_window_outside_focus"));
+            return true;
+        }
+
+        int left = anchorIdx, right = anchorIdx;
+        int used = ordered[anchorIdx].Text.Length;
+        while (true)
+        {
+            bool grew = false;
+            if (left > 0 && used + ordered[left - 1].Text.Length <= maxWindow)
+            {
+                left--;
+                used += ordered[left].Text.Length;
+                grew = true;
+            }
+            if (right + 1 < ordered.Count && used + ordered[right + 1].Text.Length <= maxWindow)
+            {
+                right++;
+                used += ordered[right].Text.Length;
+                grew = true;
+            }
+            if (!grew) break;
+        }
+
+        int count = right - left + 1;
+        if (count >= ordered.Count)
+            return false;
+        B1Ref? newFirst = count >= 2 ? ordered[left].Ref : null;
+        B1Ref? preservedRoot = count >= 2 ? ordered[left].ReplyRoot : null;
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            if (i >= left && i <= right)
+                slicedUnit.Add(ordered[i] with { ReplyRunFirst = newFirst, ReplyRoot = preservedRoot });
+            else
+                omissions.Add(new B1Omission(ordered[i].Ref, "episode_window_outside_focus"));
+        }
+        return slicedUnit.Count > 0;
+    }
+
+    private static int ParseBubbleChunkOrder(string version)
+    {
+        int colon = version.LastIndexOf(':');
+        return colon >= 0 && int.TryParse(version.AsSpan(colon + 1),
+            System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int idx)
+            ? idx : 0;
+    }
+
+    internal static bool TrySliceSentenceWindow(string fullText, (int Start, int End)? focusHint, int maxChars,
+        out int offset, out string excerpt)
+    {
+        offset = 0;
+        excerpt = "";
+        if (string.IsNullOrEmpty(fullText) || maxChars < MinSlicedExcerptChars || fullText.Length <= maxChars)
+            return false;
+
+        var sentences = SplitSentenceSpans(fullText);
+        if (sentences.Count < 2)
+            return false; // Never chop a punctuation-less single block mid-clause.
+
+        int focusChar = focusHint.HasValue
+            ? Math.Clamp((focusHint.Value.Start + focusHint.Value.End) / 2, 0, fullText.Length - 1)
+            : 0;
+        int centerIdx = sentences.FindIndex(s => focusChar >= s.Start && focusChar < s.Start + s.Length);
+        if (centerIdx < 0) centerIdx = 0;
+        if (sentences[centerIdx].Length > maxChars)
+            return false;
+
+        int left = centerIdx, right = centerIdx;
+        int totalLen = sentences[centerIdx].Length;
+        while (true)
+        {
+            bool expanded = false;
+            if (left > 0 && totalLen + sentences[left - 1].Length <= maxChars)
+            {
+                left--;
+                totalLen += sentences[left].Length;
+                expanded = true;
+            }
+            if (right + 1 < sentences.Count && totalLen + sentences[right + 1].Length <= maxChars)
+            {
+                right++;
+                totalLen += sentences[right].Length;
+                expanded = true;
+            }
+            if (!expanded) break;
+        }
+
+        int sliceStart = sentences[left].Start;
+        int sliceEnd = sentences[right].Start + sentences[right].Length;
+        int sliceLen = sliceEnd - sliceStart;
+        if (sliceLen < MinSlicedExcerptChars || sliceLen >= fullText.Length)
+            return false;
+        // Surrogate-pair safety
+        if (sliceStart > 0 && char.IsLowSurrogate(fullText[sliceStart]))
+            return false;
+        if (sliceEnd < fullText.Length && char.IsHighSurrogate(fullText[sliceEnd - 1]))
+            return false;
+
+        offset = sliceStart;
+        excerpt = fullText.Substring(sliceStart, sliceLen);
+        return true;
+    }
+
+    private static List<(int Start, int Length)> SplitSentenceSpans(string text)
+    {
+        var spans = new List<(int Start, int Length)>();
+        int start = 0;
+        int i = 0;
+        while (i < text.Length)
+        {
+            char c = text[i];
+            if (c is '。' or '！' or '？' or '!' or '?' or '\n' or '；' or ';')
+            {
+                int end = i + 1;
+                while (end < text.Length && (text[end] is '”' or '」' or '』' or '"' or '\'' or '）' or ')' or ' ' or '\t' or '\r' or '\n'
+                    or '。' or '！' or '？' or '!' or '?'))
+                {
+                    end++;
+                }
+                spans.Add((start, end - start));
+                start = end;
+                i = end;
+                continue;
+            }
+            i++;
+        }
+        if (start < text.Length)
+            spans.Add((start, text.Length - start));
+        return spans;
     }
 }

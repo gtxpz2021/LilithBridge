@@ -52,6 +52,7 @@ internal sealed partial class DeepSeekClient
         result.NoteSupplement.Clear(); result.AutonomousMemories.Clear(); result.AutonomousMemoryRemovals.Clear();
         result.AutonomousMemoryPatches.Clear(); result.MemoryRecalls.Clear(); result.StoryRecalls.Clear();
         result.ReflectionRequested = false; result.ReflectionRequestReason = "";
+        result.Afterbeat = null;
         // Preserve the old empty-public-response failure structurally, without
         // treating any nonempty wording as a semantic failure. Hidden paper
         // tasks keep their existing no-visible-text contract.

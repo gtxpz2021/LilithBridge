@@ -97,9 +97,16 @@ internal sealed partial class MemoryStore
                 }
             }
             var readingRoots = new List<B1Ref>();
+            bool explicitB1SemanticLookup = !proactiveReadOnly && B1IsExplicitLookup(query);
+            bool B1BlockedForView(string version)
+            {
+                string m = B1ManagementState(doc, version);
+                return m is "suppressed" or "withdrawn" or "deleting" or "deleted"
+                    || (!explicitB1SemanticLookup && IsB1SettledState(m));
+            }
             bool Add(B1Ref reference, string role = "context", bool quiet = false, B1Ref? discovery = null, int? order = null)
             {
-                if (reference.Kind == "b1" && B1ManagementState(doc, reference.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted")
+                if (reference.Kind == "b1" && B1BlockedForView(reference.Version))
                 { if (!quiet) omitted.Add(new(reference, "managed_not_for_automatic_supply")); return false; }
                 if (proactiveReadOnly) reference = reference with { Purpose = "history" };
                 var resolved = ResolveB1(reference, doc, new());
@@ -111,6 +118,25 @@ internal sealed partial class MemoryStore
                 // A retained explanation is not a transcript. Actual display
                 // records stay separately resolvable; they need not all be replayed.
                 var material = resolved.Material! with { DependencyRole = role, DisplayedReplyFragments = null, DiscoverySource = discovery };
+                if (reference.Kind == "utterance" && material.Text.Length >= 600)
+                {
+                    (int Start, int End)? focusHint = null;
+                    if (semantic?.Candidates is { Count: > 0 } semCands)
+                    {
+                        var hit = semCands.FirstOrDefault(c => c.EventId == reference.Version
+                            && c.CharStart.HasValue && c.CharEnd.HasValue && c.CharEnd.Value > c.CharStart.Value);
+                        if (hit != null)
+                        {
+                            int s = Math.Clamp(hit.CharStart!.Value, 0, material.Text.Length);
+                            int e = Math.Clamp(hit.CharEnd!.Value, s, material.Text.Length);
+                            if (e > s) focusHint = (s, e);
+                        }
+                    }
+                    if (focusHint == null && !string.IsNullOrWhiteSpace(query))
+                        focusHint = LocateQueryFocusSpan(material.Text, query);
+                    if (focusHint != null)
+                        material = material with { EpisodeFocusHint = focusHint };
+                }
                 int rank = order ?? (role switch { "input" => 0, "original_utterance_candidate" => 10,
                     "judgment_source" => 12, "later_user_correction" => 14, "late_related_user_wording_unbound" => 25,
                     "late_public_reply" => 30, "historical_public_reply" => 45,
@@ -178,7 +204,7 @@ internal sealed partial class MemoryStore
             FindB1(doc, "");
             var terms = B1SearchTokens(query);
             var discoveryTerms = terms.Where(B1DiscoveryContent).ToHashSet(StringComparer.Ordinal);
-            var ranked = doc.Entries.Where(e => B1ManagementState(doc, e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted"))
+            var ranked = doc.Entries.Where(e => !B1BlockedForView(e.Version))
                 .Select(e => { var tokens = _b1SearchIndex[e.Version]; var objects = _b1SourceSearchIndex[e.Version];
                     int overlap = terms.Count(tokens.Contains), objectOverlap = terms.Count(objects.Contains);
                     double textScore = terms.Count == 0 || tokens.Count == 0 ? 0d
@@ -238,14 +264,13 @@ internal sealed partial class MemoryStore
                     && (x.Corroborated || x.Overlap >= MemorySemantics.MinRecallOverlap || x.Score >= 0.5)).OrderByDescending(x => x.Score)
                 .ThenByDescending(x => doc.Current.GetValueOrDefault(x.Entry.LogicalId) == x.Entry.Version)
                 .ThenByDescending(x => x.Entry.At).ToList();
-            bool explicitB1SemanticLookup = B1IsExplicitLookup(query);
             var typed=SemanticResultMatches(query,semantic,SemanticDomain.B1)&&semantic!.QueryId==requestId
                 && B1SemanticDiscoveryPermitted(query, semantic)
                 ? semantic.Candidates.Where(c=>c.Kind=="b1" && B1SemanticCandidatePermitted(c, semantic, explicitB1SemanticLookup))
                     .OrderByDescending(c=>c.Score)
                     .Select(c=>doc.Entries.FirstOrDefault(e=>e.Version==c.EventId
                         && c.Version==e.Revision.ToString()&&c.TextHash==SemanticTextHash(B1DiscoveryText(e))
-                        && B1ManagementState(doc,e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")
+                        && !B1BlockedForView(e.Version)
                         && MatchScope(e)))
                     .Where(e=>e!=null).Cast<B1Entry>()
                     .Select(e=>(Entry:e,Score:0d,Overlap:0,Corroborated:false,Discovery:(B1Ref?)null)).ToList()
@@ -266,11 +291,14 @@ internal sealed partial class MemoryStore
                         return r.Found && B1ReadOnlyMaterialAllowed(r.Material!); }).Take(1).ToList();
                 relatedSeed = related.FirstOrDefault().Entry?.Version ?? "";
                 // One historical idea/question lane, not inferred current desire.
-                // Hash ordering is request-local and has no durable exposure state.
+                // Neutral supply rotation across all active retained thoughts without nature bias.
+                var proposalNowUtc = DateTimeOffset.UtcNow;
                 var proposals = doc.Entries.Where(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
                         && e.Nature is "inference" or "hypothesis" or "question"
-                        && B1ManagementState(doc, e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted"))
-                    .OrderBy(e => B1Hash(requestId + "\n" + e.Version), StringComparer.Ordinal)
+                        && !IsB1ManagedInactiveState(B1ManagementState(doc, e.Version))
+                        && IsB1ProactiveProposalEligible(e.Version, proposalNowUtc))
+                    .OrderBy(e => GetB1ProactiveSuppliedCount(e.Version))
+                    .ThenBy(e => B1Hash(requestId + "\n" + e.Version), StringComparer.Ordinal)
                     .ThenBy(e => e.Version, StringComparer.Ordinal)
                     .Select(e => (Entry:e, Score:0d, Overlap:0, Corroborated:false, Discovery:(B1Ref?)null));
                 ranked = related.Concat(includeHistoricalProposals ? proposals : proposals.Take(0))
@@ -310,7 +338,7 @@ internal sealed partial class MemoryStore
                 } while (changed);
                 selectedFamily.UnionWith(connected);
                 var events = doc.Entries.Where(e => connected.Contains(e.Version)
-                    && B1ManagementState(doc, e.Version) is not ("suppressed" or "withdrawn" or "deleting" or "deleted")).ToList();
+                    && !B1BlockedForView(e.Version)).ToList();
                 var hasSuccessor = events.Where(e => e.Target.StartsWith("b1:", StringComparison.Ordinal)).Select(e => e.Target[3..]).ToHashSet();
                 var leaves = events.Where(e => !hasSuccessor.Contains(e.Version)).OrderByDescending(e => e.At).Take(3).ToList();
                 var selected = leaves.Concat(events.Where(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version)
@@ -458,5 +486,36 @@ internal sealed partial class MemoryStore
             }
             return true;
         }
+    }
+
+    private static (int Start, int End)? LocateQueryFocusSpan(string text, string query)
+    {
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(query))
+            return null;
+        var qTokens = B1SearchTokens(query).Where(B1DiscoveryContent).Where(t => t.Length >= 2).ToArray();
+        if (qTokens.Length == 0)
+            return null;
+        int bestPos = -1;
+        int bestDensity = 0;
+        foreach (string tok in qTokens)
+        {
+            int idx = text.IndexOf(tok, StringComparison.OrdinalIgnoreCase);
+            while (idx >= 0)
+            {
+                int winStart = Math.Max(0, idx - 120);
+                int winLen = Math.Min(text.Length - winStart, 260);
+                string window = text.Substring(winStart, winLen);
+                int density = qTokens.Count(qt => window.Contains(qt, StringComparison.OrdinalIgnoreCase));
+                if (density > bestDensity)
+                {
+                    bestDensity = density;
+                    bestPos = idx;
+                }
+                idx = text.IndexOf(tok, idx + tok.Length, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        if (bestPos < 0)
+            return null;
+        return (bestPos, Math.Min(text.Length, bestPos + 16));
     }
 }

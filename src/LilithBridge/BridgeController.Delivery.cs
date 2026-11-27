@@ -246,11 +246,15 @@ internal sealed partial class BridgeController
     // Receipt persistence must not alter or prevent the original delivery.
     [HideFromIl2Cpp]
     internal void CaptureGeneratedPublicReply(ApiResult reply)
-        => PersistGeneratedReceipt("capture", reply, () => _memory.CaptureGeneratedReply(reply));
+    {
+        if (reply.IsAfterbeat) return;
+        PersistGeneratedReceipt("capture", reply, () => _memory.CaptureGeneratedReply(reply));
+    }
 
     [HideFromIl2Cpp]
     internal void RecordGeneratedPublicDisplay(ApiResult reply, MemoryTurn? rawTurn, int chunkIndex, string actualText)
     {
+        if (reply.IsAfterbeat) return;
         PersistGeneratedReceipt("display", reply,
             () => _memory.RecordGeneratedDisplay(reply, rawTurn, chunkIndex, actualText));
         _memory.TraceReflectionIntentDelivery(reply, "display_callback_observed", rawTurn?.EventId ?? "", chunkIndex, actualText);
@@ -259,6 +263,7 @@ internal sealed partial class BridgeController
     [HideFromIl2Cpp]
     internal void RecordGeneratedPublicEnd(ApiResult reply, string outcome)
     {
+        if (reply.IsAfterbeat) return;
         PersistGeneratedReceipt("end", reply, () => _memory.RecordGeneratedEnd(reply, outcome));
         _memory.TraceReflectionIntentDelivery(reply, "terminal_delivery_callback_observed");
     }
@@ -307,6 +312,7 @@ internal sealed partial class BridgeController
 
     internal void CancelAiSpeech(string reason = "player_interrupt")
     {
+        CancelStagedAfterbeat(reason);
         // A generation that is still waiting for its playback window belongs
         // to the same interruption. Close its delivery record before display so
         // the unseen tail can never arrive late.
@@ -342,7 +348,8 @@ internal sealed partial class BridgeController
         result.EnforceMemoryOperationOutcome();
         if (_queuedReply != null && !ReferenceEquals(_queuedReply, result))
             CancelQueuedReply("superseded_by_newer_reply");
-        _memory.EnsureReflectionDelivery(result.SourceUserEventId, result.DialogueRequest?.Id ?? result.RequestId);
+        if (!result.IsAfterbeat)
+            _memory.EnsureReflectionDelivery(result.SourceUserEventId, result.DialogueRequest?.Id ?? result.RequestId);
         PrepareTemporaryFinal(result);
         _queuedReply = result;
         NativeBubblePresenter.MarkQueuedForDisplay(result);
@@ -394,17 +401,25 @@ internal sealed partial class BridgeController
         else if (reply != null) CancelNativeLinkage("other_speech_shown");
         if (reply != null)
         {
+            string rawRequestId = reply.IsAfterbeat && reply.AfterbeatParentRequestId.Length == 32
+                ? reply.AfterbeatParentRequestId
+                : reply.RequestId;
+            int rawChunkIndex = reply.IsAfterbeat ? reply.AfterbeatChunkOffset + chunkIndex : chunkIndex;
             MemoryTurn? turn = reply.DialogueRequest?.WorkPrototype != null
                 ? TemporaryExpressionMemoryPolicy.ArchiveFinalBubble(_memory, reply, text, chunkIndex)
-                : _memory.AddHistory("assistant", text, reply.RequestId + ":" + chunkIndex,
+                : _memory.AddHistory("assistant", text, rawRequestId + ":" + rawChunkIndex,
                     sourceEventId: reply.SourceUserEventId, isLocalFallback: reply.IsLocalFallback,
                     preserveDisplayedText: reply.PreservePublicLineBreaks);
             RecordGeneratedPublicDisplay(reply, turn, chunkIndex, text);
             if (turn != null)
             {
+                if (reply.IsAfterbeat && chunkIndex == 0)
+                    _afterbeatGate.ConsumeOnDisplayed(AfterbeatClock());
                 _memory.RecordB1Delivery(reply, turn, reply.DeliveredText.Length);
                 reply.DeliveredText += text;
-                _sessionState.LastAssistantText = reply.DeliveredText;
+                _sessionState.LastAssistantText = reply.IsAfterbeat
+                    ? _sessionState.LastAssistantText + text
+                    : reply.DeliveredText;
                 _sessionState.LastAssistantEventId = turn.EventId;
                 _sessionState.AddSceneEvent(new LilithSceneEvent
                 {
@@ -445,17 +460,36 @@ internal sealed partial class BridgeController
         // Only a fully delivered completed turn may become a past-thought source.
         if (reply.Delivery is { IsFullyDelivered: true })
         {
-            _memory.ThoughtLedger.Record(reply);
-            if (reply.DialogueRequest is { CarriedTemporaryOperationIds.Length: > 0 } deliveredReq)
-                _temporaryExpressions.RetireDeliveredCarry(deliveredReq.CarriedTemporaryOperationIds);
+            if (!reply.IsAfterbeat)
+            {
+                _memory.ThoughtLedger.Record(reply);
+                if (reply.DialogueRequest is { CarriedTemporaryOperationIds.Length: > 0 } deliveredReq)
+                    _temporaryExpressions.RetireDeliveredCarry(deliveredReq.CarriedTemporaryOperationIds);
+                if (outcome == "completed" && reply.Afterbeat is { Text.Length: > 0 } afterbeatPlan)
+                    TryStageAfterbeat(reply, afterbeatPlan, reply.Delivery.ShownChunks.Count);
+            }
+        }
+        if (reply.IsProactiveTurn && !reply.IsAfterbeat && reply.DeliveredText.Length > 0)
+        {
+            float now = Time.unscaledTime;
+            float nextCooldown = _proactivePacing.ObserveSpokenDelivered(now, reply.ProactiveCandidateKind, _config);
+            _memory.RecordB1ProactiveSupply(reply.ProactiveProposalVersions);
+            NativeEventLog.Trace("meta.proactive.spoken_backoff", "mod", "system",
+                "proactive speech delivered; transport spacing updated",
+                "request_id=" + reply.RequestId + ";kind=" + reply.ProactiveCandidateKind
+                + ";unanswered_count=" + _proactivePacing.ConsecutiveUnansweredSpeeches
+                + ";next_cooldown_s=" + nextCooldown.ToString("0"));
         }
         ReplyDeliveryRecord? delivery = reply.Delivery;
-        _memory.RecordB1Delivery(reply, outcome: outcome);
-        if (delivery?.IsTerminal == true)
-            _memory.EndReflectionDelivery(reply.SourceUserEventId, reply.DialogueRequest?.Id ?? reply.RequestId,
-                delivery.Outcome, delivery.IsFullyDelivered,
-                delivery.ShownChunks.Count == 0 ? "" : reply.RequestId + ":" + delivery.ShownChunks[^1].Index,
-                delivery.ShownChunks.Count, delivery.CompletedAtUtc);
+        if (!reply.IsAfterbeat)
+        {
+            _memory.RecordB1Delivery(reply, outcome: outcome);
+            if (delivery?.IsTerminal == true)
+                _memory.EndReflectionDelivery(reply.SourceUserEventId, reply.DialogueRequest?.Id ?? reply.RequestId,
+                    delivery.Outcome, delivery.IsFullyDelivered,
+                    delivery.ShownChunks.Count == 0 ? "" : reply.RequestId + ":" + delivery.ShownChunks[^1].Index,
+                    delivery.ShownChunks.Count, delivery.CompletedAtUtc);
+        }
         NativeEventLog.Trace("ai.delivery_end", "mod", "lilith", "AI reply delivery ended",
             "request_id=" + reply.RequestId + ";attempt_id=" + reply.Response.AttemptId
             + ";outcome=" + outcome + ";delivered_chars=" + reply.DeliveredText.Length
@@ -471,6 +505,8 @@ internal sealed partial class BridgeController
     private void SettleAiDelivery(ApiResult reply)
     {
         if (!reply.TrySettleDeliveredPrefix())
+            return;
+        if (reply.IsAfterbeat)
             return;
         if (reply.IsMemoryOperation && reply.MemoryOperation == null)
             return;
@@ -533,8 +569,10 @@ internal sealed partial class BridgeController
         bool waitingQueued = _queuedReply != null;
         bool displaying = _activeDialogue != null
             && (_aiSpeechActive || NativeBubblePresenter.HasPendingReply);
-        if (!pendingOrdinary && !waitingQueued && !displaying && !_reviewHandoff.HasRunning)
+        bool stagedAfterbeat = _stagedAfterbeat != null;
+        if (!pendingOrdinary && !waitingQueued && !displaying && !stagedAfterbeat && !_reviewHandoff.HasRunning)
             return false;
+        if (stagedAfterbeat) CancelStagedAfterbeat(source);
         bool requestedPending = _requestPending;
         bool hadQueued = _queuedReply != null;
         bool hadActiveOwner = _activeDialogue != null && !_activeDialogue.IsCancelled;

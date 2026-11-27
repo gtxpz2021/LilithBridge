@@ -216,6 +216,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         TraceInput();
         TrackNativeDialogue();
         NativeBubblePresenter.Tick();
+        TickStagedAfterbeat();
         TrackCharacterState();
         MaybeSavePersonaState();
         MaybeSaveLastSceneSummary();
@@ -1109,7 +1110,7 @@ internal sealed partial class BridgeController : MonoBehaviour
             }
             return;
         }
-        if (Time.unscaledTime - _lastProactiveAt < _config.ProactiveCooldownSeconds)
+        if (!_proactivePacing.IsGlobalReady(Time.unscaledTime))
         {
             if (_pendingProactiveReason != null && Time.unscaledTime >= _nextProactiveLog)
             {
@@ -1117,9 +1118,8 @@ internal sealed partial class BridgeController : MonoBehaviour
                 NativeEventLog.Trace("meta.proactive.cooldown", "mod", "system",
                     "proactive message in cooldown",
                     "reason=" + _pendingProactiveReason
-                    + ";left=" + Math.Max(0f,
-                        _config.ProactiveCooldownSeconds - (Time.unscaledTime - _lastProactiveAt))
-                        .ToString("0"));
+                    + ";unanswered=" + _proactivePacing.ConsecutiveUnansweredSpeeches
+                    + ";left=" + _proactivePacing.RemainingSeconds(Time.unscaledTime).ToString("0"));
             }
             return;
         }
@@ -1150,7 +1150,8 @@ internal sealed partial class BridgeController : MonoBehaviour
             string? sensoryProactiveReason = _config.SensoryProactiveReleaseEnabled && sensory.Available ? sensory.PendingProactive?.Reason : null;
             int sensoryProactiveSeq = sensory.Available ? (sensory.PendingProactive?.Seq ?? 0) : 0;
             string? sensoryInterruptCost = _config.SensoryProactiveGateEnabled && sensory.Available ? sensory.InterruptCost : null;
-            InitiativeCandidate? candidate = InitiativeSource.PickNext(
+            HashSet<string> suppressedKinds = _proactivePacing.BuildSuppressedKinds(Time.unscaledTime, DateTime.Now);
+            InitiativeCandidate? candidate = InitiativeSource.PickNextFiltered(
                 _sessionState,
                 _memory.GetLastSceneSummary(),
                 _config.ProactiveOnUnfinishedTopic,
@@ -1161,10 +1162,12 @@ internal sealed partial class BridgeController : MonoBehaviour
                 appChangeAllowed,
                 sensoryProactiveKind,
                 sensoryProactiveReason,
-                sensoryInterruptCost);
+                sensoryInterruptCost,
+                suppressedKinds);
             if (candidate != null)
             {
                 _pendingProactiveReason = candidate.Reason;
+                _pendingProactiveKind = candidate.Kind;
                 _pendingProactiveRecallQuery = candidate.RecallQuery;
                 if (sensoryProactiveSeq > 0 && candidate.Kind == (sensoryProactiveKind ?? "activity_settled"))
                     _sensoryClient.AcknowledgeConsumed(_config, sensoryProactiveSeq, consumedProactive: true);
@@ -1176,11 +1179,14 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (_pendingProactiveReason == null)
             return;
         string reason = _pendingProactiveReason;
+        string dispatchedKind = _pendingProactiveKind;
         _pendingProactiveReason = null;
+        _pendingProactiveKind = "";
         _lastProactiveAt = Time.unscaledTime;
+        _proactivePacing.MarkDispatched(Time.unscaledTime, dispatchedKind, DateTime.Now, _config);
         NativeEventLog.Trace("meta.proactive.send", "mod", "system",
             "proactive message sending", reason);
-        SubmitProactive(reason);
+        SubmitProactive(reason, dispatchedKind);
     }
 
     private static bool HasActiveNativeStoryForProactive()
@@ -1607,6 +1613,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     {
         if (_listening || _b1SelectionWindow.IsOpen)
             return;
+        CancelStagedAfterbeat("input_opened");
         // Every input session starts unauthorized; the visible control arms only
         // this session and the next submitted input consumes it.
         _reviewAuthorization.Reset();
@@ -1756,7 +1763,7 @@ internal sealed partial class BridgeController : MonoBehaviour
     {
         CaptureReceivedPublicReply(result);
         // A quiet receipt is terminal for this result object.
-        if (result.DeliveryOutcome is "quiet" or "delivery_unknown") return;
+        if (result.DeliveryOutcome is "quiet" or "quiet_note" or "delivery_unknown") return;
         result.DialogueRequest?.PreparationTrace?.Finish("api_result");
         if (!IsCurrentDialogue(result.DialogueRequest) || !NativeLinkageAllows(result)) return;
         if (CancelDeliveryForSleep(receivingResult: true)) return;

@@ -13,11 +13,17 @@ internal static class ParticipationPrompt
 
     internal const string UserText = "（程序提供了一条可供留意的线索；不是玩家刚说的话，也不代表你已经决定开口）";
 
-    internal static string BuildContext(string reason) =>
-        "[可选择的参与线索] " + reason
-        + "\n最近聊过不等于尚未完成，也不等于现在需要重提。"
-        + "玩家已结束、暂停或转向时，除非已有新的邀请或值得说的不同内容，不追问其动机、不劝他恢复原活动；这不构成长期禁谈。"
-        + "若现在没有合适的具体内容，返回 {\"text\":\"\"}，不附动作或其它控制指令。"
-        + "若适合开口，就提出眼前有内容的一点观察、选择或接续，不必为了维持对话追加问题，也不解释这段判断要求。"
-        + "不把测试句、旧推测或你的建议当成玩家的长期偏好或承诺。";
+    internal static string BuildContext(string reason) => BuildContextWithPacing(reason, 0);
+
+    internal static string BuildContextWithPacing(string reason, int unansweredSpeeches)
+    {
+        string factualPacing = unansweredSpeeches > 0
+            ? "\n（客观现状：此前连续 " + unansweredSpeeches + " 次主动开口后玩家尚未回应；此处仅如实提供桌面近况，说不说、留不留纸条仍由你自己定。）"
+            : "";
+        return "[可选择的参与线索] " + reason
+            + factualPacing
+            + "\n最近聊过不等于尚未完成，也不等于现在需要重提；玩家已结束、暂停或转向时，不追问动机、不劝他恢复原活动。"
+            + "\n这里没有任何发言指标：若此刻不想打扰或没什么想说，直接返回 {\"text\":\"\"}（不附动作或其它控制指令）；若想不弹窗留一句小话放进纸条箱，返回 {\"text\":\"<note>简短纸条内容</note>\"}；若确实有想说的话、眼前观察或自己上心的旧念头，直接自然说一两句即可，说不说、怎么说仍由你自己定，不必为了延续对话硬找话头或追问。"
+            + "\n输出铁律：可见台词只写对玩家真正说出口的话，绝对不要在正文或括号里写出“程序给了…”“静默略过”“我选第几种”或解释为什么开口的内心权衡；不编造关游戏期间一直醒着等他的心理戏，也不把测试句、旧推测或你的建议当成玩家的承诺。";
+    }
 }

@@ -1,27 +1,27 @@
 {
-  "product_version": "0.4.1",
-  "product_sha256": "310561f95e5b7fdb916e03db90157635214253fd148816d5db7e9b41b1a817ea",
+  "product_version": "0.4.2",
+  "product_sha256": "1be326698ff78dfd8a3574f76c87aa81a5f025ac78a0b0a8851a518dec72f6c6",
   "product_artifacts": {
     "LilithBridge.deps.json": {
-      "sha256": "7abd8047d7dd9c13efb3cc4590ce0146d2b7fcc6ca192f0854a0622b134700f8",
+      "sha256": "76d8ae37c82cbeea93798d7b177c7f613ca8344f1967a63a434abeb2b95c97fe",
       "bytes": 428
     },
     "LilithBridge.dll": {
-      "sha256": "310561f95e5b7fdb916e03db90157635214253fd148816d5db7e9b41b1a817ea",
-      "bytes": 4582912
+      "sha256": "1be326698ff78dfd8a3574f76c87aa81a5f025ac78a0b0a8851a518dec72f6c6",
+      "bytes": 4634112
     },
     "LilithBridge.pdb": {
-      "sha256": "bd4d9b3a47931f7d3b2c94fcceae61ce6ab7cd6e6741fede8ff55e942c8156b8",
-      "bytes": 831184
+      "sha256": "c45e94b31cdf1d1ef25a8452049d2f46fe3445246550cc5f74099e0cb3a62a30",
+      "bytes": 843964
     }
   },
-  "product_source_files": 353,
-  "product_source_tree_sha256": "95d7839d1252f2c9e275b06bb4e64f13fbaede33bf3898d7ae1532ca84967aff",
-  "installer_build": "0.1.4.25-v0.4.1.release.2",
-  "installer_sha256": "ed123d35d0fdd6785671101402518caec2afe8ba93cddd355644a4a658ff78e5",
-  "handoff_sha256": "f4735af515141738e56898820e9218eca44ae71391371ddd92c807a5c45e825a",
-  "manifest_sha256": "0397f8cfcc896c7c0573b96c1e8724981b832ca5f86b19d256d2bfdda6909f70",
-  "profile_sha256": "173e160c9b3690f5c8c85274642688a215f957141386d5ca308af54692f8bb07",
+  "product_source_files": 355,
+  "product_source_tree_sha256": "fb44c25c47fe50c03fdab729e08adc7a3dd4601a71181d05df71f4b9cae7a46d",
+  "installer_build": "0.1.4.26-v0.4.2.release.1",
+  "installer_sha256": "ad73f81ef5402d09706835705a1830143bd1febc4dbcc4ea8c33d973b0845b72",
+  "handoff_sha256": "05c32619dc5957f12337af35e26f1ff310bc6206d35846b45e36b0667420b4d1",
+  "manifest_sha256": "3bc1425cb52743feb82830d9183c4803ebf1401103cf2962a84fdd893a774694",
+  "profile_sha256": "8ab45f3a7bc390a7e59bd5e6dbdffec3dd2f56caa6142572ad53e09b32becff8",
   "installer_schema": 18,
   "config_schema": 1,
   "supported_config_schema": 1,
@@ -33,8 +33,8 @@
     "perf_bench": "exit_0",
     "dedup_verify": "passed",
     "optional_recall_fixture": 3,
-    "bugfix_tests": 167,
-    "tts_worker_tests": 16,
+    "bugfix_tests": 192,
+    "tts_worker_tests": 18,
     "stt_worker_tests": 11,
     "semantic_geometry_tests": 13
   },

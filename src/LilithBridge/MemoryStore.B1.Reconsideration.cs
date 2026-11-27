@@ -42,13 +42,15 @@ internal sealed partial class MemoryStore
         internal string Material => B1Continuity.RenderReadOnly(Packet);
         internal const string Contract = "Optional reconsideration of exactly this existing judgment. null maintains it without a new entry. An exact repeat of text, scope, nature and conditions records an unchanged receipt, not a new revision. Otherwise v=3, relation=revises, target=the supplied source_ref, sources=[that same source_ref], about=[], nature=hypothesis/inference/question. Text, scope and conditions stay finite. The old judgment is prior reasoning, not independent external evidence, a new observation, or proof of a world fact. No retention is required.";
         internal const string ExperienceAnchoredContract =
-            "你是莉莉丝，在对话间隙安静回看刚发生的一段真实交流（recent_utterances），以及可能一并提供的过往保留想法（prior_b1_lineage）。这不是对玩家说话，也不必为了产出而硬写。\n" +
+            "你是莉莉丝，在对话间隙安静回看刚发生的一段真实交流（recent_utterances），以及可能一并提供的过往保留想法（prior_b1_lineage）。这不是对玩家说话，也不是替玩家做档案摘抄，不必为了产出而硬写。\n" +
             "你可以任选以下一种结果，它们同等正当：\n" +
-            "1. 无需保留或维持原样：如果这只是一般寒暄闲聊、没有值得以后重看的具体新区分，或者旧想法依然适用，直接返回 {\"b1\":null}。\n" +
-            "2. 留下一个新判断或未解问题（relation:\"\", target:\"\"）：如果这段近期交流让你对某件事、某种说法或某个问题形成了值得以后重看的具体判断、猜测或暂时没想通的问题，可新建一条 B1（sources 至少引用一条 recent_utterances 的 source_ref）。\n" +
-            "3. 与旧想法并存对照或补充限定（relation:\"compare\" 或 \"qualify\", target:target_source_ref）：当输入提供了 target_source_ref，且近期交流带来了不同角度、反例或新的适用条件，但旧想法在原范围内仍可并存时使用。\n" +
-            "4. 明确修订旧想法（relation:\"revises\", target:target_source_ref）：当近期交流或玩家更正明确改变了 target_source_ref 的结论或范围时，用新表述替代旧头。\n" +
-            "约束：仅输出单根 JSON {\"b1\":null} 或 {\"b1\":{\"v\":3,\"text\":\"用你自己的口吻（我或莉莉丝）写具体平实的判断或问题，不写套话或口号\",\"scope\":\"具体对象与适用范围\",\"conditions\":\"可选适用条件，无则空串\",\"nature\":\"inference|hypothesis|question（禁止reported）\",\"about\":[\"可选对象source_ref，最多2项，无具体对象填[]\"],\"sources\":[\"本次实际依据的source_ref，1至8项\"],\"relation\":\"\"或\"compare\"或\"qualify\"或\"revises\",\"target\":\"\"或target_source_ref}}。只引用输入里实际提供的 source_ref，不捏造未提供的事实。";
+            "1. 无需保留或维持原样：如果这只是日常寒暄、试音闲聊、明面事实没有新触动，或者旧想法依然适用，直接返回 {\"b1\":null}。\n" +
+            "2. 留下一个新判断或未解问题（relation:\"\", target:\"\"）：如果刚才聊的事让你冒出没想通的怪问题（question）、对他潜台词的小揣测或自己嘴硬没说破的后觉心意（hypothesis）、或是两人看法分歧与相处门道（inference），可新建一条 B1（sources 至少引用一条 recent_utterances 的 source_ref）。\n" +
+            "3. 与旧想法并存对照或补充限定（relation:\"compare\" 或 \"qualify\", target:旧想法source_ref）：当 prior_b1_lineage 提供了旧想法，而近期交流带来了反例、另一面或新的适用条件，且旧想法在原范围内仍可并存时使用。\n" +
+            "4. 明确修订旧想法（relation:\"revises\", target:旧想法source_ref）：当近期交流、玩家更正、或同时看到的两个矛盾旧分支让你想通了新说法时，用新表述替代该旧头。\n" +
+            "5. 温和收起已翻篇的旧想法（relation:\"settles\", target:旧想法source_ref）：当某个旧问题已经聊透解开、旧猜测已不再适用、或你自己觉得这桩旧念头已经翻篇时，在 text 写一句简短收起理由将其归架。\n" +
+            "约束：用你自己的少女口吻（“我”或“莉莉丝”）写具体平实的短句；禁止把明面原话重抄成干瘪摘要，禁止写“下次别猜/先核实”之类的自我审查家规、心理分析标签、破折号总结金句、“我先收着/记一笔”记账腔或“不是A，是B”套话；严守外部事实边界（不虚构未发生的外部事件或离线等待，允许对真实交流做内心回味）。" +
+            "仅输出单根 JSON {\"b1\":null} 或 {\"b1\":{\"v\":3,\"text\":\"具体判断、问题或收起理由\",\"scope\":\"具体对象与适用范围\",\"conditions\":\"可选适用条件，无则空串\",\"nature\":\"question|hypothesis|inference（禁止reported）\",\"about\":[\"可选对象source_ref，最多2项，无则[]\"],\"sources\":[\"本次实际依据的source_ref，1至8项\"],\"relation\":\"\"或\"compare\"或\"qualify\"或\"revises\"或\"settles\",\"target\":\"\"或prior_b1_lineage中的活跃头source_ref}}。只引用输入里实际提供的 source_ref，不捏造未提供的事实。";
 
         internal B1ReconsiderationOwner(MemoryStore store, BridgeConfig config, string opportunityId,
             B1Packet packet, CancellationToken cancellation)
@@ -112,7 +114,8 @@ internal sealed partial class MemoryStore
                 {
                     var target = FindB1(doc, supplied!.Version);
                     if (target == null || !replay && doc.Current.GetValueOrDefault(target.LogicalId) != target.Version
-                        || B1ManagementState(doc, target.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted") return null;
+                        || (!replay ? IsB1ManagedInactiveState(B1ManagementState(doc, target.Version))
+                            : B1ManagementState(doc, target.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted")) return null;
                     var resolved = ResolveB1(supplied with { Purpose = "history" }, doc, new());
                     if (!resolved.Found || resolved.Material is not {} material || !B1ReadOnlyMaterialAllowed(material)) return null;
                     // Operation identity is stable for this actual opportunity. The
@@ -135,7 +138,8 @@ internal sealed partial class MemoryStore
                 {
                     targetEntry = FindB1(doc, supplied.Version);
                     if (targetEntry == null || !replay && doc.Current.GetValueOrDefault(targetEntry.LogicalId) != targetEntry.Version
-                        || B1ManagementState(doc, targetEntry.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted") return null;
+                        || (!replay ? IsB1ManagedInactiveState(B1ManagementState(doc, targetEntry.Version))
+                            : B1ManagementState(doc, targetEntry.Version) is "suppressed" or "withdrawn" or "deleting" or "deleted")) return null;
                     var resolvedTarget = ResolveB1(supplied with { Purpose = "history" }, doc, new());
                     if (!resolvedTarget.Found || resolvedTarget.Material is not { } targetMaterial
                         || !B1ReadOnlyMaterialAllowed(targetMaterial)) return null;
@@ -156,6 +160,56 @@ internal sealed partial class MemoryStore
 
                     if (addedKeys.Add(targetMaterial.Ref.Key))
                         materials.Add(targetMaterial with { DependencyRole = "target_current" });
+
+                    // Optional 1 active sibling branch (compare/qualify) or corroborated 2nd active family head
+                    FindB1(doc, "");
+                    string targetRefKey = "b1:" + targetEntry.Version;
+                    B1Entry? siblingBranch = doc.Entries
+                        .Where(s => s.Version != targetEntry.Version
+                            && doc.Current.GetValueOrDefault(s.LogicalId) == s.Version
+                            && !IsB1ManagedInactiveState(B1ManagementState(doc, s.Version))
+                            && !window!.Any(w => w.EventId == s.Packet.UserEventId)
+                            && (s.Target == targetRefKey
+                                || (targetEntry.Target.StartsWith("b1:", StringComparison.Ordinal)
+                                    && s.Target == targetEntry.Target)))
+                        .OrderByDescending(s => s.At)
+                        .ThenBy(s => s.Version, StringComparer.Ordinal)
+                        .FirstOrDefault();
+                    string siblingRole = "sibling_branch";
+                    if (siblingBranch == null)
+                    {
+                        var winTerms = B1SearchTokens(string.Join(" ", window!.Where(t => t.Role is "user" or "assistant").Select(t => t.Text)))
+                            .Where(B1DiscoveryContent).ToHashSet(StringComparer.Ordinal);
+                        if (winTerms.Count >= 2)
+                        {
+                            siblingBranch = doc.Entries
+                                .Where(s => s.LogicalId != targetEntry.LogicalId
+                                    && doc.Current.GetValueOrDefault(s.LogicalId) == s.Version
+                                    && !IsB1ManagedInactiveState(B1ManagementState(doc, s.Version))
+                                    && !window!.Any(w => w.EventId == s.Packet.UserEventId))
+                                .Select(s =>
+                                {
+                                    int overlap = winTerms.Count(_b1MeaningSearchIndex[s.Version].Contains);
+                                    double score = overlap == 0 ? 0d : overlap / Math.Max(3d, Math.Min(winTerms.Count, _b1MeaningSearchIndex[s.Version].Count));
+                                    return (Entry: s, Overlap: overlap, Score: score);
+                                })
+                                .Where(x => x.Overlap >= 2 && x.Score >= MemorySemantics.MinRecallSimilarity)
+                                .OrderByDescending(x => x.Score)
+                                .ThenByDescending(x => x.Entry.At)
+                                .ThenBy(x => x.Entry.Version, StringComparer.Ordinal)
+                                .Select(x => x.Entry)
+                                .FirstOrDefault();
+                            siblingRole = "related_current";
+                        }
+                    }
+                    if (siblingBranch != null)
+                    {
+                        var resolvedSibling = ResolveB1(new("b1", siblingBranch.Version, "", "history"), doc, new());
+                        if (resolvedSibling.Found && resolvedSibling.Material is { } sibMat
+                            && B1ReadOnlyMaterialAllowed(sibMat) && sibMat.Text.Length <= 900
+                            && addedKeys.Add(sibMat.Ref.Key))
+                            materials.Add(sibMat with { DependencyRole = siblingRole });
+                    }
 
                     // Optional 1 prior source utterance anchor so old B1 is not misread out of context
                     var priorAnchorRef = targetEntry.ObjectAnchors.Concat(targetEntry.Sources)
@@ -240,13 +294,24 @@ internal sealed partial class MemoryStore
                     if (doc.ControlGeneration != owner.ControlGeneration) return new(false, "selection_generation_changed");
                     var targetMat = owner.TargetMaterial;
                     B1Entry? target = targetMat == null ? null : FindB1(doc, targetMat.Ref.Version);
-                    if (targetMat != null && (target == null || doc.Current.GetValueOrDefault(target.LogicalId) != target.Version))
+                    if (targetMat != null && (target == null || doc.Current.GetValueOrDefault(target.LogicalId) != target.Version
+                        || IsB1ManagedInactiveState(B1ManagementState(doc, target.Version))))
                         return new(false, "target_version_conflict");
+                    foreach (var activeHeadMat in owner.Packet.Materials.Where(m => m.Ref.Kind == "b1"
+                        && m.DependencyRole is "sibling_branch" or "related_current"))
+                    {
+                        var activeHead = FindB1(doc, activeHeadMat.Ref.Version);
+                        if (activeHead == null || doc.Current.GetValueOrDefault(activeHead.LogicalId) != activeHead.Version
+                            || IsB1ManagedInactiveState(B1ManagementState(doc, activeHead.Version)))
+                            return new(false, "target_version_conflict");
+                    }
                     if (!B1ReadOnlyPacketPermitted(owner.Packet, "", owner.Config))
                         return new(false, "source_permission_or_version_changed");
                     var choice = owner.Choice;
                     B1Entry? entry = null;
                     string unchangedVersion = "";
+                    string settledTargetVersion = "";
+                    string settledStateValue = "";
                     if (!owner.ExperienceAnchored)
                     {
                         var material = owner.Packet.Materials.Single();
@@ -282,20 +347,8 @@ internal sealed partial class MemoryStore
                     else if (choice != null)
                     {
                         string normalizedNature = choice.Nature?.Trim().ToLowerInvariant() ?? "";
-                        string normalizedKind = normalizedNature == "question" ? "question" : "observation";
                         string relation = choice.Relation?.Trim() ?? "";
                         string rawTarget = choice.Target?.Trim() ?? "";
-                        if (choice.ProtocolVersion != 3
-                            || choice.About == null || choice.About.Length > B1Continuity.MaxAboutReferences
-                            || choice.About.Any(k => string.IsNullOrWhiteSpace(k) || k != k.Trim())
-                            || choice.Sources == null || choice.Sources.Length < 1 || choice.Sources.Length > B1Continuity.MaxSourceReferences
-                            || choice.Sources.Any(k => string.IsNullOrWhiteSpace(k) || k != k.Trim())
-                            || relation is not ("" or "compare" or "qualify" or "revises")
-                            || normalizedNature is not ("hypothesis" or "inference" or "question")
-                            || string.IsNullOrWhiteSpace(choice.Text) || choice.Text.Trim().Length > B1Continuity.MaxResultChars
-                            || string.IsNullOrWhiteSpace(choice.Scope) || choice.Scope.Trim().Length > B1Continuity.MaxScopeChars
-                            || choice.Conditions == null || choice.Conditions.Length > B1Continuity.MaxConditionsChars)
-                            return new(false, "invalid_reconsideration_choice");
 
                         B1Material? MapMaterial(string shortOrKey)
                         {
@@ -305,93 +358,144 @@ internal sealed partial class MemoryStore
                             return owner.Packet.Materials.FirstOrDefault(m => m.Ref.Key == shortOrKey);
                         }
 
-                        var mappedSources = choice.Sources.Select(MapMaterial).ToArray();
-                        if (mappedSources.Any(m => m == null)) return new(false, "invalid_reconsideration_choice");
-                        var sourceMaterials = mappedSources.Cast<B1Material>().GroupBy(m => m.Ref.Key, StringComparer.Ordinal).Select(g => g.First()).ToList();
-
-                        var mappedAbout = choice.About.Select(MapMaterial).ToArray();
-                        if (mappedAbout.Any(m => m == null)) return new(false, "invalid_reconsideration_choice");
-                        var aboutMaterials = mappedAbout.Cast<B1Material>().GroupBy(m => m.Ref.Key, StringComparer.Ordinal).Select(g => g.First()).ToList();
-
-                        string targetKey = "";
-                        if (relation.Length == 0)
+                        if (relation == "settles")
                         {
-                            if (rawTarget.Length != 0) return new(false, "invalid_reconsideration_choice");
-                            // New formation in background reflection must cite at least one window utterance
-                            if (!sourceMaterials.Any(m => m.Ref.Kind == "utterance"))
+                            if (choice.ProtocolVersion != 3
+                                || string.IsNullOrWhiteSpace(choice.Text) || choice.Text.Trim().Length > B1Continuity.MaxResultChars
+                                || (choice.Scope != null && choice.Scope.Length > B1Continuity.MaxScopeChars)
+                                || (choice.Conditions != null && choice.Conditions.Length > B1Continuity.MaxConditionsChars)
+                                || (choice.About != null && (choice.About.Length > B1Continuity.MaxAboutReferences
+                                    || choice.About.Any(k => string.IsNullOrWhiteSpace(k) || k != k.Trim() || MapMaterial(k) == null)))
+                                || (choice.Sources != null && (choice.Sources.Length > B1Continuity.MaxSourceReferences
+                                    || choice.Sources.Any(k => string.IsNullOrWhiteSpace(k) || k != k.Trim() || MapMaterial(k) == null))))
                                 return new(false, "invalid_reconsideration_choice");
+                            var settleTargetMat = MapMaterial(rawTarget);
+                            if (settleTargetMat == null || settleTargetMat.Ref.Kind != "b1"
+                                || settleTargetMat.DependencyRole is not ("target_current" or "sibling_branch" or "related_current"))
+                                return new(false, "invalid_reconsideration_choice");
+                            var settleEntry = FindB1(doc, settleTargetMat.Ref.Version);
+                            if (settleEntry == null || doc.Current.GetValueOrDefault(settleEntry.LogicalId) != settleEntry.Version
+                                || IsB1ManagedInactiveState(B1ManagementState(doc, settleEntry.Version)))
+                                return new(false, "target_version_conflict");
+                            string cleanReason = Clean(choice.Text);
+                            if (cleanReason.Length > 240) cleanReason = cleanReason[..240];
+                            settledTargetVersion = settleEntry.Version;
+                            settledStateValue = cleanReason.Length > 0 ? "settled:" + cleanReason : "settled";
                         }
                         else
                         {
-                            var mappedTarget = MapMaterial(rawTarget);
-                            if (targetMat == null || target == null || mappedTarget == null || mappedTarget.Ref.Key != targetMat.Ref.Key)
+                            string normalizedKind = normalizedNature == "question" ? "question" : "observation";
+                            if (choice.ProtocolVersion != 3
+                                || choice.About == null || choice.About.Length > B1Continuity.MaxAboutReferences
+                                || choice.About.Any(k => string.IsNullOrWhiteSpace(k) || k != k.Trim())
+                                || choice.Sources == null || choice.Sources.Length < 1 || choice.Sources.Length > B1Continuity.MaxSourceReferences
+                                || choice.Sources.Any(k => string.IsNullOrWhiteSpace(k) || k != k.Trim())
+                                || relation is not ("" or "compare" or "qualify" or "revises")
+                                || normalizedNature is not ("hypothesis" or "inference" or "question")
+                                || string.IsNullOrWhiteSpace(choice.Text) || choice.Text.Trim().Length > B1Continuity.MaxResultChars
+                                || string.IsNullOrWhiteSpace(choice.Scope) || choice.Scope.Trim().Length > B1Continuity.MaxScopeChars
+                                || choice.Conditions == null || choice.Conditions.Length > B1Continuity.MaxConditionsChars)
                                 return new(false, "invalid_reconsideration_choice");
-                            targetKey = targetMat.Ref.Key;
-                            if (!sourceMaterials.Any(m => m.Ref.Key == targetKey))
-                                sourceMaterials.Add(targetMat);
-                        }
 
-                        string text = choice.Text.Trim();
-                        string scope = choice.Scope.Trim();
-                        string conditions = choice.Conditions.Trim();
-                        bool exactTargetRepeat = target != null
-                            && target.Kind == normalizedKind && target.Text == text
-                            && target.Scope == scope && target.Nature == normalizedNature
-                            && target.Conditions == conditions;
-                        var existingDup = relation.Length == 0
-                            ? doc.Entries.FirstOrDefault(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
-                                && e.Kind == normalizedKind && e.Text == text && e.Scope == scope
-                                && e.Nature == normalizedNature && e.Conditions == conditions)
-                            : relation is "compare" or "qualify"
+                            var mappedSources = choice.Sources.Select(MapMaterial).ToArray();
+                            if (mappedSources.Any(m => m == null)) return new(false, "invalid_reconsideration_choice");
+                            var sourceMaterials = mappedSources.Cast<B1Material>().GroupBy(m => m.Ref.Key, StringComparer.Ordinal).Select(g => g.First()).ToList();
+
+                            var mappedAbout = choice.About.Select(MapMaterial).ToArray();
+                            if (mappedAbout.Any(m => m == null)) return new(false, "invalid_reconsideration_choice");
+                            var aboutMaterials = mappedAbout.Cast<B1Material>().GroupBy(m => m.Ref.Key, StringComparer.Ordinal).Select(g => g.First()).ToList();
+
+                            string targetKey = "";
+                            B1Entry? effectiveTarget = target;
+                            if (relation.Length == 0)
+                            {
+                                if (rawTarget.Length != 0) return new(false, "invalid_reconsideration_choice");
+                                // New formation in background reflection must cite at least one window utterance
+                                if (!sourceMaterials.Any(m => m.Ref.Kind == "utterance"))
+                                    return new(false, "invalid_reconsideration_choice");
+                            }
+                            else
+                            {
+                                var mappedTarget = MapMaterial(rawTarget);
+                                if (mappedTarget == null || mappedTarget.Ref.Kind != "b1"
+                                    || mappedTarget.DependencyRole is not ("target_current" or "sibling_branch" or "related_current"))
+                                    return new(false, "invalid_reconsideration_choice");
+                                effectiveTarget = FindB1(doc, mappedTarget.Ref.Version);
+                                if (effectiveTarget == null || doc.Current.GetValueOrDefault(effectiveTarget.LogicalId) != effectiveTarget.Version
+                                    || IsB1ManagedInactiveState(B1ManagementState(doc, effectiveTarget.Version)))
+                                    return new(false, "target_version_conflict");
+                                targetKey = mappedTarget.Ref.Key;
+                                if (!sourceMaterials.Any(m => m.Ref.Key == targetKey))
+                                    sourceMaterials.Add(mappedTarget);
+                            }
+
+                            string text = choice.Text.Trim();
+                            string scope = choice.Scope.Trim();
+                            string conditions = choice.Conditions.Trim();
+                            bool exactTargetRepeat = effectiveTarget != null
+                                && effectiveTarget.Kind == normalizedKind && effectiveTarget.Text == text
+                                && effectiveTarget.Scope == scope && effectiveTarget.Nature == normalizedNature
+                                && effectiveTarget.Conditions == conditions;
+                            var existingDup = relation.Length == 0
                                 ? doc.Entries.FirstOrDefault(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
-                                    && e.Relation == relation && e.Target == targetKey
+                                    && !IsB1ManagedInactiveState(B1ManagementState(doc, e.Version))
                                     && e.Kind == normalizedKind && e.Text == text && e.Scope == scope
                                     && e.Nature == normalizedNature && e.Conditions == conditions)
-                                : null;
-                        if (exactTargetRepeat) unchangedVersion = target!.Version;
-                        else if (existingDup != null) unchangedVersion = existingDup.Version;
-                        else
-                        {
-                            bool isRevises = relation == "revises";
-                            var objectAnchors = aboutMaterials.Select(m => isRevises && m.Ref.Key == targetKey
-                                ? m.Ref with { Purpose = "history" } : m.Ref).ToList();
-                            string anchorStatus = objectAnchors.Count == 0 ? "unbound_limited"
-                                : objectAnchors.All(r => r.Kind == "utterance"
-                                    && owner.Packet.Materials.Any(m => m.Ref.Key == r.Key && m.DependencyRole == "trigger"))
-                                    ? "turn_only" : "model_declared_object_binding_not_semantically_verified";
-                            var sources = sourceMaterials.Select(m => isRevises && m.Ref.Key == targetKey
-                                ? m.Ref with { Purpose = "history" } : m.Ref).ToList();
-                            string version = Guid.NewGuid().ToString("N");
-                            entry = new B1Entry
+                                : relation is "compare" or "qualify"
+                                    ? doc.Entries.FirstOrDefault(e => doc.Current.GetValueOrDefault(e.LogicalId) == e.Version
+                                        && !IsB1ManagedInactiveState(B1ManagementState(doc, e.Version))
+                                        && e.Relation == relation && e.Target == targetKey
+                                        && e.Kind == normalizedKind && e.Text == text && e.Scope == scope
+                                        && e.Nature == normalizedNature && e.Conditions == conditions)
+                                    : null;
+                            if (exactTargetRepeat) unchangedVersion = effectiveTarget!.Version;
+                            else if (existingDup != null) unchangedVersion = existingDup.Version;
+                            else
                             {
-                                Version = version,
-                                LogicalId = isRevises ? target!.LogicalId : version,
-                                Revision = isRevises ? NextB1FamilyRevision(doc, target!.LogicalId) : 1,
-                                Kind = normalizedKind,
-                                Text = text,
-                                Scope = scope,
-                                Nature = normalizedNature,
-                                Conditions = conditions,
-                                Relation = relation,
-                                Target = targetKey,
-                                StepId = owner.StepId,
-                                AttemptId = owner.AttemptId,
-                                At = DateTimeOffset.UtcNow,
-                                GeneratedBy = "b1_reconsideration",
-                                Selection = "explicit_retain",
-                                ObjectAnchors = objectAnchors,
-                                AnchorStatus = anchorStatus,
-                                Sources = sources,
-                                Packet = owner.Packet
-                            };
+                                bool isRevises = relation == "revises";
+                                var objectAnchors = aboutMaterials.Select(m => isRevises && m.Ref.Key == targetKey
+                                    ? m.Ref with { Purpose = "history" } : m.Ref).ToList();
+                                string anchorStatus = objectAnchors.Count == 0 ? "unbound_limited"
+                                    : objectAnchors.All(r => r.Kind == "utterance"
+                                        && owner.Packet.Materials.Any(m => m.Ref.Key == r.Key && m.DependencyRole == "trigger"))
+                                        ? "turn_only" : "model_declared_object_binding_not_semantically_verified";
+                                var sources = sourceMaterials.Select(m => isRevises && m.Ref.Key == targetKey
+                                    ? m.Ref with { Purpose = "history" } : m.Ref).ToList();
+                                string version = Guid.NewGuid().ToString("N");
+                                entry = new B1Entry
+                                {
+                                    Version = version,
+                                    LogicalId = isRevises ? effectiveTarget!.LogicalId : version,
+                                    Revision = isRevises ? NextB1FamilyRevision(doc, effectiveTarget!.LogicalId) : 1,
+                                    Kind = normalizedKind,
+                                    Text = text,
+                                    Scope = scope,
+                                    Nature = normalizedNature,
+                                    Conditions = conditions,
+                                    Relation = relation,
+                                    Target = targetKey,
+                                    StepId = owner.StepId,
+                                    AttemptId = owner.AttemptId,
+                                    At = DateTimeOffset.UtcNow,
+                                    GeneratedBy = "b1_reconsideration",
+                                    Selection = "explicit_retain",
+                                    ObjectAnchors = objectAnchors,
+                                    AnchorStatus = anchorStatus,
+                                    Sources = sources,
+                                    Packet = owner.Packet
+                                };
+                            }
                         }
                     }
                     var next = new B1Document { Entries = entry == null ? doc.Entries : doc.Entries.Append(entry).ToList(),
                         Receipts = doc.Receipts.ToList(), Current = new(doc.Current, StringComparer.Ordinal), Deliveries = doc.Deliveries };
                     CopyB1State(doc, next);
                     if (entry != null) next.Current[entry.LogicalId] = entry.Version;
-                    string outcome = entry == null ? unchangedVersion.Length > 0 ? "unchanged" : "no_retention" : "retained";
-                    string resultVersion = entry?.Version ?? unchangedVersion;
+                    if (settledTargetVersion.Length > 0) next.Management[settledTargetVersion] = settledStateValue;
+                    string outcome = entry != null ? "retained"
+                        : settledTargetVersion.Length > 0 ? "settled"
+                        : unchangedVersion.Length > 0 ? "unchanged" : "no_retention";
+                    string resultVersion = entry?.Version ?? (settledTargetVersion.Length > 0 ? settledTargetVersion : unchangedVersion);
                     next.Receipts.Add(new(owner.StepId, resultVersion, outcome, owner.AttemptId, owner.HttpAttempts, DateTimeOffset.UtcNow));
                     if (!owner.Live()) return new(false, "owner_cancelled_or_revoked");
                     return SaveB1(next) ? new(true, outcome, resultVersion) : new(false, "save_failed_or_uncertain");

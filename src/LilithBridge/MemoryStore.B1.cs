@@ -259,7 +259,8 @@ internal sealed partial class MemoryStore
                         return new(false, "source_permission_denied");
                 if (!needMaterial && reference.Purpose != "current") return new(true, reference.Purpose);
                 bool objectQualified = e.AnchorStatus is not ("turn_only" or "unbound_limited" or "legacy_turn_only");
-                bool current = objectQualified && B1ManagementState(doc, e.Version) != "withdrawn"
+                string mgmtState = B1ManagementState(doc, e.Version);
+                bool current = objectQualified && mgmtState != "withdrawn" && !IsB1SettledState(mgmtState)
                     && doc.Current.TryGetValue(e.LogicalId, out string? currentHead) && currentHead == e.Version
                     // Historical supply permits discussion, not promotion of a
                     // corrected raw object into a current object assertion.
@@ -412,8 +413,16 @@ internal sealed partial class MemoryStore
                     is "suppressed" or "withdrawn" or "deleting" or "deleted") return false;
                 var resolved = ResolveB1(material.Ref, doc, new());
                 if (!resolved.Found || resolved.Material is not { } current || !B1ReadOnlyMaterialAllowed(current)
-                    || current.VersionFingerprint != material.VersionFingerprint
-                    || current.Text != material.Text || current.Scope != material.Scope || current.At != material.At
+                    || current.VersionFingerprint != material.VersionFingerprint) return false;
+                bool bodyMatches = current.Text == material.Text
+                    || (material.Ref.Kind != "b1"
+                        && material.SuppliedRanges is { Count: 1 } sr
+                        && sr[0].TextBasis == "episode_window_utf16"
+                        && sr[0].TotalChars == current.Text.Length
+                        && sr[0].Offset >= 0 && sr[0].Chars == material.Text.Length
+                        && sr[0].Offset <= current.Text.Length - sr[0].Chars
+                        && string.CompareOrdinal(current.Text, sr[0].Offset, material.Text, 0, sr[0].Chars) == 0);
+                if (!bodyMatches || current.Scope != material.Scope || current.At != material.At
                     || current.Origin != material.Origin || current.State != material.State
                     || current.Nature != material.Nature || current.Conditions != material.Conditions
                     || current.AnchorStatus != material.AnchorStatus) return false;
@@ -678,6 +687,7 @@ internal sealed partial class MemoryStore
             foreach (var entry in doc.Entries.Where(e => removed.Contains(e.Version))) stopped.Management[entry.Version] = "deleting";
             if (!SaveB1(stopped)) return false;
             if (!PurgeB1ReflectionWork(removed) || !PurgeLegacyB1Versions(removed)) return false;
+            PurgeB1ProactiveExposure(removed);
             var latest = LoadB1(true);
             if (latest == null) return false;
             var next = new B1Document { Entries = latest.Entries.Where(e => !removed.Contains(e.Version)).ToList(),
