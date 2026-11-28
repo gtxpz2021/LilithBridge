@@ -21,6 +21,7 @@ internal static class ActionDirector
         string beforeAction = reply?.Action ?? "";
         if (config.AutoActionEnabled
             && reply != null
+            && (reply.IsLocalFallback || !config.ActionCapabilityEnabled)
             && string.IsNullOrWhiteSpace(reply.Action))
         {
             NativeActionSuggester.Apply(reply, userText, context);

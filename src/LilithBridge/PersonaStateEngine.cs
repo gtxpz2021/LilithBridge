@@ -94,7 +94,7 @@ internal static class PersonaStateEngine
         // This decision uses present session conditions, without an affect substrate.
         // Do not turn the same numbers into another set of length, follow-up,
         // silence or mood instructions. Only surface an active runtime boundary.
-        if (!hint.ShouldWait && !hint.ShouldDeferProactive)
+        if (!hint.ShouldWait)
             return "";
         var builder = new StringBuilder();
         builder.AppendLine("[莉莉丝此刻的决策·软建议（程序倾向，不是必须执行的指令）]");

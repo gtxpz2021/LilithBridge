@@ -112,14 +112,35 @@ internal static class RuntimeActionCapabilityResolver
         return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    public static IReadOnlyList<string> GetTransitionActionNames(
+        string pose,
+        string clothing)
+    {
+        var names = new List<string>();
+        foreach (LilithActionType action in Enum.GetValues<LilithActionType>())
+        {
+            if (!ActionCapability.IsExposed(action))
+                continue;
+            if (action is LilithActionType.None or LilithActionType.Idle)
+                continue;
+            if (Resolve(action, pose, clothing).Availability == ActionAvailability.Transition)
+                names.Add(ToActionName(action));
+        }
+        return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     public static string BuildDirectPromptList(
         string pose,
         string clothing)
     {
         IReadOnlyList<string> names = GetDirectActionNames(pose, clothing);
-        return names.Count == 0
-            ? "idle"
-            : string.Join(", ", names);
+        IReadOnlyList<string> transitions = GetTransitionActionNames(pose, clothing);
+        if (names.Count == 0 && transitions.Count == 0)
+            return "idle";
+        string directPart = names.Count == 0 ? "idle" : string.Join(", ", names);
+        return transitions.Count == 0
+            ? directPart
+            : directPart + "（切换姿态可用: " + string.Join(", ", transitions) + "）";
     }
 
     private static string Normalize(string value)

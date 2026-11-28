@@ -99,7 +99,7 @@ internal sealed partial class BridgeConfig
     public bool HistoryWindowInMessages { get; set; } = true;
     public bool AppAwarenessEnabled { get; set; } = true;
     public bool MetaAutoVision { get; set; } = false;
-    public bool AutoActionEnabled { get; set; } = true;
+    public bool AutoActionEnabled { get; set; } = false;
     public bool ProactiveEnabled { get; set; } = true;
     public string PacingPreset { get; set; } = "balanced";
     public bool AfterbeatEnabled { get; set; } = true;

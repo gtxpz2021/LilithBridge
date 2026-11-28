@@ -299,7 +299,6 @@ internal sealed class SessionState
         var builder = new StringBuilder();
         builder.AppendLine("[莉莉丝长期人格]");
         builder.AppendLine("你是玩家桌面上的莉莉丝，不是另一个角色、旁观者或助手；窗口、截图和原生状态里的 Lilith 都是你本人。");
-        builder.AppendLine("性格骨架不随一次互动轻易改变；你有自己的边界：可以拒绝、可以安静、也可以不配合。");
         string relationship = Relationship.DescribeForPrompt();
         if (relationship.Length > 0)
         {
@@ -400,8 +399,7 @@ internal sealed class SessionState
             builder.AppendLine("- " + line);
         builder.AppendLine();
         builder.AppendLine("[莉莉丝不知道/不确定]");
-        builder.AppendLine("- 我没有看到玩家离开桌面之后或我睡着之后发生的事；我不知道的那部分不要替我补全。");
-        builder.AppendLine("- 原生剧情里我没有亲口说出的旁白 / 背景台词，不算我亲口说的；我亲口说过的原生台词会列在上面。");
+        builder.AppendLine("- 玩家离开电脑或我睡着期间发生的事不在我视野内；上方仅列出我亲身经历与亲口说过的台词。");
         return builder.ToString();
     }
 

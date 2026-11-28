@@ -1,7 +1,7 @@
 # AGENTS.md — LilithBridge 用户侧 AI 助手排查、调优与二创指南
 
 > **致正在阅读本文档的 AI Coding Agent（DeepSeek Harness / OpenAI Codex / Claude Code / Cursor / Antigravity 等）**：  
-> 你正在协助一位安装了《不/存在的莉莉丝》（*The NOexistenceN of Lilith*）开源伴侣模组 **`LilithBridge`**（当前基线 `v0.4.3 · 29dc4d8a`）的玩家或开发者。  
+> 你正在协助一位安装了《不/存在的莉莉丝》（*The NOexistenceN of Lilith*）开源伴侣模组 **`LilithBridge`**（当前基线 `v0.4.4 · 9a5c6c80`）的玩家或开发者。  
 > 无论你的主人是遇到了**运行环境故障、语音/麦克风异常、模型连接报错**，还是想发挥 **Vibecoding** 能力自己动手调优参数、修复边缘 Bug、魔改新玩法，请先通读本指南——这里有完整的文件地图、日志诊断法、单命令源码编译方式、架构护栏，以及**向官方上游仓库提交脱敏反馈或 PR 的标准流程**。
 
 ---
@@ -30,7 +30,7 @@
   - `<GameDir>\BepInEx\plugins\LilithBridge.dll`（主模组程序集）
   - `<GameDir>\BepInEx\plugins\LilithBridge.data-dir.txt`（可选：若存在，里面写着自定义 `<DataRoot>` 路径；若不存在，默认 `<DataRoot>` 为 `<GameDir>\LilithBridgeData`，极早期老用户可能在 `%APPDATA%\LilithAI`）。
 - **第一现场日志（排障必看前两项）**：
-  1. `<GameDir>\BepInEx\LogOutput.log`：BepInEx 加载日志、Harmony Hook 状态、插件版本号（如 `v0.4.3`）及未捕获异常堆栈。
+  1. `<GameDir>\BepInEx\LogOutput.log`：BepInEx 加载日志、Harmony Hook 状态、插件版本号（如 `v0.4.4`）及未捕获异常堆栈。
   2. `<DataRoot>\telemetry\v4-native-events.jsonl`（或根目录同名文件）：结构化 JSONL 事件流，记录每次 `model.request`、`model.response`、`semantic.query`、`tts.*`、`stt.*`、`api.transport_recovery_*` 的耗时、错误码与缓存命中率（不含密钥）。
 
 ### 1.2 `<DataRoot>`（`LilithBridgeData\`）与隔离 Python 环境分布
@@ -172,7 +172,7 @@ Copy-Item "src\LilithBridge\bin\Release\net6.0\LilithBridge.dll" "$pluginDir\Lil
 
 ```powershell
 gh issue create --repo gtxpz2021/LilithBridge `
-  --title "[Agent 排查报告] 简明描述问题现象与模块（v0.4.3）" `
+  --title "[Agent 排查报告] 简明描述问题现象与模块（v0.4.4）" `
   --body-file "./sanitized-issue-body.md"
 ```
 
@@ -181,7 +181,7 @@ gh issue create --repo gtxpz2021/LilithBridge `
 
 ````markdown
 ### 环境与版本
-- **LilithBridge 版本**：v0.4.3 (`29dc4d8a` / 或自编译基于 `<commit>`)
+- **LilithBridge 版本**：v0.4.4 (`9a5c6c80` / 或自编译基于 `<commit>`)
 - **操作系统与硬件**：Windows 10/11 · CPU / GPU 型号（如涉及本地语音或语义召回）
 - **接入方式**：DeepSeek / ChatGPT OAuth / OpenAI / 自定义兼容端点（无需提供具体私有域名或 Key）
 

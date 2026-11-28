@@ -144,7 +144,11 @@ internal static partial class ActionExecutor
                 && resolved.Value is not (LilithActionType.None or LilithActionType.Idle)
                 && !isPoseTransition
                 && !IsPoseSafe(resolved.Value))
-                resolved = FindPoseFallback(resolved.Value);
+            {
+                NativeEventLog.Trace("action.pose_incompatible_skipped", "mod", "lilith",
+                    resolved.Value.ToString(), "kept_current_pose");
+                resolved = null;
+            }
             if (resolved.HasValue
                 && (isPoseTransition || IsPoseSafe(resolved.Value))
                 && HasNativeAnimation(resolved.Value))
@@ -536,9 +540,9 @@ internal static partial class ActionExecutor
     {
         if (!requested.HasValue || !NativePoseGate.IsPoseBlocked)
             return requested;
-        if (IsPoseSafe(requested.Value))
+        if (IsPoseSafe(requested.Value) || ActionCapability.IsPoseTransition(requested.Value))
             return requested;
-        return FindPoseFallback(requested.Value);
+        return null;
     }
 
     private static bool ShouldSkipReplay(LilithActionType action)

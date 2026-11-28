@@ -10,7 +10,7 @@
 > 开始安装或覆盖更新前，请先**正常退出游戏**。更新版本时**不要清空存档、不要删除 `LilithBridgeData/`、也不要手动删日志**。
 
 1. **获取最新版安装程序（与可选本地语音包）**：
-   - 打开[**最新版发布页**](https://github.com/gtxpz2021/LilithBridge/releases/latest)（或网盘懒人整合目录），下载 **`LilithBridge-Setup-*.exe`**（如 `LilithBridge-Setup-0.4.3-cn27-29dc4d8a.exe`）。
+   - 打开[**最新版发布页**](https://github.com/gtxpz2021/LilithBridge/releases/latest)（或网盘懒人整合目录），下载 **`LilithBridge-Setup-*.exe`**（如 `LilithBridge-Setup-0.4.4-cn28-9a5c6c80.exe`）。
    - **想启用本地离线语音（SenseVoice 听写 + 48kHz 莉莉丝原声）**：把 **`LilithBridge-VoicePack-v1.zip.001`** 与 **`.002`** 和 `Setup.exe` 放在**同一个文件夹**里即可。**切勿手工解压缩，也无需安装 WinRAR / 7-Zip**，安装器会直接跨分卷内存流式直装。
    - **暂不需要语音、只想先打字聊天**：只下载单个 `Setup.exe` 即可直接运行，之后随时把语音分卷放到同目录重开向导补装即可。
 2. **核对目录与一键确认**：双击运行安装器，它会自动定位已安装的 `Lilith.exe` 目录（找不到时点「选择游戏目录…」手工指定）并自动勾好推荐组件：

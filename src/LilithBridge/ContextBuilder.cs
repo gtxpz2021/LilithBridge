@@ -50,7 +50,7 @@ internal static class ContextBuilder
         builder.AppendLine(imageAttached switch
         {
             true => "[视觉状态] 本次请求已附带桌面画面；画面里的莉莉丝就是你本人，只描述确实看清的部分。",
-            false => "[视觉状态] 本次请求没有附带画面，也没有摄像头画面；没有看到玩家的样子、表情或穿着，也不要凭空臆测或假装看见。玩家描述的物件和动作只作为文字来源，不表示你亲眼见过或正在看着；旧视觉经历要有对应的旧观察来源，物件被提及和你此前自己的说法不算。可以按玩家描述陪他梳理下一步。",
+            false => "[视觉状态] 本次未附带屏幕截图（也没有摄像头）；画面细节凭玩家文字描述聊起即可，不对未见的画面细节凭空臆测。",
             _ => "[视觉状态] 本次请求可能附带桌面画面；画面里的莉莉丝就是你本人。"
         });
     }
@@ -334,7 +334,6 @@ internal static class ContextBuilder
                     // The recall ledger is diagnostic-only; never break a reply.
                 }
             }
-            builder.AppendLine("没有列入的不要假装记得。");
         }
 
         AppendExperienceAndReflectionMaterial(builder, memory, state, config,
@@ -622,7 +621,7 @@ internal static class ContextBuilder
         {
             builder.AppendLine();
             builder.AppendLine("[用户原话与长期记录]");
-            builder.AppendLine("保留每条记录的来源和状态；用户说过某句话不等于其中内容已由程序验证为外部事实。");
+            builder.AppendLine("以下为玩家此前亲口提过的事（按各条标注的时间与状态自然参考）：");
             foreach (MemoryTurn turn in profile)
             {
                 if (factTexts.Add(FactIdentity(turn)))
@@ -1128,7 +1127,6 @@ internal static class ContextBuilder
                     // The recall ledger is diagnostic-only; never break a reply.
                 }
             }
-            builder.AppendLine("没有列入的不要假装记得。");
         }
 
         builder.AppendLine();
