@@ -102,7 +102,9 @@ internal sealed partial class BridgeController
         // Screens are requested by the dialogue model within the same user turn.
         // No lexical or unsolicited proactive capture runs in this trial.
         VisionImage? vision = null;
-        IReadOnlyList<MemoryTurn> requestHistory = _memory.GetRequestHistory(requestConfig);
+        IReadOnlyList<MemoryTurn> requestHistory = _proactiveRequest
+            ? _memory.GetProactiveRequestHistory(requestConfig, 12)
+            : _memory.GetRequestHistory(requestConfig);
         // Final permitted list for this request. The window may have been captured
         // before a withdrawal or a request-scope read rule changed; re-check it once
         // here so the context build, the supplied-material report and the client

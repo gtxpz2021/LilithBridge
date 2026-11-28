@@ -107,7 +107,7 @@ internal sealed class SessionState
     public string LastAssistantText { get; set; } = "";
     public string LastUserEventId { get; set; } = "";
     public string LastAssistantEventId { get; set; } = "";
-    public int ShortTermEventLimit { get; set; } = 16;
+    public int ShortTermEventLimit { get; set; } = 32;
     public List<LilithSceneEvent> RecentEvents { get; } = new();
     public RelationshipState Relationship { get; } = new();
     public WorldBelief Belief { get; } = new();
@@ -137,7 +137,18 @@ internal sealed class SessionState
         if (IsPlayerConversation(sceneEvent) || HasStartedConversation())
             _conversationStarted = true;
         RememberConversationMaterial(sceneEvent);
-        RecentEvents.Add(sceneEvent);
+        // Coalesce consecutive foreground window switches so rapid Alt-Tabbing
+        // does not evict touch, drag, or native option events from RecentEvents.
+        if (sceneEvent.Kind == SceneEventKind.AppForeground
+            && RecentEvents.Count > 0
+            && RecentEvents[^1].Kind == SceneEventKind.AppForeground)
+        {
+            RecentEvents[^1] = sceneEvent;
+        }
+        else
+        {
+            RecentEvents.Add(sceneEvent);
+        }
         if (!IsBasicNavigation(sceneEvent))
         {
             InteractionCount++;

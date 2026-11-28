@@ -394,8 +394,15 @@ internal sealed partial class BridgeController : MonoBehaviour
         {
             NativeHooks.ClearSnackMenuPoseHold();
         }
-        string value = string.IsNullOrWhiteSpace(text) ? "option-" + index : text;
+        bool hasSpokenText = !string.IsNullOrWhiteSpace(text);
+        string value = hasSpokenText ? text.Trim() : "option-" + index;
+        string eventId = hasSpokenText ? Guid.NewGuid().ToString("N") : "";
         _memory.AddNative("player", value, "player-option");
+        if (hasSpokenText)
+        {
+            _memory.AddSpokenLine("player", value, eventId);
+            _memory.RegisterCurrentNativeSource(eventId);
+        }
         _memory.AddEvent("player.option", "selected native option: " + value, "index=" + index);
         if (_snackSessionActive)
         {
@@ -414,6 +421,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         {
             Kind = SceneEventKind.OptionSelected,
             Actor = "player",
+            EventId = eventId,
             Details = value + " (index=" + index + ")"
         });
     }
@@ -865,11 +873,13 @@ internal sealed partial class BridgeController : MonoBehaviour
         }
     }
 
+    private const float ProactiveReturnSettleSeconds = 10f;
+
     private void RefreshTimeAndReturnState()
     {
         _sessionState.Now = DateTimeOffset.Now;
         _sessionState.UpdateTimePhase(DateTime.Now);
-        if (_lastReturnAt > 0f && Time.unscaledTime - _lastReturnAt > 25f)
+        if (_lastReturnAt > 0f && Time.unscaledTime - _lastReturnAt > 35f)
         {
             _sessionState.PlayerRecentlyReturned = false;
             _lastReturnAt = 0f;
@@ -1149,13 +1159,15 @@ internal sealed partial class BridgeController : MonoBehaviour
             int sensoryProactiveSeq = sensory.Available ? (sensory.PendingProactive?.Seq ?? 0) : 0;
             string? sensoryInterruptCost = _config.SensoryProactiveGateEnabled && sensory.Available ? sensory.InterruptCost : null;
             HashSet<string> suppressedKinds = _proactivePacing.BuildSuppressedKinds(Time.unscaledTime, DateTime.Now);
+            bool returnSettled = _config.ProactiveOnReturn
+                && (_lastReturnAt <= 0f || Time.unscaledTime - _lastReturnAt >= ProactiveReturnSettleSeconds);
             InitiativeCandidate? candidate = InitiativeSource.PickNextFiltered(
                 _sessionState,
                 _memory.GetLastSceneSummary(),
                 _config.ProactiveOnUnfinishedTopic,
                 _config.ProactiveOnAfterIntimate,
                 _config.ProactiveOnLateNight,
-                _config.ProactiveOnReturn,
+                returnSettled,
                 _config.ProactiveOnAppChange,
                 appChangeAllowed,
                 sensoryProactiveKind,

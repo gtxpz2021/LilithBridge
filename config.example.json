@@ -94,7 +94,7 @@
     "subtalker_temperature": 0.6,
     "subtalker_top_p": 0.85,
     "subtalker_top_k": 20,
-    "single_voice_anchor": true,
+    "single_voice_anchor": false,
     "pronunciation_overrides": {}
   }
 }

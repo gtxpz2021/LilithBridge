@@ -191,8 +191,8 @@ internal sealed partial class BridgeConfig
     public int ReflectionMinIdleSeconds { get; set; } = 90;
     // Current complete dialogue uses material age and service spacing, not a
     // silence clock. Explicit zero on either field restores the legacy pacing.
-    public int ReflectionDialogueServiceSeconds { get; set; } = 60;
-    public int ReflectionDialogueAgeSeconds { get; set; } = 60;
+    public int ReflectionDialogueServiceSeconds { get; set; } = 180;
+    public int ReflectionDialogueAgeSeconds { get; set; } = 90;
     /// <summary>
     /// How much new conversation has to accumulate before a pass, counted in
     /// dialogue lines (a player line and her reply are two). Raised from 1 to 8 on
@@ -253,6 +253,7 @@ internal sealed partial class BridgeConfig
     public bool ExperienceArchiveEnabled { get; set; } = true;
     public bool MemoWriteEnabled { get; set; } = true;
     public bool MemoAnnotationEnabled { get; set; } = true;
+    public bool MemoAlwaysInjectFull { get; set; } = false;
     public int MemoAnnotationIntervalSeconds { get; set; } = 1800;
     public bool NoteSupplementEnabled { get; set; } = true;
     public bool NoteSupplementTestTrigger { get; set; }
@@ -894,6 +895,8 @@ internal static partial class ConfigStore
                     ReadBoolean(memoMeta, "memo_write_enabled", config.MemoWriteEnabled);
                 config.MemoAnnotationEnabled =
                     ReadBoolean(memoMeta, "memo_annotation_enabled", config.MemoAnnotationEnabled);
+                config.MemoAlwaysInjectFull =
+                    ReadBoolean(memoMeta, "memo_always_inject_full", config.MemoAlwaysInjectFull);
                 if (memoMeta.TryGetProperty("memo_annotation_interval_seconds", out JsonElement interval)
                     && interval.TryGetInt32(out int parsedMemoInterval))
                 {

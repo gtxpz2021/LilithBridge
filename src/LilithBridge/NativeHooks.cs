@@ -328,6 +328,9 @@ internal static class NativeHooks
                         if (index < TryGetCount(roots) && ButtonTexts.Count == TryGetCount(roots)
                             && ResolveSelectedText(index) == TryGetEntryText(roots, index)?.Trim())
                             _choiceEntryId = (TryGetListItem(roots, index) as PlayerLineEntry)?.id ?? 0;
+                        else if (ButtonTexts.Count > 0 && index < ButtonTexts.Count
+                            && !string.IsNullOrWhiteSpace(ResolveSelectedText(index)))
+                            _choiceIndex = index;
                     }
                 }
             }

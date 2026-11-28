@@ -435,14 +435,71 @@ class TtsWorkerIpcTests(unittest.TestCase):
                         pass
 
     def test_single_voice_anchor_default_locks_timbre_and_respects_explicit_hint(self) -> None:
-        proc = self._spawn_worker(["--test-mode", "--fake-tts", "--no-bwe", "--no-warmup"])
+        # Default mode (--multi-voice-refs / single_voice_anchor=False) enables full emotion + text routing
+        proc_def = self._spawn_worker(["--test-mode", "--fake-tts", "--no-bwe", "--no-warmup"])
+        try:
+            self._read_until(proc_def, lambda m: m.get("event") == "ready")
+            assert proc_def.stdin is not None
+            proc_def.stdin.write(
+                json.dumps(
+                    {"op": "speak", "request_id": "rd1", "utterance_id": "ud1", "text": "嘻嘻~，来吧！", "emotion": ""},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            proc_def.stdin.flush()
+            ev_d1 = self._read_until(proc_def, lambda m: m.get("utterance_id") == "ud1" and m.get("event") == "utterance_done")
+            chunks_d1 = [e for e in ev_d1 if e.get("event") == "audio_chunk"]
+            self.assertEqual(chunks_d1[0]["mood"], "playful_teasing")
+
+            proc_def.stdin.write(
+                json.dumps(
+                    {"op": "speak", "request_id": "rd2", "utterance_id": "ud2", "text": "哼，才不管你。", "emotion": "emoji_angry_1"},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            proc_def.stdin.flush()
+            ev_d2 = self._read_until(proc_def, lambda m: m.get("utterance_id") == "ud2" and m.get("event") == "utterance_done")
+            chunks_d2 = [e for e in ev_d2 if e.get("event") == "audio_chunk"]
+            self.assertEqual(chunks_d2[0]["mood"], "question_emphasis")
+
+            proc_def.stdin.write(json.dumps({"op": "shutdown", "request_id": "rd3"}) + "\n")
+            proc_def.stdin.flush()
+            self._read_until(proc_def, lambda m: m.get("request_id") == "rd3" and m.get("event") == "shutdown")
+            self.assertEqual(proc_def.wait(timeout=5), 0)
+        finally:
+            if proc_def.poll() is None:
+                proc_def.kill()
+                proc_def.wait(timeout=5)
+            for s in (proc_def.stdin, proc_def.stdout, proc_def.stderr):
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+
+        # Opt-in --single-voice-anchor locks plain unlabelled text to gentle_warm,
+        # while still honoring explicit non-neutral emotion tags and mood_hint.
+        proc = self._spawn_worker(["--test-mode", "--fake-tts", "--no-bwe", "--no-warmup", "--single-voice-anchor"])
         try:
             self._read_until(proc, lambda m: m.get("event") == "ready")
             assert proc.stdin is not None
-            # Default single-voice anchor locks even playful/breathy text to gentle_warm
             proc.stdin.write(
                 json.dumps(
-                    {"op": "speak", "request_id": "ra", "utterance_id": "ua", "text": "唔……嘻嘻~，来吧！", "emotion": "playful"},
+                    {"op": "speak", "request_id": "ra0", "utterance_id": "ua0", "text": "唔……嘻嘻~，来吧！", "emotion": ""},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            proc.stdin.flush()
+            ev_a0 = self._read_until(proc, lambda m: m.get("utterance_id") == "ua0" and m.get("event") == "utterance_done")
+            chunks_a0 = [e for e in ev_a0 if e.get("event") == "audio_chunk"]
+            self.assertEqual(chunks_a0[0]["mood"], "gentle_warm")
+
+            proc.stdin.write(
+                json.dumps(
+                    {"op": "speak", "request_id": "ra", "utterance_id": "ua", "text": "唔……嘻嘻~，来吧！", "emotion": "emoji_smile_2"},
                     ensure_ascii=False,
                 )
                 + "\n"
@@ -450,7 +507,7 @@ class TtsWorkerIpcTests(unittest.TestCase):
             proc.stdin.flush()
             ev_a = self._read_until(proc, lambda m: m.get("utterance_id") == "ua" and m.get("event") == "utterance_done")
             chunks_a = [e for e in ev_a if e.get("event") == "audio_chunk"]
-            self.assertEqual(chunks_a[0]["mood"], "gentle_warm")
+            self.assertEqual(chunks_a[0]["mood"], "playful_teasing")
 
             # Explicit mood_hint still overrides when explicitly requested
             proc.stdin.write(

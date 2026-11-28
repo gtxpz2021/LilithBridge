@@ -425,7 +425,7 @@ internal static class ContextBuilder
         {
             string memo = environment != null
                 ? environment.BuildNativeMemo()
-                : NativeMemoContext.Build();
+                : NativeMemoContext.BuildForTurn(retrievalQuery, config.MemoAlwaysInjectFull);
             if(environment!=null && memo.Length>0)MethodRuntimeEvidence.Untracked();
             if (memo.Length > 0)
             {
@@ -736,7 +736,7 @@ internal static class ContextBuilder
         {
             string memo = environment != null
                 ? environment.BuildNativeMemo()
-                : NativeMemoContext.Build();
+                : NativeMemoContext.BuildForTurn(retrievalQuery, config.MemoAlwaysInjectFull);
             if(environment!=null && memo.Length>0)MethodRuntimeEvidence.Untracked();
             if (memo.Length > 0)
             {

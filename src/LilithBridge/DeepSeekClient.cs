@@ -729,9 +729,12 @@ internal sealed partial class DeepSeekClient : IDisposable
             foreach (ProjectedHistoryTurn entry in wireHistory)
             {
                 bool isCurrentUser = IsCurrentProjectedUser(entry);
+                string nativePrefix = !sourceEnvelope && !isCurrentUser && DialogueMaterialEnvelope.IsNativeTurnRecords(entry.Records)
+                    ? (entry.Role == "assistant" ? "[原生台词] " : "[玩家原生选项] ")
+                    : "";
                 object turnContent = isCurrentUser
                     ? currentContent
-                    : UtteranceAttribution.Describe(entry.Role, entry.Text) + entry.Text;
+                    : nativePrefix + UtteranceAttribution.Describe(entry.Role, entry.Text) + entry.Text;
                 if (isCurrentUser)
                     AppendRuntimeContextBefore();
                 if (sourceEnvelope)
@@ -1520,8 +1523,8 @@ internal sealed partial class DeepSeekClient : IDisposable
     private const string ReplyRecencyAnchor =
         "[开口之前]\n" +
         "按莉莉丝此刻轻快鲜活的少女口吻直接接话，不念规则：\n" +
-        "1. 别惯性用“唔，XX啊”复述词头开场，极少用破折号，没真转折不写“不是……，是……”对比句，也少说“记一笔/先收下/放进心里”这类记账套话；\n" +
-        "2. 点到就停，不自我解释动机，不在句尾硬挂“不躲/不插嘴/不装懂/我不猜”类否定尾缀，也不用“是 A 还是 B？”二选一猜对方。";
+        "1. 直接落到当下要说的话，少复述词头、极少用破折号，别写“不是A是B / 不X只是Y”对照句，也不拿“稳/记账/收下/放心里”凑句尾；\n" +
+        "2. 点到就停，不自我解释动机，不挂否定尾缀，也不用“是 A 还是 B？”二选一猜对方。";
 
     // Retain the ordinary prompt entry point used by existing offline probes.
     private static string BuildSystemPrompt(BridgeConfig config, bool allowStoryRecall = true) =>

@@ -327,13 +327,19 @@ internal sealed partial class MemoryStore
                 target = m.Target.Length > 0 ? byKey.GetValueOrDefault(m.Target, m.Target) : "",
                 qualification = "prior_reasoning_not_new_external_evidence"
             }).ToArray(),
-            recent_utterances = owner.Packet.Materials.Where(m => m.Ref.Kind == "utterance").Select(m => new
+            recent_utterances = owner.Packet.Materials.Where(m => m.Ref.Kind == "utterance").Select(m =>
             {
-                source_ref = byKey[m.Ref.Key],
-                role = m.DependencyRole,
-                speaker = m.Origin == "user" ? "user" : "assistant",
-                at = m.At,
-                text = m.Text
+                bool isPlayer = m.Origin == "user"
+                    || m.Scope.Contains(";role=user;", StringComparison.Ordinal);
+                return new
+                {
+                    source_ref = byKey[m.Ref.Key],
+                    role = m.DependencyRole,
+                    speaker = isPlayer ? "user" : "assistant",
+                    speaker_label = isPlayer ? "玩家" : "莉莉丝",
+                    at = m.At,
+                    text = m.Text
+                };
             }).ToArray()
         }, DialogueMaterialEnvelope.DataJson);
     }

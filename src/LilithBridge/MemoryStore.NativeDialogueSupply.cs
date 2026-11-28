@@ -44,10 +44,27 @@ internal sealed partial class MemoryStore
         } while (changed);
     }
 
-    private HashSet<string> BuildRecentNativeUtteranceIds(IReadOnlyList<MemoryTurn> window) =>
-        window.Where(t => IsNativeUtterance(t) && t.SessionId == _sessionId && t.SchemaVersion == 1
+    private const int MaxEarlierSessionNativeUtterances = 8;
+
+    private HashSet<string> BuildRecentNativeUtteranceIds(IReadOnlyList<MemoryTurn> window)
+    {
+        var eligible = window.Where(t => IsNativeUtterance(t) && t.SessionId == _sessionId && t.SchemaVersion == 1
                 && t.DeliveryState == "delivered" && !IsExperienceSuppressed(t.EventId) && IsMentionAllowed(t))
-            .Select(t => t.EventId).ToHashSet(StringComparer.Ordinal);
+            .ToList();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var earlier = new List<string>();
+        foreach (var turn in eligible)
+        {
+            if (_currentNativeSources.Contains(turn.EventId))
+                ids.Add(turn.EventId);
+            else
+                earlier.Add(turn.EventId);
+        }
+        int skip = Math.Max(0, earlier.Count - MaxEarlierSessionNativeUtterances);
+        for (int i = skip; i < earlier.Count; i++)
+            ids.Add(earlier[i]);
+        return ids;
+    }
 
     private (IReadOnlyList<MemoryTurn> History, HashSet<string> CurrentSources, List<MemoryTurn> Raw,
         List<MemoryTurn> Native, List<MemoryTurn> Artifacts, HashSet<string> CurrentClosure)
@@ -354,20 +371,25 @@ internal sealed partial class MemoryStore
         }
     }
 
+    internal IReadOnlyList<MemoryTurn> GetProactiveRequestHistory(BridgeConfig config, int maxMessages)
+        => GetNativeAwareRequestHistoryCore(config, Math.Clamp(maxMessages, 1, Math.Max(1, config.ConversationMaxMessages)));
+
     private IReadOnlyList<MemoryTurn> GetNativeAwareRequestHistory(BridgeConfig config)
+        => GetNativeAwareRequestHistoryCore(config, Math.Max(1, config.ConversationMaxMessages));
+
+    private IReadOnlyList<MemoryTurn> GetNativeAwareRequestHistoryCore(BridgeConfig config, int budget)
     {
         NativeDialoguePolicy? policy = _nativeDialoguePolicy.Value;
         var recent = GetRecentHistory(int.MaxValue);
         if (policy == null)
         {
-            var plain = ProjectWithCacheAnchor(recent, config.ConversationMaxMessages, config);
+            var plain = ProjectWithCacheAnchor(recent, budget, config);
             var records = plain.Turns.SelectMany(t => t.Records).Select(t => t.Copy()).ToList();
             return new HistoryWindowRecords(records, new(recent.Count, recent.Count,
-                Math.Max(1, config.ConversationMaxMessages), 0, records.Count,
+                budget, 0, records.Count,
                 records.Count, records.Count, plain.OmissionReason, plain.RetainedSourceRootOverflow,
                 plain.OmissionReason));
         }
-        int budget = Math.Max(1, config.ConversationMaxMessages);
         var selected = policy.Selected.Where(IsMentionAllowed).Where(t => !policy.CurrentSources.Contains(t.EventId))
             .Take(Math.Min(3, budget - 1)).ToList();
         var ordinary = recent.Where(t => (!IsNativeUtterance(t)

@@ -170,7 +170,9 @@ internal sealed partial class BridgeController
     }
     private void FinishB1Reflection(ReflectionPreparation owner, MemoryStore.B1ReconsiderationOwner b1)
     {
-        _reflectionDialogueMayBypassCooldown = b1.ExperienceAnchored;
+        // Always observe the anti-thrash cooldown after a B1 pass instead of firing
+        // ordinary reflection 1-2s back-to-back on the exact same conversation tail.
+        _reflectionDialogueMayBypassCooldown = false;
         _nextReflectionAt = ReflectionClock() + EffectiveReflectionGapSeconds();
         _reflectionPreparation = null; _reflectionContinuation = null; _reflectionInProgress = false;
         _b1ReflectionOwner = null; b1.Dispose(); owner.Dispose();

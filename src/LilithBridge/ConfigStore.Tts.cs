@@ -40,7 +40,7 @@ internal sealed partial class BridgeConfig
     public float TtsSubtalkerTemperature { get; set; } = 0.60f;
     public float TtsSubtalkerTopP { get; set; } = 0.85f;
     public int TtsSubtalkerTopK { get; set; } = 20;
-    public bool TtsSingleVoiceAnchor { get; set; } = true;
+    public bool TtsSingleVoiceAnchor { get; set; } = false;
     public Dictionary<string, string> TtsPronunciationOverrides { get; set; } = new(StringComparer.Ordinal);
 }
 

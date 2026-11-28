@@ -32,11 +32,11 @@ internal static class ReflectionDialogueOpportunity
             && timing.Groups.All(g => g.CompletedAtUtc is {} at && at <= now)
             ? timing.AgeSeconds(now) : null;
         int lines = MemoryStore.CountReflectionDialogueLines(selected.History);
-        // Even a fast three-exchange batch waits for its oldest delivered
-        // material. Quantity alone does not trigger a pass; new messages do not
-        // restart that age. Unknown timestamps keep the original policy.
-        bool? qualified = age.HasValue ? lines >= 2 && age.Value >= c.ReflectionDialogueAgeSeconds : null;
-        double ageWait = qualified == false && lines >= 2 ? Math.Max(0, c.ReflectionDialogueAgeSeconds - age!.Value) : 0;
+        // Require at least two complete exchanges (4 lines, or ReflectionMinNewTurns when configured lower)
+        // and wait for the oldest delivered material to settle so rapid 1-turn back-and-forth does not thrash reflection.
+        int minLines = Math.Max(2, Math.Min(4, c.ReflectionMinNewTurns));
+        bool? qualified = age.HasValue ? lines >= minLines && age.Value >= c.ReflectionDialogueAgeSeconds : null;
+        double ageWait = qualified == false && lines >= minLines ? Math.Max(0, c.ReflectionDialogueAgeSeconds - age!.Value) : 0;
         string windowReason = !age.HasValue ? "original_age_unknown"
             : qualified == true ? "oldest_selected_age" : "waiting_selected_age";
         double wait = Math.Max(serviceWait, ageWait);

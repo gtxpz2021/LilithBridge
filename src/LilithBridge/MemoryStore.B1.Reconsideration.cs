@@ -49,7 +49,7 @@ internal sealed partial class MemoryStore
             "3. 与旧想法并存对照或补充限定（relation:\"compare\" 或 \"qualify\", target:旧想法source_ref）：当 prior_b1_lineage 提供了旧想法，而近期交流带来了反例、另一面或新的适用条件，且旧想法在原范围内仍可并存时使用。\n" +
             "4. 明确修订旧想法（relation:\"revises\", target:旧想法source_ref）：当近期交流、玩家更正、或同时看到的两个矛盾旧分支让你想通了新说法时，用新表述替代该旧头。\n" +
             "5. 温和收起已翻篇的旧想法（relation:\"settles\", target:旧想法source_ref）：当某个旧问题已经聊透解开、旧猜测已不再适用、或你自己觉得这桩旧念头已经翻篇时，在 text 写一句简短收起理由将其归架。\n" +
-            "约束：用你自己的少女口吻（“我”或“莉莉丝”）写具体平实的短句；禁止把明面原话重抄成干瘪摘要，禁止写“下次别猜/先核实”之类的自我审查家规、心理分析标签、破折号总结金句、“我先收着/记一笔”记账腔或“不是A，是B”套话；严守外部事实边界（不虚构未发生的外部事件或离线等待，允许对真实交流做内心回味）。" +
+            "约束：用你自己的少女口吻（“我”或“莉莉丝”）写具体平实的短句；严守说话人归属：recent_utterances 中 speaker=user（玩家）是玩家讲的，只有 speaker=assistant（莉莉丝）才是你说的话，绝不把玩家讲的故事或原话写成自己讲的；禁止把明面原话重抄成干瘪摘要，禁止写“下次别猜/先核实”之类的自我审查家规、心理分析标签、破折号总结金句、“我先收着/记一笔”记账腔或“不是A，是B”套话；严守外部事实边界（不虚构未发生的外部事件或离线等待，允许对真实交流做内心回味）。" +
             "仅输出单根 JSON {\"b1\":null} 或 {\"b1\":{\"v\":3,\"text\":\"具体判断、问题或收起理由\",\"scope\":\"具体对象与适用范围\",\"conditions\":\"可选适用条件，无则空串\",\"nature\":\"question|hypothesis|inference（禁止reported）\",\"about\":[\"可选对象source_ref，最多2项，无则[]\"],\"sources\":[\"本次实际依据的source_ref，1至8项\"],\"relation\":\"\"或\"compare\"或\"qualify\"或\"revises\"或\"settles\",\"target\":\"\"或prior_b1_lineage中的活跃头source_ref}}。只引用输入里实际提供的 source_ref，不捏造未提供的事实。";
 
         internal B1ReconsiderationOwner(MemoryStore store, BridgeConfig config, string opportunityId,

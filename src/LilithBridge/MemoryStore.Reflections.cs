@@ -446,10 +446,27 @@ internal sealed partial class MemoryStore
         // They are never evidence, and they never replace a raw utterance as the
         // basis of a thought (see ApplyNoteCore).
         IReadOnlyList<MemoryTurn> dayArtifacts = CaptureDayArtifactsForReflection();
-        var ids = ReflectionPurposeWindow(recent, intents).Select(t => t.EventId).Concat(notes.SelectMany(t => t.SourceEventIds))
-            .Concat(settled.SelectMany(t => t.SourceEventIds))
+        var ids = ReflectionPurposeWindow(recent, intents).Select(t => t.EventId)
             .Concat(revisionTargets.SelectMany(t => t.SourceEventIds))
             .Concat(CorrectionInputIds(revisionTargets)).ToHashSet(StringComparer.Ordinal);
+        // Bound companion historical utterances pulled from previous_notes / settled_notes
+        // so reflecting on a short current window does not re-transmit 40+ old turns every pass.
+        // Keep up to 2 most recent source anchors per note (max 12 companion historical turns).
+        const int MaxCompanionHistoricalUtterances = 12;
+        int companionAdded = 0;
+        foreach (var srcIds in notes.Select(t => t.SourceEventIds).Concat(settled.Select(t => t.SourceEventIds)))
+        {
+            if (companionAdded >= MaxCompanionHistoricalUtterances) break;
+            int perNote = 0;
+            for (int i = srcIds.Length - 1; i >= 0; i--)
+            {
+                string id = srcIds[i];
+                if (string.IsNullOrWhiteSpace(id) || ids.Contains(id)) continue;
+                ids.Add(id);
+                companionAdded++;
+                if (++perNote >= 2 || companionAdded >= MaxCompanionHistoricalUtterances) break;
+            }
+        }
         var evidence = GetExperienceValidationTurns().Where(t => ids.Contains(t.EventId)).Select(t=>t.Copy()).ToList();
         if (evidence.Count == 0) return null;
         var aliases = new ShortAliasTable();
@@ -493,7 +510,7 @@ internal sealed partial class MemoryStore
                 revision=t.Revision,
                 revises=aliases.AliasOrRegister("h", t.SourceEventId),
                 text=t.Text,
-                source_event_ids=aliases.AliasOrIds(t.SourceEventIds),
+                source_event_ids=aliases.AliasOrRegisterAll("h", t.SourceEventIds),
                 source_context=DescribeSourceAttribution(t),
                 at=t.Timestamp,
                 surfaced_usage=DescribeReflectionUsageLocked(t.EventId),
@@ -560,7 +577,7 @@ internal sealed partial class MemoryStore
         };
     }
 
-    private const int NoteHistoryByteLimit = 8192;
+    private const int NoteHistoryByteLimit = 4096;
     private sealed record NoteHistoryCapture(JsonElement Projection, IReadOnlyList<MemoryTurn> Notes,
         IReadOnlyList<DaySourceDependency> Permissions);
 

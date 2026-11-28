@@ -37,7 +37,11 @@ internal sealed partial class MemoryStore
         && t is not ("假设" or "玩家" or "现实" or "物品" or "经历" or "仅限" or "涉及" or "不涉"
             or "前面" or "之前" or "刚才" or "先前" or "原先" or "当时" or "一直" or "之后"
             or "一张" or "一个" or "一下" or "一些" or "一点" or "一种" or "一次" or "一件"
-            or "这回" or "那回" or "这次" or "那次" or "这个" or "那个" or "这些" or "那些");
+            or "这回" or "那回" or "这次" or "那次" or "这个" or "那个" or "这些" or "那些"
+            or "等等" or "先别" or "不过" or "其实" or "就是" or "不是" or "还是" or "但是"
+            or "如果" or "反正" or "大概" or "好像" or "有点" or "真的" or "确实" or "原来"
+            or "今晚" or "今天" or "现在" or "时候" or "那句" or "这句" or "说话" or "故事"
+            or "哈哈" or "嘻嘻" or "嗯嗯" or "好吧" or "对呀");
 
     private List<(B1Ref Ref, HashSet<string> Tokens)> B1DiscoverySources(B1Entry entry)
     {

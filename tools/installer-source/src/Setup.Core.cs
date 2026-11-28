@@ -350,7 +350,7 @@ namespace LilithSetup
                 if (!tts.ContainsKey("bwe_48k")) tts["bwe_48k"] = true;
                 tts["bwe_model_path"] = "tts-runtime/models/flashsr_onnx/model.onnx";
                 if (!tts.ContainsKey("sync_bubble_pacing")) tts["sync_bubble_pacing"] = true;
-                if (!tts.ContainsKey("single_voice_anchor")) tts["single_voice_anchor"] = true;
+                if (!tts.ContainsKey("single_voice_anchor")) tts["single_voice_anchor"] = false;
 
                 var stt = DataJson.Map(doc, "stt", true);
                 stt["enabled"] = edit.Voice.Enable;

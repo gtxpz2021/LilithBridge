@@ -363,6 +363,8 @@ internal static partial class ActionExecutor
     {
         if (action is LilithActionType.None or LilithActionType.Idle)
             return;
+        if (BridgeController.Instance?.SuppressesNativeReplyVoice == true)
+            return;
         try
         {
             AudioManager.PlayActionSEOrVoice(action, action.ToString());
@@ -777,6 +779,8 @@ internal static partial class ActionExecutor
     {
         string value = voice.Trim();
         if (value.Length == 0)
+            return;
+        if (BridgeController.Instance?.SuppressesNativeReplyVoice == true)
             return;
         try
         {

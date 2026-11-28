@@ -269,6 +269,17 @@ _EMOTION_TO_MOOD: Dict[str, str] = {
     "soft": "gentle_warm",
     "comfort": "gentle_warm",
     "love": "gentle_warm",
+    "emoji_smile_1": "gentle_warm",
+    "emoji_smile_2": "playful_teasing",
+    "emoji_smile_3": "playful_teasing",
+    "emoji_smile_4": "pause_breath_ellipsis",
+    "emoji_calm_1": "gentle_warm",
+    "emoji_sad_1": "serious_reflective",
+    "emoji_wronged_1": "pause_breath_ellipsis",
+    "emoji_angry_1": "question_emphasis",
+    "emoji_surprise_1": "question_emphasis",
+    "emoji_daze_1": "question_emphasis",
+    "emoji_sleepy_1": "pause_breath_ellipsis",
 }
 
 _PLAYFUL_CUES = ("嘻嘻", "嘿嘿", "哼哼", "才不是", "笨蛋", "请客", "逗你", "坏心眼", "小气", "偷懒")
@@ -1295,7 +1306,7 @@ class TtsWorkerRuntime:
         fake_tts: bool = False,
         max_clause_chars: int = 36,
         pronunciation_overrides: Optional[Dict[str, str]] = None,
-        single_voice_anchor: bool = True,
+        single_voice_anchor: bool = False,
     ) -> None:
         self._server = server_mgr
         self._refs = refs
@@ -1521,7 +1532,10 @@ class TtsWorkerRuntime:
             return
 
         avail = list(self._refs.keys()) if self._refs else None
-        if self._single_voice_anchor and not (task.mood_hint or "").strip():
+        has_mood_hint = bool((task.mood_hint or "").strip())
+        emo_norm = (task.emotion or "").strip().lower()
+        has_explicit_emotion = bool(emo_norm and emo_norm != "neutral" and emo_norm in _EMOTION_TO_MOOD)
+        if self._single_voice_anchor and not has_mood_hint and not has_explicit_emotion:
             reply_mood = DEFAULT_MOOD if (not avail or DEFAULT_MOOD in avail) else avail[0]
         else:
             reply_mood = select_mood(
@@ -1707,7 +1721,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--subtalker-temperature", type=float, default=0.60)
     p.add_argument("--subtalker-top-p", type=float, default=0.85)
     p.add_argument("--subtalker-top-k", type=int, default=20)
-    p.add_argument("--single-voice-anchor", dest="single_voice_anchor", action="store_true", default=True)
+    p.add_argument("--single-voice-anchor", dest="single_voice_anchor", action="store_true", default=False)
     p.add_argument("--multi-voice-refs", dest="single_voice_anchor", action="store_false")
     p.add_argument("--max-clause-chars", type=int, default=36)
     p.add_argument("--pronunciation-overrides-b64", type=str, default="")
