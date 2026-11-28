@@ -43,6 +43,8 @@ internal static partial class ActionExecutor
         var state = UnityEngine.Object.FindObjectOfType<LilithStateManager>(true);
         var animation = state?.SkeletonAnimation?.AnimationState;
         if (state == null || animation == null) return false;
+        if (state.IsSleep || state.IsLieDown || state.IsSofaSit || state.IsSit) return false;
+        if (!CanPlayStandingIdleAnimation(state, action)) return false;
         var before = animation.GetCurrent(0);
         var priorAction = controller.ActionType;
         if (!NativeIdleAnimation.TryPlay(controller, action)) return false;
@@ -51,6 +53,21 @@ internal static partial class ActionExecutor
             || before?.Pointer == after.Pointer && priorAction == action) return false;
         _waitingLease = new(state.Pointer, after, action);
         return true;
+    }
+
+    internal static bool CanPlayStandingIdleAnimation(LilithStateManager state, LilithActionType action)
+    {
+        try
+        {
+            if (!LilithAnimName.TryGetAnimationName(LilithPoseState.Stand, state.ClothingState, action, out string animName)
+                || string.IsNullOrWhiteSpace(animName))
+                return false;
+            return state.HasAnimation(animName);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void EndAmbientWaiting(CharacterController controller)

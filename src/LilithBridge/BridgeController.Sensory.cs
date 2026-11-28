@@ -381,7 +381,7 @@ internal static class SensoryActionPacing
             if (allowWindowPeek && isPoseSafe(LilithActionType.ScreenPeek))
                 return LilithActionType.ScreenPeek;
             return PickFirstSafe(
-                new[] { LilithActionType.Tsundere, LilithActionType.Snap, LilithActionType.Blink },
+                new[] { LilithActionType.Tsundere, LilithActionType.Confuse, LilithActionType.Snap, LilithActionType.Blink },
                 isPoseSafe,
                 hasNativeAnimation);
         }
@@ -408,19 +408,19 @@ internal static class SensoryActionPacing
         {
             LilithActionType.Hide or LilithActionType.TwitchBare => new[]
             {
-                requested, LilithActionType.TwitchBare, LilithActionType.DrowsySlump, LilithActionType.Tsundere, LilithActionType.Blink
+                requested, LilithActionType.TwitchBare, LilithActionType.DrowsySlump, LilithActionType.Drowsy, LilithActionType.Hide, LilithActionType.Tsundere, LilithActionType.Blink
             },
             LilithActionType.Squint => new[]
             {
-                LilithActionType.Squint, LilithActionType.DrowsySlump, LilithActionType.Tsundere, LilithActionType.Blink
+                LilithActionType.Squint, LilithActionType.DrowsySlump, LilithActionType.Drowsy, LilithActionType.Tsundere, LilithActionType.Blink
             },
             LilithActionType.Turnhead or LilithActionType.TiltHead => new[]
             {
-                requested, LilithActionType.MagicCast, LilithActionType.Tsundere, LilithActionType.Snap, LilithActionType.Blink
+                requested, LilithActionType.UpLeft, LilithActionType.LookAround, LilithActionType.MagicCast, LilithActionType.Tsundere, LilithActionType.Snap, LilithActionType.Blink
             },
             LilithActionType.Yawn => new[]
             {
-                LilithActionType.Yawn, LilithActionType.DrowsySlump, LilithActionType.Stretch, LilithActionType.Blink
+                LilithActionType.Yawn, LilithActionType.SmallYawn, LilithActionType.DrowsySlump, LilithActionType.Stretch, LilithActionType.Blink
             },
             _ => new[]
             {

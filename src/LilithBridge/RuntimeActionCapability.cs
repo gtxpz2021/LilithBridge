@@ -159,9 +159,11 @@ internal static class RuntimeActionCapabilityResolver
     private static string NormalizeClothing(string value)
     {
         string normalized = Normalize(value);
-        return normalized is "pajama" or "pajamas" or "casual"
-            ? "casual"
-            : normalized;
+        if (normalized is "pajama" or "pajamas")
+            return "pajamas";
+        if (normalized is "" or "casual" or "default")
+            return "casual";
+        return normalized;
     }
 
     private static string ResolveRequiredTransition(LilithActionType action)

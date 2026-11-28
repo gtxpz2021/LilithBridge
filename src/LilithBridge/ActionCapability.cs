@@ -125,6 +125,10 @@ internal static class ActionCapability
         LilithActionType.DrowsySlump,
         LilithActionType.HalfAwake,
         LilithActionType.Mumble,
+        LilithActionType.RubEyes,
+        LilithActionType.CoverBlanket,
+        LilithActionType.TakeBlanket,
+        LilithActionType.TwitchBare,
         LilithActionType.Blink,
         LilithActionType.SmallYawn
     };

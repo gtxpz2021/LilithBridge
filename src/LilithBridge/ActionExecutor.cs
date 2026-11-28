@@ -107,6 +107,8 @@ internal static partial class ActionExecutor
     private static float _nextWaitingAt;
     private static bool _waitingRequested;
     private static bool _waitingActive;
+    private static SessionState? _waitingState;
+    private static string _waitingUnavailableKey = "";
     private const float ReplayWindowSeconds = 20f;
 
     private sealed record DeferredExecution(
@@ -413,6 +415,8 @@ internal static partial class ActionExecutor
             return true;
         try
         {
+            if (TryCheckLiveNativeAnimation(action, out bool liveAvailable))
+                return liveAvailable;
             RuntimeActionCapability capability =
                 RuntimeActionCapabilityResolver.Resolve(
                     action,
@@ -422,6 +426,70 @@ internal static partial class ActionExecutor
         }
         catch
         {
+            return false;
+        }
+    }
+
+    private static bool TryCheckLiveNativeAnimation(LilithActionType action, out bool available)
+    {
+        available = false;
+        try
+        {
+            LilithStateManager? state =
+                UnityEngine.Object.FindObjectOfType<LilithStateManager>(true);
+            if (state == null)
+                return false;
+
+            if (state.IsSofaSit)
+            {
+                RuntimeActionCapability sofaCap =
+                    RuntimeActionCapabilityResolver.Resolve(action, "sofa", state.ClothingState.ToString());
+                available = sofaCap.Availability != ActionAvailability.Unavailable
+                    && !string.IsNullOrWhiteSpace(sofaCap.NativeAnimation)
+                    && state.HasAnimation(sofaCap.NativeAnimation!);
+                return true;
+            }
+
+            if (state.IsSleep)
+            {
+                RuntimeActionCapability sleepCap =
+                    RuntimeActionCapabilityResolver.Resolve(action, "sleep", state.ClothingState.ToString());
+                available = sleepCap.Availability != ActionAvailability.Unavailable
+                    && !string.IsNullOrWhiteSpace(sleepCap.NativeAnimation)
+                    && state.HasAnimation(sleepCap.NativeAnimation!);
+                return true;
+            }
+
+            if (state.IsLieDown)
+            {
+                if (LilithAnimName.TryGetAnimationName(LilithPoseState.Lie, state.ClothingState, action, out string lieAnim)
+                    && !string.IsNullOrWhiteSpace(lieAnim))
+                {
+                    available = state.HasAnimation(lieAnim);
+                    return true;
+                }
+                RuntimeActionCapability lieCap =
+                    RuntimeActionCapabilityResolver.Resolve(action, "lie", state.ClothingState.ToString());
+                available = lieCap.Availability != ActionAvailability.Unavailable
+                    && !string.IsNullOrWhiteSpace(lieCap.NativeAnimation)
+                    && state.HasAnimation(lieCap.NativeAnimation!);
+                return true;
+            }
+
+            LilithPoseState poseEnum = state.IsSit ? LilithPoseState.Sit : LilithPoseState.Stand;
+            if (LilithAnimName.TryGetAnimationName(poseEnum, state.ClothingState, action, out string animName)
+                && !string.IsNullOrWhiteSpace(animName))
+            {
+                available = state.HasAnimation(animName);
+                return true;
+            }
+
+            available = false;
+            return true;
+        }
+        catch
+        {
+            available = false;
             return false;
         }
     }
@@ -483,7 +551,7 @@ internal static partial class ActionExecutor
 
     public static void Tick(float now)
     {
-        TryApplyWaiting();
+        TryApplyWaiting(_waitingState);
         if (NativeBusyNow())
             return;
         if (DeferredExecutions.Count > 0)
@@ -509,12 +577,54 @@ internal static partial class ActionExecutor
         SetWaiting(false);
     }
 
+    private static float SafeUnscaledTime()
+    {
+        try
+        {
+            return Time.unscaledTime;
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
+
+    internal static bool ShouldSuppressAmbientWaiting(
+        string pose,
+        string clothing,
+        bool hasAnimation,
+        ref string unavailableKey)
+    {
+        string contextKey = pose + "|" + clothing;
+        if (unavailableKey.Length > 0
+            && string.Equals(unavailableKey, contextKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        if (!string.Equals(pose, "idle_or_standing", StringComparison.OrdinalIgnoreCase)
+            || !hasAnimation)
+        {
+            unavailableKey = contextKey;
+            return true;
+        }
+        unavailableKey = "";
+        return false;
+    }
+
     public static void SetWaiting(bool requested, SessionState? state = null)
     {
         if (requested && !_waitingRequested)
-            _nextWaitingAt = Time.unscaledTime + 0.85f;
+        {
+            _nextWaitingAt = SafeUnscaledTime() + 0.85f;
+            _waitingUnavailableKey = "";
+        }
+        else if (!requested)
+        {
+            _waitingUnavailableKey = "";
+        }
         _waitingRequested = requested;
-        TryApplyWaiting(state);
+        _waitingState = requested ? state : null;
+        TryApplyWaiting(_waitingState);
     }
 
     private static void TryApplyWaiting(SessionState? state = null)
@@ -526,12 +636,27 @@ internal static partial class ActionExecutor
                 && !_waitingActive
                 && !NativeBusyNow()
                 && !NativePoseGate.IsPoseBlocked
-                && Time.unscaledTime >= _nextWaitingAt
+                && SafeUnscaledTime() >= _nextWaitingAt
                 && controller != null)
             {
+                string pose = DescribeNativePose();
+                string clothing = DescribeNativeClothing();
+                string contextKey = pose + "|" + clothing;
+                if (_waitingUnavailableKey.Length > 0
+                    && string.Equals(_waitingUnavailableKey, contextKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
                 LilithActionType waitingAction = PickWaitingAction(state);
+                bool hasAnim = string.Equals(pose, "idle_or_standing", StringComparison.OrdinalIgnoreCase)
+                    && HasNativeAnimation(waitingAction);
+                if (ShouldSuppressAmbientWaiting(pose, clothing, hasAnim, ref _waitingUnavailableKey))
+                {
+                    return;
+                }
                 if (!TryBeginAmbientWaiting(controller, waitingAction))
-                { _nextWaitingAt = Time.unscaledTime + 0.5f; return; }
+                { _nextWaitingAt = SafeUnscaledTime() + 2.0f; return; }
+                _waitingUnavailableKey = "";
                 RecordNativeAction(waitingAction);
                 _waitingActive = true;
                 NativeEventLog.Trace("action.waiting_start", "mod", "lilith", waitingAction.ToString());

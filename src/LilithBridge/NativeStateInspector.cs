@@ -155,6 +155,23 @@ internal static class NativeStateInspector
     }
 
     /// <summary>
+    /// Synchronizes genuine player chat interaction (opening input or sending a message)
+    /// to the original game's EmotionSystem so native idle-lie / neglect timers know
+    /// the player is actively conversing with Lilith. Never call on background tasks.
+    /// </summary>
+    internal static void NotifyPlayerInteraction()
+    {
+        try
+        {
+            Find<EmotionSystem>()?.NotifyInteraction();
+        }
+        catch
+        {
+            // Optional native clock sync; never break input submission.
+        }
+    }
+
+    /// <summary>
     /// True while the original game is hidden, disappearing, fullscreen-occluded, or asleep
     /// and mod speech/reflection should wait instead of competing. Resting poses (lying down /
     /// sofa sitting) are NOT treated as quiet here; physical action callers check IsPoseBlocked directly.

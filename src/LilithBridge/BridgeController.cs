@@ -245,7 +245,9 @@ internal sealed partial class BridgeController : MonoBehaviour
         ValidateReviewHandoffBoundary();
         TickTemporaryWork();
         UpdateVitalState();
-        ActionExecutor.SetWaiting(_listening || _requestPending, _sessionState);
+        ActionExecutor.SetWaiting(
+            (_listening || (_requestPending && !_proactiveRequest)) && !NativeStateInspector.IsSleeping,
+            _sessionState);
         MicroReactionDirector.Tick(_sessionState, Time.unscaledTime, _config);
         NativeWindowPeekDirector.Tick(Time.unscaledTime);
         NativePoseGate.Tick(Time.unscaledTime);
@@ -386,7 +388,6 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (!preservePose)
         {
             NativeStateInspector.TrySummonIfHidden("option");
-            NativePoseGate.WakeForInput();
             NativeWindowPeekDirector.CancelForPlayer();
         }
         else
@@ -422,7 +423,6 @@ internal sealed partial class BridgeController : MonoBehaviour
         if (!NativeHooks.IsSnackMenuPoseHoldActive)
         {
             NativeStateInspector.TrySummonIfHidden("options_shown");
-            NativePoseGate.WakeForInput();
             NativeWindowPeekDirector.CancelForPlayer();
         }
         if (string.IsNullOrWhiteSpace(joinedOptions))
@@ -509,7 +509,6 @@ internal sealed partial class BridgeController : MonoBehaviour
     internal void OnNativeDragStart()
     {
         NativeStateInspector.TrySummonIfHidden("native_drag_start");
-        NativePoseGate.WakeForInput();
         NativeWindowPeekDirector.CancelForPlayer();
         _memory.AddEvent("character.native_drag_start", "native drag started", "", "lilith");
     }
@@ -517,7 +516,6 @@ internal sealed partial class BridgeController : MonoBehaviour
     internal void OnNativeDragEnd()
     {
         NativeStateInspector.TrySummonIfHidden("native_drag_end");
-        NativePoseGate.WakeForInput();
         NativeWindowPeekDirector.CancelForPlayer();
         _memory.AddEvent("character.native_drag_end", "native drag ended", "", "lilith");
     }
@@ -1272,8 +1270,8 @@ internal sealed partial class BridgeController : MonoBehaviour
             {
                 if (right)
                 {
-                    NativeStateInspector.TrySummonIfHidden("right");
-                    NativePoseGate.WakeForInput();
+                    if (IsOnLilith(mouse))
+                        NativeStateInspector.TrySummonIfHidden("right");
                     NativeWindowPeekDirector.CancelForPlayer();
                     string area = GetCharacterHitArea(mouse);
                     string detail = string.Format("x={0:0};y={1:0}", mouse.x, mouse.y);
@@ -1305,8 +1303,8 @@ internal sealed partial class BridgeController : MonoBehaviour
                     {
                         if (touch.phase == TouchPhase.Began)
                         {
-                            NativeStateInspector.TrySummonIfHidden("touch");
-                            NativePoseGate.WakeForInput();
+                            if (IsOnLilith(touch.position))
+                                NativeStateInspector.TrySummonIfHidden("touch");
                             NativeWindowPeekDirector.CancelForPlayer();
                         }
                         string detail = string.Format("finger={0};x={1:0};y={2:0}", touch.fingerId, touch.position.x, touch.position.y);
@@ -1618,6 +1616,7 @@ internal sealed partial class BridgeController : MonoBehaviour
         // this session and the next submitted input consumes it.
         _reviewAuthorization.Reset();
         NativeStateInspector.TrySummonIfHidden("chat");
+        NativeStateInspector.NotifyPlayerInteraction();
         if (!_inputField.Show(transform, _config, OnInputSubmitted, CancelInput, SelectThinkingMode, OpenDialogueHistory, AuthorizeReviewTurn, OpenSharedActivity, OpenB1Selection))
         {
             NativeEventLog.Trace("input.open_failed", "mod", "system",

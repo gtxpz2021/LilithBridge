@@ -51,6 +51,7 @@ internal sealed partial class BridgeController
         // Settings UI changes must apply to the very next submission, not a later reload tick.
         _config=ConfigStore.Load();
         // Formal nonempty input, never opening/draft/IME, transfers ownership.
+        NativeStateInspector.NotifyPlayerInteraction();
         CancelPendingDialogue(preserveReview:true);
         ValidPlayerSubmission();
         CancelAiSpeech("input_submit");

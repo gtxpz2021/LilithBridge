@@ -53,16 +53,23 @@ internal static class MicroReactionDirector
             CharacterController? controller = UnityEngine.Object.FindObjectOfType<CharacterController>(true);
             if (controller == null || !action.HasValue)
                 return;
-            if (!ActionCapability.IsPoseSafe(action.Value, state))
+            if (!ActionCapability.IsPoseSafe(action.Value, state)
+                || (action.Value != LilithActionType.ScreenPeek && !ActionExecutor.HasNativeAnimation(action.Value)))
             {
                 NativeEventLog.Trace("micro.capability_skip", "mod", "lilith",
-                    action.Value.ToString(), "not usable for current pose");
+                    action.Value.ToString(), "not usable for current pose/clothing");
+                _nextAllowedAt = now + Math.Max(6f, config.MicroGestureCooldownSeconds * 0.55f);
                 return;
             }
             if (action.Value == LilithActionType.ScreenPeek)
             {
                 if (!NativeWindowPeekDirector.TryPeek(controller, reason))
                 {
+                    if (!ActionExecutor.HasNativeAnimation(LilithActionType.ScreenPeek))
+                    {
+                        _nextAllowedAt = now + Math.Max(6f, config.MicroGestureCooldownSeconds * 0.55f);
+                        return;
+                    }
                     controller.PlayLilithAction(LilithActionType.ScreenPeek, true);
                     ActionExecutor.RecordNativeAction(LilithActionType.ScreenPeek);
                 }
@@ -98,7 +105,7 @@ internal static class MicroReactionDirector
         {
             action = Rng.NextDouble() < 0.6
                 ? LilithActionType.ScreenPeek
-                : LilithActionType.Turnhead;
+                : (state.Native.IsSit ? LilithActionType.Turnhead : LilithActionType.LookAround);
             reason = "app_changed";
             return true;
         }
@@ -130,13 +137,25 @@ internal static class MicroReactionDirector
             return true;
         }
 
-        action = Rng.Next(4) switch
+        if (state.Native.IsSit)
         {
-            0 => LilithActionType.TiltHead,
-            1 => LilithActionType.LookAround,
-            2 => LilithActionType.Turnhead,
-            _ => LilithActionType.Blink
-        };
+            action = Rng.Next(3) switch
+            {
+                0 => LilithActionType.Turnhead,
+                1 => LilithActionType.ShakeLeg,
+                _ => LilithActionType.Blink
+            };
+        }
+        else
+        {
+            action = Rng.Next(4) switch
+            {
+                0 => LilithActionType.UpLeft,
+                1 => LilithActionType.LookAround,
+                2 => LilithActionType.Confuse,
+                _ => LilithActionType.Blink
+            };
+        }
         reason = "idle_attention";
         return true;
     }

@@ -177,6 +177,11 @@ internal static class RawAnimationProbe
     private static MethodInfo? FindGetAnimationName(Type stateType)
     {
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
+        Type? animNameType = ResolveType(stateType.Assembly, "LilithAnimName");
+        MethodInfo? exactStatic = animNameType?.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .FirstOrDefault(m => m.Name == "GetAnimationName" && m.GetParameters().Length == 3);
+        if (exactStatic != null)
+            return exactStatic;
         return stateType.GetMethods(flags)
             .FirstOrDefault(m => m.Name == "GetAnimationName" && m.GetParameters().Length is 2 or 3);
     }

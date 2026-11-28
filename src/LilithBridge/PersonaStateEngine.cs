@@ -27,6 +27,10 @@ internal static class PersonaStateEngine
         LilithActionType.DrowsySlump,
         LilithActionType.HalfAwake,
         LilithActionType.Mumble,
+        LilithActionType.RubEyes,
+        LilithActionType.CoverBlanket,
+        LilithActionType.TakeBlanket,
+        LilithActionType.TwitchBare,
         LilithActionType.Blink,
         LilithActionType.SmallYawn,
         LilithActionType.PerkYawn
@@ -160,7 +164,7 @@ internal static class PersonaStateEngine
 
         if (state.Native.IsSleep && !SleepSafeActions.Contains(action.Value))
         {
-            reply.Action = "drowsy";
+            reply.Action = "mumble";
             reply.Animation = "";
             reason = "sleep_action_replaced";
             return true;
